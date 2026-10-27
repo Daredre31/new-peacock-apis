@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push cancels the older run on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Throwaway values for tests only. Never put real secrets or real database URLs here.
+      NODE_ENV: test
+      LOG_LEVEL: silent
+      PORT: '4001'
+      MONGODB_URI: mongodb://127.0.0.1:27017/peacock_academy_ci
+      REDIS_URL: redis://127.0.0.1:6379
+      CORS_ORIGIN: http://localhost:5173
+      TRUST_PROXY_HOPS: '0'
+      ACCESS_TOKEN_SECRET: ci-access-secret-0123456789-abcdefghijklmnopqrstuv
+      REFRESH_TOKEN_SECRET: ci-refresh-secret-0123456789-abcdefghijklmnopqrstu
+      CSRF_SECRET: ci-csrf-secret-0123456789-abcdefghijklmnopqrstuvwxyz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Tests download a MongoDB binary the first time. Cache it so later runs are fast.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install (exact versions from the lockfile)
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: OpenAPI file is up to date
+        run: npm run openapi:check
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
