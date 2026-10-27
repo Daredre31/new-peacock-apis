@@ -1,0 +1,27 @@
+export const ERROR_CODES = {
+  VALIDATION_ERROR: { status: 422, message: 'Some fields are invalid' },
+  UNAUTHENTICATED: { status: 401, message: 'You are not logged in' },
+  TOKEN_EXPIRED: { status: 401, message: 'Your session has expired' },
+  INVALID_CREDENTIALS: { status: 401, message: 'Invalid email or password' },
+  ACCOUNT_LOCKED: { status: 403, message: 'Too many failed attempts. Try again later' },
+  PASSWORD_CHANGE_REQUIRED: { status: 403, message: 'You must change your password first' },
+  CSRF_INVALID: { status: 403, message: 'Invalid or missing CSRF token' },
+  FORBIDDEN: { status: 403, message: 'You are not allowed to do this' },
+  NOT_FOUND: { status: 404, message: 'Resource not found' },
+  CONFLICT: { status: 409, message: 'This action conflicts with the current state' },
+  RATE_LIMITED: { status: 429, message: 'Too many requests. Please slow down' },
+  FEE_ALREADY_PAID: { status: 409, message: 'This invoice has no outstanding balance' },
+  PAYMENT_AMOUNT_INVALID: { status: 422, message: 'The payment amount is not allowed' },
+  PAYMENT_PENDING: { status: 409, message: 'A payment is awaiting for confirmation' },
+  EXAM_NOT_OPEN: { status: 409, message: 'This exam is not open for you' },
+  ATTEMPT_EXPIRED: { status: 409, message: 'Exam time has ended and your attempt was submitted' },
+  ATTEMPT_ALREADY_SUBMITTED: { status: 409, message: 'This attempt has already been submitted' },
+  IMPORT_INVALID: { status: 422, message: 'The file contains invalid rows' },
+  IMPORT_TOKEN_EXPIRED: { status: 410, message: 'The upload has expired. Please upload again' },
+  RESULT_LOCKED: { status: 409, message: 'Published results are locked' },
+  REQUEST_INVALID_TRANSITION: { status: 409, message: 'This step is not allowed from the current status' },
+  INTERNAL_ERROR: { status: 500, message: 'Something went wrong on our side' },
+  SERVICE_UNAVAILABLE: { status: 503, message: 'A required service is temporarily unavailable' },
+} as const satisfies Record<string, { status: number; message: string }>;
+
+export type ErrorCode = keyof typeof ERROR_CODES;
