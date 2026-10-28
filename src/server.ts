@@ -4,7 +4,8 @@ import { logger } from './common/utils/logger';
 import { closeHttpServer, createShutdown } from './common/utils/shutdown';
 import { connectMongo, disconnectMongo, pingMongo } from './config/db';
 import { env } from './config/env';
-import { connectRedis, disconnectRedis, pingRedis, rateLimitRedis } from './config/redis';
+import { connectRedis, disconnectRedis, pingRedis, rateLimitRedis ,redis} from './config/redis';
+import { createRedisKeyValueStore } from './modules/auth/keyValueStore';
 
 const SHUTDOWN_TIMEOUT_MS = 15_000;
 const HTTP_DRAIN_MS = 10_000;
@@ -44,6 +45,7 @@ async function main(): Promise<void> {
   await connectRedis();
 
   const app = createApp({
+    sessionStore: createRedisKeyValueStore(redis),
     rateLimitRedis,
     // Once shutdown starts, /ready answers 503 so the load balancer stops sending traffic.
     checkMongo: () => (shuttingDown ? unavailable() : pingMongo()),

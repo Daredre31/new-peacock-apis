@@ -17,5 +17,5 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src", "tests", "scripts", "*.config.ts", "*.config.js"]
+  "include": ["src", "tests", "scripts", "*.config.ts", "*.config.js", "src/modules/auth/password.service.ts"]
 }

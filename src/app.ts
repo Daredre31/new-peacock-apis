@@ -11,6 +11,10 @@ import type { HealthDependencies } from './modules/health/health.routes';
 import { createRoutes } from './routes';
 import { buildOpenApiDocument } from './openapi';
 import { createDocsRouter } from './openapi/docs.routes';
+import { createCsrfMiddleware } from './common/middleware/csrf';
+// import { createCsrfService } from './modules/auth/csrf.service';
+import { createAuthModule } from './modules/auth/auth.module';
+import type { KeyValueStore } from './modules/auth/keyValueStore';
 
 
 export interface AppDependencies extends HealthDependencies {
@@ -18,6 +22,7 @@ export interface AppDependencies extends HealthDependencies {
   rateLimitRedis: RedisLike | null;
     /** Overrides env.DOCS_ENABLED. Meant for tests. */
   docsEnabled?: boolean;
+  sessionStore: KeyValueStore
 }
 
 // Responses carry personal and financial data, so nothing may be cached anywhere.
@@ -28,6 +33,7 @@ const noStore: RequestHandler = (_req, res, next) => {
 
 export function createApp(deps: AppDependencies): Express {
   const app = express();
+  const auth = createAuthModule({ sessionStore: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis });
 
   app.disable('x-powered-by');
   app.set('etag', false);
@@ -77,9 +83,9 @@ export function createApp(deps: AppDependencies): Express {
   app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
 
-  // Phase 1: csrf middleware mounts HERE.
+    app.use(createCsrfMiddleware(auth.csrf));
 
-  app.use('/api/v1', createRoutes(deps));
+  app.use('/api/v1', createRoutes({ health: deps, auth }));
 
   app.use(notFound);
   app.use(errorHandler);

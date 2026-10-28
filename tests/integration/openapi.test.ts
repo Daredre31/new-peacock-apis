@@ -6,11 +6,14 @@ import { buildDocument, type OpenApiDocument } from '../../src/openapi/builder';
 import { buildOpenApiDocument } from '../../src/openapi';
 import { OpenApiRegistry } from '../../src/openapi/registry';
 import { healthDataSchema, readyDataSchema } from '../../src/modules/health/health.schema';
+import { createMemoryStore } from '../helpers/memoryStore';
 
 const healthy = () => Promise.resolve({ ok: true, latencyMs: 1 });
 
 function makeApp(docsEnabled = true) {
-  return createApp({ rateLimitRedis: null, checkMongo: healthy, checkRedis: healthy, docsEnabled });
+  return createApp({ rateLimitRedis: null, checkMongo: healthy, checkRedis: healthy, docsEnabled,
+    sessionStore: createMemoryStore(Date.now).store,
+   });
 }
 
 function sampleDocument(): OpenApiDocument {

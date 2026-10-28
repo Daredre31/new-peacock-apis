@@ -4,6 +4,7 @@ import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import { RedisStore, type RedisReply, type SendCommandFn } from 'rate-limit-redis';
 import { withTimeout } from '../utils/withTimeout';
 import { AppError, isAppError } from '../errors/AppError';
+import { parseIdentifier } from '../utils/identifier'
 
 /** The only thing the limiter needs from ioredis. */
 export interface RedisLike {
@@ -100,14 +101,15 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
 
 const clientIp = (req: Request): string => ipKeyGenerator(req.ip ?? 'unknown');
 
-// Email is hashed so raw addresses are not stored in Redis keys, and the key length is bounded.
-function emailKey(req: Request): string {
+// The identifier is normalised and hashed, so raw values never reach Redis and the key length is bounded.
+function identifierKey(req: Request): string {
   const body: unknown = req.body;
-  const email =
-    body !== null && typeof body === 'object' && 'email' in body && typeof body.email === 'string'
-      ? body.email.trim().toLowerCase()
+  const raw =
+    body !== null && typeof body === 'object' && 'identifier' in body && typeof body.identifier === 'string'
+      ? body.identifier
       : '';
-  return createHash('sha256').update(email).digest('hex').slice(0, 32);
+  const normalized = parseIdentifier(raw)?.value ?? raw.trim().toLowerCase();
+  return createHash('sha256').update(normalized).digest('hex').slice(0, 32);
 }
 
 /** Mount on login only, after the JSON body parser. Fails closed if Redis is down. */
@@ -115,7 +117,7 @@ export const createLoginRateLimiter = (redis: RedisLike | null): RequestHandler 
   createRateLimiter({
     name: 'login',
     ...RATE_LIMITS.login,
-    key: (req) => `${clientIp(req)}|${emailKey(req)}`,
+    key: (req) => `${clientIp(req)}|${identifierKey(req)}`,
     redis,
     onRedisFailure: 'fail-closed',
   });
@@ -129,4 +131,13 @@ export const createIpRateLimiter = (redis: RedisLike | null): RequestHandler =>
     redis,
     onRedisFailure: 'use-memory',
     skip: (req) => HEALTH_PATHS.has(req.path),
+  });
+  /** 300 requests per minute per user. authenticate runs it, so req.user is always set by then. */
+export const createUserRateLimiter = (redis: RedisLike | null): RequestHandler =>
+  createRateLimiter({
+    name: 'user',
+    ...RATE_LIMITS.user,
+    key: (req) => req.user?.id ?? clientIp(req),
+    redis,
+    onRedisFailure: 'use-memory',
   });

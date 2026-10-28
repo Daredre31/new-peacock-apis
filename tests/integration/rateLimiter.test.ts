@@ -100,21 +100,21 @@ describe('login rate limiter', () => {
     const app = makeApp(createLoginRateLimiter(null));
 
     for (let i = 0; i < 5; i += 1) {
-      expect((await request(app).post('/probe').send({ email: 'a@x.co' })).status).toBe(200);
+      expect((await request(app).post('/probe').send({ identifier: 'a@x.co' })).status).toBe(200);
     }
 
-    expect((await request(app).post('/probe').send({ email: 'a@x.co' })).status).toBe(429);
-    expect((await request(app).post('/probe').send({ email: 'b@x.co' })).status).toBe(200);
+    expect((await request(app).post('/probe').send({ identifier: 'a@x.co' })).status).toBe(429);
+    expect((await request(app).post('/probe').send({ identifier: 'b@x.co' })).status).toBe(200);
   });
 
   it('treats email case and spacing as the same account', async () => {
     const app = makeApp(createLoginRateLimiter(null));
 
     for (let i = 0; i < 5; i += 1) {
-      await request(app).post('/probe').send({ email: 'a@x.co' });
+      await request(app).post('/probe').send({ identifier: 'a@x.co' });
     }
 
-    const res = await request(app).post('/probe').send({ email: '  A@X.CO ' });
+    const res = await request(app).post('/probe').send({ identifier: '  A@X.CO ' });
     expect(res.status).toBe(429);
   });
 });

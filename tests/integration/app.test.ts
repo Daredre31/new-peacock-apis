@@ -2,6 +2,7 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { createApp, type AppDependencies } from '../../src/app';
 import { env } from '../../src/config/env';
+import { createMemoryStore } from '../helpers/memoryStore';
 
 const healthy = () => Promise.resolve({ ok: true, latencyMs: 1 });
 const down = () => Promise.resolve({ ok: false, latencyMs: 0 });
@@ -9,6 +10,7 @@ const down = () => Promise.resolve({ ok: false, latencyMs: 0 });
 function makeApp(overrides: Partial<AppDependencies> = {}) {
   return createApp({
     rateLimitRedis: null,
+    sessionStore: createMemoryStore(Date.now).store,
     checkMongo: healthy,
     checkRedis: healthy,
     ...overrides,
