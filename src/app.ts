@@ -16,6 +16,7 @@ import { createCsrfMiddleware } from './common/middleware/csrf';
 import { createAuthModule } from './modules/auth/auth.module';
 import type { KeyValueStore } from './modules/auth/keyValueStore';
 import { createAuditService } from './modules/audit/audit.service';
+import { createMailer, type Mailer } from './integrations/mailer';
 
 
 
@@ -24,7 +25,8 @@ export interface AppDependencies extends HealthDependencies {
   rateLimitRedis: RedisLike | null;
     /** Overrides env.DOCS_ENABLED. Meant for tests. */
   docsEnabled?: boolean;
-  sessionStore: KeyValueStore
+  sessionStore: KeyValueStore,
+  mailer?: Mailer;
 }
 
 // Responses carry personal and financial data, so nothing may be cached anywhere.
@@ -36,7 +38,8 @@ const noStore: RequestHandler = (_req, res, next) => {
 export function createApp(deps: AppDependencies): Express {
   const app = express();
   const audit = createAuditService()
-  const auth = createAuthModule({ sessionStore: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis, audit });
+  const auth = createAuthModule({ sessionStore: deps.sessionStore, rateLimitRedis: 
+    deps.rateLimitRedis, audit ,mailer: deps.mailer ?? createMailer()});
 
   app.disable('x-powered-by');
   app.set('etag', false);

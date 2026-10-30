@@ -141,3 +141,22 @@ export const createUserRateLimiter = (redis: RedisLike | null): RequestHandler =
     redis,
     onRedisFailure: 'use-memory',
   });
+  /** Per IP and identifier, plus a cap per identifier alone, so rotating IPs cannot mail-bomb someone. */
+export const createForgotPasswordRateLimiters = (redis: RedisLike | null): RequestHandler[] => [
+  createRateLimiter({
+    name: 'forgot-ip',
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    key: (req) => `${clientIp(req)}|${identifierKey(req)}`,
+    redis,
+    onRedisFailure: 'fail-closed',
+  }),
+  createRateLimiter({
+    name: 'forgot-id',
+    windowMs: 60 * 60 * 1000,
+    limit: 5,
+    key: identifierKey,
+    redis,
+    onRedisFailure: 'fail-closed',
+  }),
+];

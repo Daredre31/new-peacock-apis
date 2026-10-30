@@ -3,8 +3,11 @@ import { AppError } from '../../common/errors/AppError';
 import type { Validated } from '../../common/middleware/validate';
 import { sendSuccess } from '../../common/utils/apiResponse';
 import type { AuthService, RequestContext } from './auth.service';
-import type { loginSchemas } from './auth.schema';
+// import type { loginSchemas } from './auth.schema';
 import { clearAuthCookies, COOKIE_NAMES, setAuthCookies, setCsrfCookie } from './cookies';
+import type { changePasswordSchemas, loginSchemas, resetPasswordSchemas, forgotPasswordSchemas } from './auth.schema';
+import type { CredentialsService } from './credentials.service';
+// import { createCredentialsService } from './credentials.service'; // not needed here, remove if you only use the type
 import type { CsrfService } from './csrf.service';
 
 const contextOf = (req: Request): RequestContext => ({ ip: req.ip ?? 'unknown', requestId: req.id });
@@ -14,8 +17,8 @@ function requireUser(req: Request): Express.AuthUser {
   return req.user;
 }
 
-export function createAuthController(deps: { service: AuthService; csrf: CsrfService }) {
-  const { service, csrf } = deps;
+export function createAuthController(deps: { service: AuthService; credentials: CredentialsService; csrf: CsrfService }) {
+  const { service, credentials, csrf } = deps;
 
   const login: RequestHandler = async (req, res) => {
     const { body } = req.validated as Validated<typeof loginSchemas>;
@@ -59,6 +62,34 @@ export function createAuthController(deps: { service: AuthService; csrf: CsrfSer
   const me: RequestHandler = async (req, res) => {
     sendSuccess(res, { user: await service.getCurrentUser(requireUser(req).id) });
   };
+    const changePassword: RequestHandler = async (req, res) => {
+    const user = requireUser(req);
+    const { body } = req.validated as Validated<typeof changePasswordSchemas>;
+    const { session } = await credentials.changePassword({ userId: user.id, ...body, ...contextOf(req) });
 
-  return { login, refresh, logout, logoutAll, me };
+    setAuthCookies(res, session);
+    setCsrfCookie(res, csrf.generate());
+    sendSuccess(res, { user: await service.getCurrentUser(user.id) });
+  };
+
+  const forgotPassword: RequestHandler = (req, res) => {
+    const { body } = req.validated as Validated<typeof forgotPasswordSchemas>;
+    const context = contextOf(req);
+
+    // Answer first and work afterwards, so response time can never reveal whether an account exists.
+    sendSuccess(res, null);
+    credentials
+      .requestPasswordReset({ identifier: body.identifier, ...context })
+      .catch((err: unknown) => req.log.error({ err }, 'password reset request failed'));
+  };
+
+  const resetPassword: RequestHandler = async (req, res) => {
+    const { body } = req.validated as Validated<typeof resetPasswordSchemas>;
+    await credentials.resetPassword({ ...body, ...contextOf(req) });
+
+    clearAuthCookies(res);
+    sendSuccess(res, null);
+  };
+
+  return { login, refresh, logout, logoutAll, me, changePassword, forgotPassword, resetPassword };
 }

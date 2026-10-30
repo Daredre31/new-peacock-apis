@@ -32,7 +32,18 @@ const PAGE = `<!doctype html>
 </html>`;
 
 // Served as a file, so the page needs no inline script.
-const INIT_JS = "window.ui = SwaggerUIBundle({ url: '/api/docs/openapi.json', dom_id: '#swagger-ui' });\n";
+const INIT_JS = `window.ui = SwaggerUIBundle({
+  url: '/api/docs/openapi.json',
+  dom_id: '#swagger-ui',
+  requestInterceptor: function (req) {
+    var match = document.cookie.match(/(?:^|; )pa_csrf=([^;]+)/);
+    if (match && ['GET', 'HEAD', 'OPTIONS'].indexOf(req.method) === -1) {
+      req.headers['X-CSRF-Token'] = decodeURIComponent(match[1]);
+    }
+    return req;
+  },
+});
+`;
 
 export function createDocsRouter(document: OpenApiDocument): Router {
   const router = Router();

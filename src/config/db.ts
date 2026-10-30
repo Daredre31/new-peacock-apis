@@ -85,3 +85,7 @@ export async function disconnectMongo(): Promise<void> {
   if (mongoose.connection.readyState === 0) return;
   await mongoose.disconnect();
 }
+/** Makes sure every unique index exists before the app accepts traffic. */
+export async function ensureIndexes(): Promise<void> {
+  await Promise.all(mongoose.modelNames().map((name) => mongoose.model(name).init()));
+}

@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import { createApp } from './app';
 import { logger } from './common/utils/logger';
 import { closeHttpServer, createShutdown } from './common/utils/shutdown';
-import { connectMongo, disconnectMongo, pingMongo } from './config/db';
+import { connectMongo, disconnectMongo, pingMongo ,ensureIndexes } from './config/db';
 import { env } from './config/env';
 import { connectRedis, disconnectRedis, pingRedis, rateLimitRedis ,redis} from './config/redis';
 import { createRedisKeyValueStore } from './modules/auth/keyValueStore';
@@ -42,6 +42,7 @@ async function main(): Promise<void> {
   // Both dependencies must be up before we accept traffic. The rate limiter is
   // created inside createApp, so it only ever sees a connected Redis.
   await connectMongo();
+  await ensureIndexes();
   await connectRedis();
 
   const app = createApp({

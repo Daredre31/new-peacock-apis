@@ -3,6 +3,7 @@ import { registerHealthOperations } from '../modules/health/health.schema';
 import { buildDocument, type OpenApiDocument } from './builder';
 import { OpenApiRegistry } from './registry';
 import { registerAuditOperations } from '../modules/audit/audit.schema';
+import { registerSessionOperations } from '../modules/academics/session.schema';
 
 /** Each phase adds its module's register function here. */
 export function createOperationRegistry(): OpenApiRegistry {
@@ -10,6 +11,7 @@ export function createOperationRegistry(): OpenApiRegistry {
   registerHealthOperations(registry);
   registerAuthOperations(registry);
   registerAuditOperations(registry);
+  registerSessionOperations(registry)
   return registry;
 }
 

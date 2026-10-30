@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { AppError } from '../../common/errors/AppError';
 import type { DependencyHealth } from '../../common/types/health';
 import { sendSuccess } from '../../common/utils/apiResponse';
+import { publicRoute } from '../../common/middleware/authorize';
 
 export interface HealthDependencies {
   checkMongo: () => Promise<DependencyHealth>;
@@ -20,12 +21,12 @@ export function createHealthRouter(deps: HealthDependencies): Router {
   const router = Router();
 
   // Liveness: the process is up and the event loop answers. Touches no dependency.
-  router.get('/health', (_req, res) => {
+  router.get('/health',publicRoute(), (_req, res) => {
     sendSuccess(res, { status: 'ok', uptimeSeconds: Math.round(process.uptime()) });
   });
 
   // Readiness: MongoDB and Redis both answer. The public response never says which one failed.
-  router.get('/ready', async (req, res) => {
+  router.get('/ready',publicRoute() ,async (req, res) => {
     const [mongo, redis] = await Promise.all([
       isHealthy(deps.checkMongo),
       isHealthy(deps.checkRedis),

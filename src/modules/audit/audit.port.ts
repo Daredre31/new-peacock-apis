@@ -21,3 +21,11 @@ export const logAuditPort: AuditPort = {
     logger.info({ audit: entry }, 'audit');
   },
 };
+/** An audit problem must never break the action being audited. */
+export async function recordSafely(audit: AuditPort, entry: AuditEntry): Promise<void> {
+  try {
+    await audit.record(entry);
+  } catch (err) {
+    logger.error({ err, action: entry.action }, 'audit write failed');
+  }
+}

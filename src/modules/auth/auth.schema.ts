@@ -75,4 +75,42 @@ export function registerAuthOperations(registry: OpenApiRegistry): void {
     roles: roleValues,
     success: { status: 200, description: 'Current user', data: userEnvelope },
   });
+    registry.register({
+    method: 'post',
+    path: '/auth/change-password',
+    operationId: 'changePassword',
+    summary: 'Change own password. Ends all other logins and starts a fresh one. Allowed while a change is required.',
+    tags: ['auth'],
+    roles: roleValues,
+    request: changePasswordSchemas,
+    success: { status: 200, description: 'Changed', data: userEnvelope },
+    errors: ['ACCOUNT_LOCKED'],
+  });
+
+  registry.register({
+    method: 'post',
+    path: '/auth/forgot-password',
+    operationId: 'forgotPassword',
+    summary: 'Email a single-use reset link. Always answers 200, whether or not the account exists.',
+    tags: ['auth'],
+    request: forgotPasswordSchemas,
+    success: { status: 200, description: 'Accepted', data: z.null() },
+  });
+
+  registry.register({
+    method: 'post',
+    path: '/auth/reset-password',
+    operationId: 'resetPassword',
+    summary: 'Set a new password with the link from the email. Ends every login. VALIDATION_ERROR on field "token" means the link is invalid or used.',
+    tags: ['auth'],
+    request: resetPasswordSchemas,
+    success: { status: 200, description: 'Password changed', data: z.null() },
+  });
 }
+export const changePasswordSchemas = {
+  body: z.object({ currentPassword: z.string().min(1).max(1024), newPassword: z.string().min(1).max(1024) }),
+};
+export const forgotPasswordSchemas = { body: z.object({ identifier: z.string().min(1).max(254) }) };
+export const resetPasswordSchemas = {
+  body: z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), newPassword: z.string().min(1).max(1024) }),
+};

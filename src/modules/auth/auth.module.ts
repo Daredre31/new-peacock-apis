@@ -14,18 +14,33 @@ import type { KeyValueStore } from './keyValueStore';
 import { passwordService } from './password.service';
 import { createTokenService } from './token.service';
 import type { AuditPort } from '../audit/audit.port';
+import type { Mailer } from '../../integrations/mailer';
+import { createCredentialsService } from './credentials.service';
+import { createForgotPasswordRateLimiters } from '../../common/middleware/rateLimiter';
 
 export interface AuthModuleDeps {
   sessionStore: KeyValueStore;
   rateLimitRedis: RedisLike | null;
   audit: AuditPort;
+  mailer: Mailer;
 }
+ 
 
 export function createAuthModule(deps: AuthModuleDeps) {
   const tokens = createTokenService({
     store: deps.sessionStore,
     accessSecret: env.ACCESS_TOKEN_SECRET,
     refreshSecret: env.REFRESH_TOKEN_SECRET,
+  });
+   const credentials = createCredentialsService({
+    users: userRepository,
+    passwords: passwordService,
+    tokens,
+    audit: deps.audit,
+    mailer: deps.mailer,
+    store: deps.sessionStore,
+    secret: env.REFRESH_TOKEN_SECRET,
+    frontendOrigin: env.CORS_ORIGIN,
   });
   const csrf = createCsrfService(env.CSRF_SECRET);
   const service = createAuthService({
@@ -42,9 +57,10 @@ export function createAuthModule(deps: AuthModuleDeps) {
   });
 
   const router = createAuthRouter({
-    controller: createAuthController({ service, csrf }),
+    controller: createAuthController({ service, credentials, csrf }),
     authenticateAllowingPasswordChange: middleware.authenticateAllowingPasswordChange,
     loginLimiter: createLoginRateLimiter(deps.rateLimitRedis),
+    forgotLimiters: createForgotPasswordRateLimiters(deps.rateLimitRedis),
   });
 
   // Other modules import authenticate from here when they get their routes.
