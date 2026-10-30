@@ -5,7 +5,6 @@ import {
   type RedisLike,
 } from '../../common/middleware/rateLimiter';
 import { env } from '../../config/env';
-import { logAuditPort } from '../audit/audit.port';
 import { userRepository } from '../users/user.repository';
 import { createAuthController } from './auth.controller';
 import { createAuthRouter } from './auth.routes';
@@ -14,10 +13,12 @@ import { createCsrfService } from './csrf.service';
 import type { KeyValueStore } from './keyValueStore';
 import { passwordService } from './password.service';
 import { createTokenService } from './token.service';
+import type { AuditPort } from '../audit/audit.port';
 
 export interface AuthModuleDeps {
   sessionStore: KeyValueStore;
   rateLimitRedis: RedisLike | null;
+  audit: AuditPort;
 }
 
 export function createAuthModule(deps: AuthModuleDeps) {
@@ -31,7 +32,7 @@ export function createAuthModule(deps: AuthModuleDeps) {
     users: userRepository,
     passwords: passwordService,
     tokens,
-    audit: logAuditPort,
+   audit: deps.audit,
   });
 
   const middleware = createAuthMiddleware({

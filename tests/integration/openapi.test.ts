@@ -42,7 +42,7 @@ describe('document builder', () => {
 
     expect(doc.openapi).toBe('3.1.0');
     expect(doc.servers).toEqual([{ url: '/api/v1' }]);
-    expect(Object.keys(doc.paths)).toEqual(['/health', '/ready']);
+        expect(Object.keys(doc.paths)).toEqual(expect.arrayContaining(['/health', '/ready', '/auth/login']));
   });
 
   it('publishes x-roles, empty for public routes', () => {

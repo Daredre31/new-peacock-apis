@@ -8,6 +8,8 @@ export interface AuditEntry {
   ip?: string;
   requestId?: string;
   metadata?: Record<string, unknown>;
+   before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
 }
 
 export interface AuditPort {

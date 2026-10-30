@@ -15,6 +15,8 @@ import { createCsrfMiddleware } from './common/middleware/csrf';
 // import { createCsrfService } from './modules/auth/csrf.service';
 import { createAuthModule } from './modules/auth/auth.module';
 import type { KeyValueStore } from './modules/auth/keyValueStore';
+import { createAuditService } from './modules/audit/audit.service';
+
 
 
 export interface AppDependencies extends HealthDependencies {
@@ -33,7 +35,8 @@ const noStore: RequestHandler = (_req, res, next) => {
 
 export function createApp(deps: AppDependencies): Express {
   const app = express();
-  const auth = createAuthModule({ sessionStore: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis });
+  const audit = createAuditService()
+  const auth = createAuthModule({ sessionStore: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis, audit });
 
   app.disable('x-powered-by');
   app.set('etag', false);
@@ -85,7 +88,7 @@ export function createApp(deps: AppDependencies): Express {
 
     app.use(createCsrfMiddleware(auth.csrf));
 
-  app.use('/api/v1', createRoutes({ health: deps, auth }));
+  app.use('/api/v1', createRoutes({ health: deps, auth, audit }));
 
   app.use(notFound);
   app.use(errorHandler);

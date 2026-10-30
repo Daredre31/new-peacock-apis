@@ -1,4 +1,4 @@
-import { model, models, Schema, type Model } from 'mongoose';
+import mongoose, { type Model } from 'mongoose';
 import { normalizeEmail, normalizePhone } from '../../common/utils/identifier';
 import { ALL_ROLES, USER_STATUS, type Role, type UserStatus } from '../../config/constants';
 
@@ -23,7 +23,7 @@ export interface UserDocument {
 const isStoredEmail = (value: string): boolean => normalizeEmail(value) === value;
 const isStoredPhone = (value: string): boolean => normalizePhone(value) === value;
 
-const userSchema = new Schema<UserDocument>(
+const userSchema = new mongoose.Schema<UserDocument>(
   {
     email: {
       type: String,
@@ -70,4 +70,5 @@ userSchema.index(
 userSchema.index({ role: 1, status: 1 });
 
 export const UserModel: Model<UserDocument> =
-  (models.User as Model<UserDocument> | undefined) ?? model<UserDocument>('User', userSchema);
+  (mongoose.models.User as Model<UserDocument> | undefined) ??
+  mongoose.model<UserDocument>('User', userSchema);
