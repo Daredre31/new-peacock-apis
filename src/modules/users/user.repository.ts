@@ -1,4 +1,4 @@
-import type { Types } from 'mongoose';
+import type { Types ,ClientSession} from 'mongoose';
 import { AppError } from '../../common/errors/AppError';
 import { USER_STATUS, type Role, type UserStatus } from '../../config/constants';
 import { UserModel, type UserDocument } from './user.model';
@@ -84,19 +84,29 @@ function mapDuplicateKey(err: unknown): unknown {
   });
 }
 
-async function create(input: CreateUserInput, now: Date = new Date()): Promise<UserRecord> {
+async function create(
+  input: CreateUserInput,
+  now: Date = new Date(),
+  session?: ClientSession,
+): Promise<UserRecord> {
   try {
-    const doc = await UserModel.create({
-      ...(input.email !== undefined && { email: input.email }),
-      ...(input.phone !== undefined && { phone: input.phone }),
-      ...(input.passwordHash !== undefined && { passwordHash: input.passwordHash }),
-      role: input.role,
-      status: input.status ?? USER_STATUS.ACTIVE,
-      mustChangePassword: input.mustChangePassword ?? false,
-      emailVerifiedAt: input.emailVerified ? now : null,
-      phoneVerifiedAt: input.phoneVerified ? now : null,
-      passwordChangedAt: input.passwordHash !== undefined ? now : null,
-    });
+    const [doc] = await UserModel.create(
+      [
+        {
+          ...(input.email !== undefined && { email: input.email }),
+          ...(input.phone !== undefined && { phone: input.phone }),
+          ...(input.passwordHash !== undefined && { passwordHash: input.passwordHash }),
+          role: input.role,
+          status: input.status ?? USER_STATUS.ACTIVE,
+          mustChangePassword: input.mustChangePassword ?? false,
+          emailVerifiedAt: input.emailVerified ? now : null,
+          phoneVerifiedAt: input.phoneVerified ? now : null,
+          passwordChangedAt: input.passwordHash !== undefined ? now : null,
+        },
+      ],
+      session ? { session } : {},
+    );
+    if (!doc) throw new Error('User was not created');
     return toRecord(doc.toObject() as Lean);
   } catch (err) {
     throw mapDuplicateKey(err);
@@ -229,6 +239,64 @@ async function replacePasswordHash(id: string, passwordHash: string): Promise<vo
   await UserModel.updateOne({ _id: id, deletedAt: null }, { $set: { passwordHash } });
 }
 
+async function findManyByIds(ids: string[]): Promise<UserRecord[]> {
+  const valid = [...new Set(ids)].filter((id) => OBJECT_ID.test(id));
+  if (valid.length === 0) return [];
+  const docs = await UserModel.find({ _id: { $in: valid }, deletedAt: null }).lean<Lean[]>();
+  return docs.map(toRecord);
+}
+
+/** Changing an email or phone resets its "verified" mark. */
+async function updateContact(
+  id: string,
+  patch: { email?: string; phone?: string },
+  session?: ClientSession,
+): Promise<UserRecord | null> {
+  if (!OBJECT_ID.test(id)) return null;
+  const set: Record<string, unknown> = {};
+  if (patch.email !== undefined) Object.assign(set, { email: patch.email, emailVerifiedAt: null });
+  if (patch.phone !== undefined) Object.assign(set, { phone: patch.phone, phoneVerifiedAt: null });
+
+  try {
+    const doc = await UserModel.findOneAndUpdate(
+      { _id: id, deletedAt: null },
+      { $set: set },
+      { new: true, runValidators: true, ...(session ? { session } : {}) },
+    ).lean<Lean>();
+    return doc ? toRecord(doc) : null;
+  } catch (err) {
+    throw mapDuplicateKey(err);
+  }
+}
+
+async function softDelete(id: string, now: Date, session: ClientSession): Promise<boolean> {
+  if (!OBJECT_ID.test(id)) return false;
+  const result = await UserModel.updateOne({ _id: id, deletedAt: null }, { $set: { deletedAt: now } }, { session });
+  return result.matchedCount > 0;
+}
+
+/** A deliberate lock. Only active or invited accounts can be locked. */
+async function setLocked(id: string): Promise<boolean> {
+  if (!OBJECT_ID.test(id)) return false;
+  const result = await UserModel.updateOne(
+    { _id: id, deletedAt: null, status: { $in: [USER_STATUS.ACTIVE, USER_STATUS.INVITED] } },
+    { $set: { status: USER_STATUS.LOCKED } },
+  );
+  return result.matchedCount > 0;
+}
+
+/** Clears an automatic lockout and a deliberate lock. restoreTo is ACTIVE, or INVITED if there is no password yet. */
+async function unlock(id: string, restoreTo: UserStatus): Promise<boolean> {
+  if (!OBJECT_ID.test(id)) return false;
+  const cleared = await UserModel.updateOne(
+    { _id: id, deletedAt: null },
+    { $set: { failedLoginCount: 0, lockedUntil: null } },
+  );
+  if (cleared.matchedCount === 0) return false;
+  await UserModel.updateOne({ _id: id, status: USER_STATUS.LOCKED }, { $set: { status: restoreTo } });
+  return true;
+}
+
 export const userRepository = {
   create,
   findById,
@@ -238,5 +306,5 @@ export const userRepository = {
   setPassword,
   markEmailVerified,
   countByRole,
-  replacePasswordHash
+  replacePasswordHash,findManyByIds, updateContact, softDelete, setLocked, unlock
 };

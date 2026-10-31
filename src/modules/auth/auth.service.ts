@@ -23,6 +23,8 @@ export interface AuthServiceDeps {
   tokens: Tokens;
   audit: AuditPort;
   now?: () => Date;
+    /** Staff numbers now; registration numbers join in the students step. */
+  loginIds: { findUserId(loginId: string): Promise<string | null> };
 }
 
 export interface RequestContext {
@@ -80,8 +82,10 @@ export function createAuthService(deps: AuthServiceDeps) {
         return users.findAuth({ email: identifier.value });
       case 'phone':
         return users.findAuth({ phone: identifier.value });
-      case 'id':
-        // Staff IDs and registration numbers are looked up once those collections exist (Phase 2).
+            case 'id': {
+        const userId = await deps.loginIds.findUserId(identifier.value);
+        return userId ? users.findAuth({ id: userId }) : null;
+      }
         return null;
     }
   }

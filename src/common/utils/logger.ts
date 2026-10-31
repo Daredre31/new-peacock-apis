@@ -16,6 +16,7 @@ const SENSITIVE_KEYS = [
   'apiKey',
   'authorization',
   'cookie',
+  'temporaryPassword'
 ];
 
 // Redaction is key based, so we cover the key at the top level and up to

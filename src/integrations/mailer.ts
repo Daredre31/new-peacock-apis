@@ -25,6 +25,7 @@ export function createDisabledMailer(): Mailer {
   return {
     send: async (message) => {
       logger.error({ to: message.to, subject: message.subject }, 'email not sent: no mail provider configured');
+      throw new Error('No mail provider configured');
     },
   };
 }

@@ -27,6 +27,7 @@ export interface CredentialsServiceDeps {
   frontendOrigin: string;
   now?: () => Date;
   resetTtlSeconds?: number;
+  inviteTtlSeconds?: number;
 }
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -50,6 +51,7 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
   const clock = deps.now ?? (() => new Date());
   const ttl = deps.resetTtlSeconds ?? 30 * 60;
 
+  const inviteTtl = deps.inviteTtlSeconds ?? 7 * 24 * 60 * 60;
   const fingerprint = (token: string): string =>
     createHmac('sha256', deps.secret).update(`password-reset:${token}`).digest('hex');
   const keys = {
@@ -66,13 +68,33 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
     }
   }
 
-  async function notify(to: string | null, subject: string, text: string): Promise<void> {
-    if (!to) return;
+    async function notify(to: string | null, subject: string, text: string): Promise<boolean> {
+    if (!to) return false;
     try {
       await mailer.send({ to, subject, text });
+      return true;
     } catch (err) {
       logger.error({ err }, 'email failed');
+      return false;
     }
+  }
+
+  /** Stores a single-use link token for a user and returns it. A newer token replaces the older one. */
+  async function storeToken(userId: string, passwordChangedAt: Date | null, ttlSeconds: number): Promise<string> {
+    const token = randomBytes(32).toString('base64url');
+    const fp = fingerprint(token);
+    const previous = await store.get(keys.latest(userId));
+
+    await store.setMany([
+      {
+        key: keys.token(fp),
+        value: JSON.stringify({ userId, pwdAt: passwordChangedAt?.getTime() ?? 0 }),
+        ttlSeconds,
+      },
+      { key: keys.latest(userId), value: fp, ttlSeconds },
+    ]);
+    if (previous && previous !== fp) await store.delete(keys.token(previous));
+    return token;
   }
 
   const invalidLink = (): AppError =>
@@ -121,6 +143,16 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
       );
       return { session };
     },
+        /** Emails a link for choosing a first password. Returns false when the email could not be sent. */
+    async issueInvite(input: { userId: string; email: string; name: string }): Promise<boolean> {
+      const token = await storeToken(input.userId, null, inviteTtl);
+      const link = `${deps.frontendOrigin}/set-password#token=${token}`;
+      return notify(
+        input.email,
+        'Welcome to Peacock Academy: choose your password',
+        `Hello ${input.name},\n\nAn account was created for you. Use this link to choose your password. It works once and expires in ${Math.round(inviteTtl / 86400)} days:\n\n${link}\n\nIf you were not expecting this, ignore this email.`,
+      );
+    },
 
     /**
      * Never reveals whether an account exists: it always returns normally.
@@ -133,20 +165,7 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
       const user = await users.findAuth(parsed.kind === 'email' ? { email: parsed.value } : { phone: parsed.value });
       if (!user || user.status !== USER_STATUS.ACTIVE || !user.passwordHash || !user.email) return;
 
-      const token = randomBytes(32).toString('base64url');
-      const fp = fingerprint(token);
-      const previous = await store.get(keys.latest(user.id));
-
-      await store.setMany([
-        {
-          key: keys.token(fp),
-          value: JSON.stringify({ userId: user.id, pwdAt: user.passwordChangedAt?.getTime() ?? 0 }),
-          ttlSeconds: ttl,
-        },
-        { key: keys.latest(user.id), value: fp, ttlSeconds: ttl },
-      ]);
-      // Asking again kills the older link.
-      if (previous && previous !== fp) await store.delete(keys.token(previous));
+      const token = await storeToken(user.id, user.passwordChangedAt, ttl);
 
       // The token sits after "#", so it is never sent to a server and never appears in referrer headers.
       const link = `${deps.frontendOrigin}/reset-password#token=${token}`;
@@ -167,7 +186,11 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
 
       const user = await users.findById(peek.userId);
       // A password change since the link was issued kills the link.
-      if (!user || user.status !== USER_STATUS.ACTIVE || (user.passwordChangedAt?.getTime() ?? 0) !== peek.pwdAt) {
+           if (
+        !user ||
+        (user.status !== USER_STATUS.ACTIVE && user.status !== USER_STATUS.INVITED) ||
+        (user.passwordChangedAt?.getTime() ?? 0) !== peek.pwdAt
+      ) {
         throw invalidLink();
       }
 

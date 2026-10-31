@@ -3,6 +3,7 @@ import type { DependencyHealth } from '../common/types/health';
 import { logger } from '../common/utils/logger';
 import { withTimeout } from '../common/utils/withTimeout';
 import { env, isProduction } from './env';
+import type { ClientSession } from 'mongoose';
 
 const PING_TIMEOUT_MS = 2_000;
 const CONNECTED = 1;
@@ -88,4 +89,8 @@ export async function disconnectMongo(): Promise<void> {
 /** Makes sure every unique index exists before the app accepts traffic. */
 export async function ensureIndexes(): Promise<void> {
   await Promise.all(mongoose.modelNames().map((name) => mongoose.model(name).init()));
+}
+
+export function withTransaction<T>(work: (session: ClientSession) => Promise<T>): Promise<T> {
+  return mongoose.connection.transaction(work);
 }

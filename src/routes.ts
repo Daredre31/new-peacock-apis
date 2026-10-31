@@ -6,6 +6,9 @@ import { createAuditRouter } from './modules/audit/audit.routes';
 import { assertAllRoutesGuarded } from './common/middleware/routeGuards';
 import { createSessionRouter } from './modules/academics/session.routes';
 import { createSessionService } from './modules/academics/session.service';
+import { createStructureRouter } from './modules/academics/structure.routes';
+import { createStructureService } from './modules/academics/structure.service';
+import { createUsersModule } from './modules/users/users.module';
 
 export interface RouteDeps {
   health: HealthDependencies;
@@ -26,7 +29,13 @@ export function createRoutes({ health, auth, audit }: RouteDeps): Router {
       authenticate: auth.middleware.authenticate,
     }),
   );
-
+  router.use(
+    createStructureRouter({
+      service: createStructureService({ audit }),
+      authenticate: auth.middleware.authenticate,
+    }),
+  );
+    router.use(createUsersModule({ audit, auth }).router);
   // Each phase mounts its modules here.
 
   return router;

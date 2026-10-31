@@ -17,6 +17,7 @@ import type { AuditPort } from '../audit/audit.port';
 import type { Mailer } from '../../integrations/mailer';
 import { createCredentialsService } from './credentials.service';
 import { createForgotPasswordRateLimiters } from '../../common/middleware/rateLimiter';
+import { staffRepository } from '../users/staff.repository';
 
 export interface AuthModuleDeps {
   sessionStore: KeyValueStore;
@@ -48,6 +49,7 @@ export function createAuthModule(deps: AuthModuleDeps) {
     passwords: passwordService,
     tokens,
    audit: deps.audit,
+  loginIds: { findUserId: (loginId) => staffRepository.findUserIdByStaffNo(loginId) },
   });
 
   const middleware = createAuthMiddleware({
@@ -64,7 +66,7 @@ export function createAuthModule(deps: AuthModuleDeps) {
   });
 
   // Other modules import authenticate from here when they get their routes.
-  return { tokens, csrf, service, middleware, router };
+  return { tokens, csrf, service, middleware, router , credentials};
 }
 
 export type AuthModule = ReturnType<typeof createAuthModule>;

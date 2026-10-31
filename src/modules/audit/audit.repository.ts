@@ -11,6 +11,7 @@ export interface AuditFilter {
   entityId?: string;
   from?: Date;
   to?: Date;
+  actions?: readonly string[];
 }
 
 async function append(entry: Omit<AuditLogDocument, 'createdAt'>): Promise<void> {
@@ -26,6 +27,9 @@ async function list(
   for (const key of ['actorId', 'action', 'entityType', 'entityId'] as const) {
     const value = filter[key];
     if (value !== undefined) query[key] = value;
+  }
+    if (filter.actions && filter.actions.length > 0 && filter.action === undefined) {
+    query.action = { $in: [...filter.actions] };
   }
   if (filter.from || filter.to) {
     query.createdAt = {
