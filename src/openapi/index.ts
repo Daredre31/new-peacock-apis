@@ -7,6 +7,10 @@ import { registerSessionOperations } from '../modules/academics/session.schema';
 import { registerStructureOperations } from '../modules/academics/structure.schema';
 import { ADMIN_STAFF_CONFIG, registerStaffOperations } from '../modules/users/staff.schema';
 import { registerSecurityOperations } from '../modules/users/security.schema';
+import { registerAssignmentOperations } from '../modules/academics/assignment.schema';
+import { registerParentOperations } from '../modules/users/parent.schema';
+import { TEACHER_STAFF_CONFIG } from '../modules/users/staff.schema';
+import { registerStudentOperations } from '../modules/users/student.schema';
 
 /** Each phase adds its module's register function here. */
 export function createOperationRegistry(): OpenApiRegistry {
@@ -18,6 +22,10 @@ export function createOperationRegistry(): OpenApiRegistry {
   registerStructureOperations(registry);
   registerStaffOperations(registry, ADMIN_STAFF_CONFIG);
   registerSecurityOperations(registry);
+    registerStaffOperations(registry, TEACHER_STAFF_CONFIG);
+  registerStudentOperations(registry);
+  registerParentOperations(registry);
+  registerAssignmentOperations(registry);
   return registry;
 }
 

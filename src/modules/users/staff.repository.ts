@@ -110,5 +110,11 @@ async function softDelete(userId: string, now: Date, session: ClientSession): Pr
   const result = await StaffModel.updateOne({ userId, deletedAt: null }, { $set: { deletedAt: now } }, { session });
   return result.matchedCount > 0;
 }
+async function nameMap(userIds: string[]): Promise<Map<string, string>> {
+  const valid = [...new Set(userIds)].filter((id) => OBJECT_ID.test(id));
+  if (valid.length === 0) return new Map();
+  const rows = await StaffModel.find({ userId: { $in: valid } }).lean<Row[]>();
+  return new Map(rows.map((r) => [r.userId.toString(), `${r.profile.firstName} ${r.profile.lastName}`]));
+}
 
-export const staffRepository = { create, findByUserId, findUserIdByStaffNo, list, updateProfile, softDelete };
+export const staffRepository = { create, findByUserId, findUserIdByStaffNo, list, updateProfile, softDelete, nameMap };

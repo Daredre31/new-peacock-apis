@@ -296,6 +296,22 @@ async function unlock(id: string, restoreTo: UserStatus): Promise<boolean> {
   await UserModel.updateOne({ _id: id, status: USER_STATUS.LOCKED }, { $set: { status: restoreTo } });
   return true;
 }
+/** Which of these emails and phones are already taken, by anyone, including removed accounts. */
+async function findExistingContacts(emails: string[], phones: string[]) {
+  const clauses = [
+    ...(emails.length > 0 ? [{ email: { $in: emails } }] : []),
+    ...(phones.length > 0 ? [{ phone: { $in: phones } }] : []),
+  ];
+  const result = { emails: new Set<string>(), phones: new Set<string>() };
+  if (clauses.length === 0) return result;
+
+  const docs = await UserModel.find({ $or: clauses }, { email: 1, phone: 1 }).lean<Lean[]>();
+  for (const doc of docs) {
+    if (doc.email) result.emails.add(doc.email);
+    if (doc.phone) result.phones.add(doc.phone);
+  }
+  return result;
+}
 
 export const userRepository = {
   create,
@@ -306,5 +322,6 @@ export const userRepository = {
   setPassword,
   markEmailVerified,
   countByRole,
-  replacePasswordHash,findManyByIds, updateContact, softDelete, setLocked, unlock
+  replacePasswordHash,findManyByIds, updateContact, softDelete, setLocked, unlock,
+  findExistingContacts
 };

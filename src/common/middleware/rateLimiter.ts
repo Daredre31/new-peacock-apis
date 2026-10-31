@@ -160,3 +160,14 @@ export const createForgotPasswordRateLimiters = (redis: RedisLike | null): Reque
     onRedisFailure: 'fail-closed',
   }),
 ];
+
+/** Guessing parent claim codes: 10 tries per hour per parent account. Mounted after authenticate. */
+export const createClaimRateLimiter = (redis: RedisLike | null): RequestHandler =>
+  createRateLimiter({
+    name: 'link-claim',
+    windowMs: 60 * 60 * 1000,
+    limit: 10,
+    key: (req) => req.user?.id ?? clientIp(req),
+    redis,
+    onRedisFailure: 'fail-closed',
+  });

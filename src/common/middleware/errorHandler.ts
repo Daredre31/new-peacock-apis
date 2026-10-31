@@ -24,7 +24,13 @@ function normalizeError(err: unknown): AppError {
       case 'charset.unsupported':
         return new AppError('VALIDATION_ERROR', { message: 'Unsupported request encoding' });
     }
-
+          // Upload problems from multer (too large, too many parts).
+    if (err.name === 'MulterError') {
+      return new AppError('VALIDATION_ERROR', {
+        message: err.code === 'LIMIT_FILE_SIZE' ? 'The file is larger than 2 MB' : 'The upload could not be processed',
+        cause: err,
+      });
+    }
     // A unique index was violated and nothing caught it earlier. Safety net only:
     // services should check for duplicates and raise their own CONFLICT.
     if (err.code === 11000 && typeof err.name === 'string' && err.name.startsWith('Mongo')) {

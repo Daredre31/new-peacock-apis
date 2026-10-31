@@ -158,9 +158,33 @@ async function updateSubject(id: string, patch: Partial<{ name: string; code: st
   const row = await SubjectModel.findByIdAndUpdate(id, { $set: patch }, { new: true, runValidators: true }).lean<Row<SubjectDocument>>();
   return row ? toSubject(row) : null;
 }
+async function armsByIds(ids: string[]): Promise<Map<string, ArmRecord>> {
+  const valid = [...new Set(ids)].filter((id) => OBJECT_ID.test(id));
+  const rows = valid.length > 0 ? await ClassArmModel.find({ _id: { $in: valid } }).lean<Row<ClassArmDocument>[]>() : [];
+  return new Map(rows.map((r) => [r._id.toString(), toArm(r)]));
+}
+
+async function subjectsByIds(ids: string[]): Promise<Map<string, SubjectRecord>> {
+  const valid = [...new Set(ids)].filter((id) => OBJECT_ID.test(id));
+  const rows = valid.length > 0 ? await SubjectModel.find({ _id: { $in: valid } }).lean<Row<SubjectDocument>[]>() : [];
+  return new Map(rows.map((r) => [r._id.toString(), toSubject(r)]));
+}
+
+async function setClassTeacher(armId: string, teacherId: string): Promise<ArmRecord | null> {
+  if (!OBJECT_ID.test(armId)) return null;
+  const row = await ClassArmModel.findByIdAndUpdate(armId, { $set: { classTeacherId: teacherId } }, { new: true }).lean<Row<ClassArmDocument>>();
+  return row ? toArm(row) : null;
+}
+
+async function armIdsOfClassTeacher(teacherId: string): Promise<string[]> {
+  if (!OBJECT_ID.test(teacherId)) return [];
+  const rows = await ClassArmModel.find({ classTeacherId: teacherId }, { _id: 1 }).lean<Row<ClassArmDocument>[]>();
+  return rows.map((r) => r._id.toString());
+}
 
 export const structureRepository = {
   listClasses, findClass, classesByIds, createClass, updateClass,
   listArms, findArm, createArm, updateArm,
   listSubjects, findSubject, countExistingSubjects, createSubject, updateSubject,
+  armsByIds,subjectsByIds,setClassTeacher,armIdsOfClassTeacher
 };

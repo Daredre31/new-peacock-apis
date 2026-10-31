@@ -155,3 +155,8 @@ export const AUTH_TTL = {
   reuseGraceMs: 10_000,
 } as const;
 export const AUTH_LOCKOUT = { maxAttempts: 10, lockMs: 15 * 60 * 1000 } as const;
+/** More than this many working days counts as long leave, which the super admin decides. Open item in the spec: change it here. */
+export const LEAVE_POLICY = { longLeaveAfterWorkingDays: 5 } as const;
+
+/** Moves into the settings module later. */
+export const ANNOUNCEMENT_POLICY = { teacherPostsNeedApproval: true } as const;

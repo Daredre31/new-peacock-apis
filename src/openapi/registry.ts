@@ -17,6 +17,7 @@ export interface OperationSpec {
   success: { status: number; description: string; data: z.ZodType; paginated?: boolean };
   /** Route-specific errors. Common ones are added automatically by the builder. */
   errors?: ErrorCode[];
+  upload?: boolean;
 }
 
 export class OpenApiRegistry {

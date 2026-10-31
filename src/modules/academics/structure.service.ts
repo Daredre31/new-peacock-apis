@@ -5,7 +5,7 @@ import {
   structureRepository as repo,
   type ArmRecord,
   type ArmSort,
-  type ClassRecord,
+  // type ClassRecord,
   type ClassSort,
   type SubjectRecord,
   type SubjectSort,

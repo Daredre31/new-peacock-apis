@@ -91,7 +91,7 @@ export function createApp(deps: AppDependencies): Express {
 
     app.use(createCsrfMiddleware(auth.csrf));
 
-  app.use('/api/v1', createRoutes({ health: deps, auth, audit }));
+    app.use('/api/v1', createRoutes({ health: deps, auth, audit, store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis }));
 
   app.use(notFound);
   app.use(errorHandler);

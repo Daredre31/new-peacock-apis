@@ -1,42 +1,34 @@
 import { Router } from 'express';
-import type { AuthModule } from './modules/auth/auth.module';
-import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
-import type { AuditService } from './modules/audit/audit.service';
-import { createAuditRouter } from './modules/audit/audit.routes';
 import { assertAllRoutesGuarded } from './common/middleware/routeGuards';
-import { createSessionRouter } from './modules/academics/session.routes';
-import { createSessionService } from './modules/academics/session.service';
-import { createStructureRouter } from './modules/academics/structure.routes';
-import { createStructureService } from './modules/academics/structure.service';
+import type { RedisLike } from './common/middleware/rateLimiter';
+import { createAcademicsModule } from './modules/academics/academics.module';
+import { createAuditRouter } from './modules/audit/audit.routes';
+import type { AuditService } from './modules/audit/audit.service';
+import type { AuthModule } from './modules/auth/auth.module';
+import type { KeyValueStore } from './modules/auth/keyValueStore';
+import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
 import { createUsersModule } from './modules/users/users.module';
 
 export interface RouteDeps {
   health: HealthDependencies;
   auth: AuthModule;
   audit: AuditService;
+  store: KeyValueStore;
+  rateLimitRedis: RedisLike | null;
 }
 
-export function createRoutes({ health, auth, audit }: RouteDeps): Router {
+export function createRoutes({ health, auth, audit, store, rateLimitRedis }: RouteDeps): Router {
   const router = Router();
 
   router.use(createHealthRouter(health));
   router.use('/auth', auth.router);
-   router.use('/audit-logs', createAuditRouter({ service: audit, authenticate: auth.middleware.authenticate }));
-  assertAllRoutesGuarded(router);
-    router.use(
-    createSessionRouter({
-      service: createSessionService({ audit }),
-      authenticate: auth.middleware.authenticate,
-    }),
-  );
-  router.use(
-    createStructureRouter({
-      service: createStructureService({ audit }),
-      authenticate: auth.middleware.authenticate,
-    }),
-  );
-    router.use(createUsersModule({ audit, auth }).router);
-  // Each phase mounts its modules here.
+  router.use('/audit-logs', createAuditRouter({ service: audit, authenticate: auth.middleware.authenticate }));
 
+  const academics = createAcademicsModule({ audit, auth, store });
+  router.use(academics.router);
+  router.use(createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms }).router);
+
+  // A route without authorize() or publicRoute() stops the app from starting.
+  assertAllRoutesGuarded(router);
   return router;
 }

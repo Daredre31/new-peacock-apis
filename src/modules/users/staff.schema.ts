@@ -7,23 +7,27 @@ import { GENDERS, STAFF_TYPES, type StaffType } from './staff.model';
 export interface StaffRouteConfig {
   type: StaffType;
   path: string;
+  list: Permission;
   read: Permission;
   write: Permission;
+  /** True when a member of this group may read and edit their own profile. */
+  selfService: boolean;
   tag: string;
   singular: string;
   plural: string;
 }
 
+
+
 export const ADMIN_STAFF_CONFIG: StaffRouteConfig = {
-  type: STAFF_TYPES.ADMIN,
-  path: '/admins',
-  read: 'admins:manage',
-  write: 'admins:manage',
-  tag: 'admins',
-  singular: 'Admin',
-  plural: 'Admins',
+  type: STAFF_TYPES.ADMIN, path: '/admins', list: 'admins:manage', read: 'admins:manage', write: 'admins:manage',
+  selfService: false, tag: 'admins', singular: 'Admin', plural: 'Admins',
 };
 
+export const TEACHER_STAFF_CONFIG: StaffRouteConfig = {
+  type: STAFF_TYPES.TEACHER, path: '/teachers', list: 'teachers:write', read: 'teachers:read', write: 'teachers:write',
+  selfService: true, tag: 'teachers', singular: 'Teacher', plural: 'Teachers',
+};
 const objectId = z.string().regex(/^[a-f0-9]{24}$/);
 const idParams = z.object({ id: objectId });
 const name = z.string().trim().min(1).max(60);
@@ -95,13 +99,12 @@ const createdSchema = z.object({
 
 export function registerStaffOperations(registry: OpenApiRegistry, cfg: StaffRouteConfig): void {
   const tags = [cfg.tag];
-  const readRoles = PERMISSIONS[cfg.read];
-  const writeRoles = PERMISSIONS[cfg.write];
-  const id = `{id}`;
+  const one = `${cfg.path}/{id}`;
+  const lower = cfg.singular.toLowerCase();
 
-  registry.register({ method: 'get', path: cfg.path, operationId: `list${cfg.plural}`, summary: `List ${cfg.plural.toLowerCase()}`, tags, roles: readRoles, request: { query: listStaffQuery }, success: { status: 200, description: 'A page', data: z.array(staffViewSchema), paginated: true } });
-  registry.register({ method: 'post', path: cfg.path, operationId: `create${cfg.singular}`, summary: `Create a ${cfg.singular.toLowerCase()} account with a temporary password or an email invite`, tags, roles: writeRoles, request: { body: createStaffBody }, success: { status: 201, description: 'Created', data: createdSchema }, errors: ['CONFLICT'] });
-  registry.register({ method: 'get', path: `${cfg.path}/${id}`, operationId: `get${cfg.singular}`, summary: `One ${cfg.singular.toLowerCase()}`, tags, roles: readRoles, request: { params: idParams }, success: { status: 200, description: 'Found', data: staffViewSchema }, errors: ['NOT_FOUND'] });
-  registry.register({ method: 'patch', path: `${cfg.path}/${id}`, operationId: `update${cfg.singular}`, summary: `Update a ${cfg.singular.toLowerCase()} profile or contact`, tags, roles: writeRoles, request: { params: idParams, body: updateStaffBody }, success: { status: 200, description: 'Updated', data: staffViewSchema }, errors: ['NOT_FOUND', 'CONFLICT'] });
-  registry.register({ method: 'delete', path: `${cfg.path}/${id}`, operationId: `delete${cfg.singular}`, summary: `Remove a ${cfg.singular.toLowerCase()} (soft delete). Ends all their logins`, tags, roles: writeRoles, request: { params: idParams }, success: { status: 200, description: 'Removed', data: z.null() }, errors: ['NOT_FOUND'] });
+  registry.register({ method: 'get', path: cfg.path, operationId: `list${cfg.plural}`, summary: `List ${cfg.plural.toLowerCase()}`, tags, roles: PERMISSIONS[cfg.list], request: { query: listStaffQuery }, success: { status: 200, description: 'A page', data: z.array(staffViewSchema), paginated: true } });
+  registry.register({ method: 'post', path: cfg.path, operationId: `create${cfg.singular}`, summary: `Create a ${lower} account with a temporary password or an email invite`, tags, roles: PERMISSIONS[cfg.write], request: { body: createStaffBody }, success: { status: 201, description: 'Created', data: createdSchema }, errors: ['CONFLICT'] });
+  registry.register({ method: 'get', path: one, operationId: `get${cfg.singular}`, summary: cfg.selfService ? `One ${lower} (a teacher sees only themselves)` : `One ${lower}`, tags, roles: PERMISSIONS[cfg.read], request: { params: idParams }, success: { status: 200, description: 'Found', data: staffViewSchema }, errors: ['NOT_FOUND'] });
+  registry.register({ method: 'patch', path: one, operationId: `update${cfg.singular}`, summary: cfg.selfService ? `Update a ${lower}. A teacher may change only their own address and phone` : `Update a ${lower}`, tags, roles: cfg.selfService ? PERMISSIONS[cfg.read] : PERMISSIONS[cfg.write], request: { params: idParams, body: updateStaffBody }, success: { status: 200, description: 'Updated', data: staffViewSchema }, errors: ['NOT_FOUND', 'CONFLICT'] });
+  registry.register({ method: 'delete', path: one, operationId: `delete${cfg.singular}`, summary: `Remove a ${lower} (soft delete). Ends all their logins`, tags, roles: PERMISSIONS[cfg.write], request: { params: idParams }, success: { status: 200, description: 'Removed', data: z.null() }, errors: ['NOT_FOUND'] });
 }

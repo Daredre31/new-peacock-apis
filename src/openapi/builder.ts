@@ -24,7 +24,7 @@ export interface OperationObject {
   tags: string[];
   'x-roles': Role[];
   parameters?: ParameterObject[];
-  requestBody?: { required: true; content: { 'application/json': { schema: JsonSchema } } };
+  requestBody?: { required: true; content: Record<string, { schema: JsonSchema }> };
   responses: Record<string, ResponseObject>;
 }
 
@@ -155,6 +155,16 @@ function buildOperation(op: OperationSpec): OperationObject {
       requestBody: {
         required: true as const,
         content: { 'application/json': { schema: toSchema(op.request.body, 'input') } },
+      },
+    }),
+        ...(op.upload && {
+      requestBody: {
+        required: true as const,
+        content: {
+          'multipart/form-data': {
+            schema: { type: 'object', required: ['file'], properties: { file: { type: 'string', format: 'binary' } } },
+          },
+        },
       },
     }),
     responses,

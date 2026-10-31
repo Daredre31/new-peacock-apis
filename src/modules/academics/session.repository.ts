@@ -174,7 +174,10 @@ async function makeTermCurrent(termId: string, sessionId: string): Promise<void>
     await SessionModel.updateOne({ _id: sessionId }, { $set: { isCurrent: true } }, { session });
   });
 }
-
+async function findCurrentSession(): Promise<SessionRecord | null> {
+  const row = await SessionModel.findOne({ isCurrent: true }).lean<SessionRow>();
+  return row ? toSession(row) : null;
+}
 export const sessionRepository = {
   listSessions,
   findSession,
@@ -189,4 +192,5 @@ export const sessionRepository = {
   termOverlaps,
   setTermLocked,
   makeTermCurrent,
+  findCurrentSession
 };

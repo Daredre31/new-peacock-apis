@@ -18,6 +18,7 @@ import type { Mailer } from '../../integrations/mailer';
 import { createCredentialsService } from './credentials.service';
 import { createForgotPasswordRateLimiters } from '../../common/middleware/rateLimiter';
 import { staffRepository } from '../users/staff.repository';
+import { studentRepository } from '../users/student.repository';
 
 export interface AuthModuleDeps {
   sessionStore: KeyValueStore;
@@ -49,7 +50,10 @@ export function createAuthModule(deps: AuthModuleDeps) {
     passwords: passwordService,
     tokens,
    audit: deps.audit,
-  loginIds: { findUserId: (loginId) => staffRepository.findUserIdByStaffNo(loginId) },
+      loginIds: {
+      findUserId: async (loginId) =>
+        (await staffRepository.findUserIdByStaffNo(loginId)) ?? (await studentRepository.findUserIdByAdmissionNo(loginId)),
+    },
   });
 
   const middleware = createAuthMiddleware({
