@@ -8,6 +8,8 @@ import type { AuthModule } from './modules/auth/auth.module';
 import type { KeyValueStore } from './modules/auth/keyValueStore';
 import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
 import { createUsersModule } from './modules/users/users.module';
+import type { Mailer } from './integrations/mailer';
+import { createCommunicationModule } from './modules/communication/communication.module';
 
 export interface RouteDeps {
   health: HealthDependencies;
@@ -15,9 +17,10 @@ export interface RouteDeps {
   audit: AuditService;
   store: KeyValueStore;
   rateLimitRedis: RedisLike | null;
+  mailer: Mailer;
 }
 
-export function createRoutes({ health, auth, audit, store, rateLimitRedis }: RouteDeps): Router {
+export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer }: RouteDeps): Router {
   const router = Router();
 
   router.use(createHealthRouter(health));
@@ -27,6 +30,13 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis }: Rou
   const academics = createAcademicsModule({ audit, auth, store });
   router.use(academics.router);
   router.use(createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms }).router);
+    const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms });
+  router.use(users.router);
+  router.use(
+    createCommunicationModule({
+      audit, auth, mailer, scope: users.scope, armIdsOfUser: users.armIdsOfUser, teacherArms: academics.teacherArms,
+    }).router,
+  );
 
   // A route without authorize() or publicRoute() stops the app from starting.
   assertAllRoutesGuarded(router);

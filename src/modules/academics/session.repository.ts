@@ -178,6 +178,15 @@ async function findCurrentSession(): Promise<SessionRecord | null> {
   const row = await SessionModel.findOne({ isCurrent: true }).lean<SessionRow>();
   return row ? toSession(row) : null;
 }
+
+/** The term a calendar day (YYYY-MM-DD) falls in, if any. */
+async function findTermByDate(date: string): Promise<TermRecord | null> {
+  const row = await TermModel.findOne({
+    startDate: { $lte: new Date(`${date}T23:59:59.999Z`) },
+    endDate: { $gte: new Date(`${date}T00:00:00.000Z`) },
+  }).lean<TermRow>();
+  return row ? toTerm(row) : null;
+}
 export const sessionRepository = {
   listSessions,
   findSession,
@@ -192,5 +201,6 @@ export const sessionRepository = {
   termOverlaps,
   setTermLocked,
   makeTermCurrent,
-  findCurrentSession
+  findCurrentSession,
+  findTermByDate
 };

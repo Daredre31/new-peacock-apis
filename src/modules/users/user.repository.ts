@@ -312,7 +312,14 @@ async function findExistingContacts(emails: string[], phones: string[]) {
   }
   return result;
 }
-
+/** Active (not locked, not removed) accounts with any of these roles. */
+async function findIdsByRoles(roles: Role[]): Promise<string[]> {
+  const docs = await UserModel.find(
+    { role: { $in: roles }, status: USER_STATUS.ACTIVE, deletedAt: null },
+    { _id: 1 },
+  ).lean<Lean[]>();
+  return docs.map((d) => d._id.toString());
+}
 export const userRepository = {
   create,
   findById,
@@ -323,5 +330,5 @@ export const userRepository = {
   markEmailVerified,
   countByRole,
   replacePasswordHash,findManyByIds, updateContact, softDelete, setLocked, unlock,
-  findExistingContacts
+  findExistingContacts, findIdsByRoles
 };

@@ -27,6 +27,7 @@ import { studentRepository } from './student.repository';
 import { createStudentRouter } from './student.routes';
 import { createStudentService } from './student.service';
 import { userRepository } from './user.repository';
+import { ROLES , type Role } from '../../config/constants';
 
 export function createUsersModule(deps: {
   audit: AuditService;
@@ -48,6 +49,28 @@ export function createUsersModule(deps: {
       teacherArms,
     }),
   );
+
+    /** Class arms this person belongs to this session: a student's own, a parent's children's, a teacher's. */
+  async function armIdsOfUser(actor: { id: string; role: Role }): Promise<string[]> {
+    const current = await sessionRepository.findCurrentSession();
+    if (!current) return [];
+    switch (actor.role) {
+      case ROLES.TEACHER:
+        return teacherArms.armIdsOf(actor.id);
+      case ROLES.STUDENT: {
+        const enrolled = await enrolmentRepository.forStudents([actor.id], current.id);
+        const arm = enrolled.get(actor.id)?.classArmId;
+        return arm ? [arm] : [];
+      }
+      case ROLES.PARENT: {
+        const children = await linkRepository.activeStudentIdsOf(actor.id);
+        const enrolled = await enrolmentRepository.forStudents(children, current.id);
+        return [...new Set([...enrolled.values()].map((e) => e.classArmId))];
+      }
+      default:
+        return [];
+    }
+  }
 
   const staffService = createStaffService({ users: userRepository, staff: staffRepository, ...common });
   const studentService = createStudentService({
@@ -99,5 +122,5 @@ export function createUsersModule(deps: {
   );
   router.use(createSecurityRouter({ service: securityService, authenticate }));
 
-  return { router };
+  return { router, scope, armIdsOfUser };
 }

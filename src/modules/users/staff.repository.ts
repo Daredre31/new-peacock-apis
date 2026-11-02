@@ -116,5 +116,14 @@ async function nameMap(userIds: string[]): Promise<Map<string, string>> {
   const rows = await StaffModel.find({ userId: { $in: valid } }).lean<Row[]>();
   return new Map(rows.map((r) => [r.userId.toString(), `${r.profile.firstName} ${r.profile.lastName}`]));
 }
+async function activeUserIds(userIds: string[]): Promise<Set<string>> {
+  const valid = [...new Set(userIds)].filter((id) => OBJECT_ID.test(id));
+  if (valid.length === 0) return new Set();
+  const rows = await StaffModel.find({ userId: { $in: valid }, deletedAt: null }, { userId: 1 }).lean<Row[]>();
+  return new Set(rows.map((r) => r.userId.toString()));
+}
 
-export const staffRepository = { create, findByUserId, findUserIdByStaffNo, list, updateProfile, softDelete, nameMap };
+export const staffRepository = { create, findByUserId, 
+  findUserIdByStaffNo,
+   list, updateProfile, 
+   softDelete, nameMap , activeUserIds};

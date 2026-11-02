@@ -38,8 +38,10 @@ const noStore: RequestHandler = (_req, res, next) => {
 export function createApp(deps: AppDependencies): Express {
   const app = express();
   const audit = createAuditService()
+  const mailer = deps.mailer ?? createMailer();
   const auth = createAuthModule({ sessionStore: deps.sessionStore, rateLimitRedis: 
-    deps.rateLimitRedis, audit ,mailer: deps.mailer ?? createMailer()});
+               deps.rateLimitRedis, audit , mailer});
+    
 
   app.disable('x-powered-by');
   app.set('etag', false);
@@ -91,7 +93,7 @@ export function createApp(deps: AppDependencies): Express {
 
     app.use(createCsrfMiddleware(auth.csrf));
 
-    app.use('/api/v1', createRoutes({ health: deps, auth, audit, store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis }));
+    app.use('/api/v1', createRoutes({ health: deps, auth, audit, mailer, store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis, }));
 
   app.use(notFound);
   app.use(errorHandler);

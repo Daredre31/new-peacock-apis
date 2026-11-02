@@ -11,6 +11,10 @@ import { registerAssignmentOperations } from '../modules/academics/assignment.sc
 import { registerParentOperations } from '../modules/users/parent.schema';
 import { TEACHER_STAFF_CONFIG } from '../modules/users/staff.schema';
 import { registerStudentOperations } from '../modules/users/student.schema';
+import { registerAnnouncementOperations } from '../modules/announcements/announcement.schema';
+import { registerAttendanceOperations } from '../modules/attendance/attendance.schema';
+import { registerNotificationOperations } from '../modules/notifications/notification.schema';
+import { registerRequestOperations } from '../modules/requests/request.schema';
 
 /** Each phase adds its module's register function here. */
 export function createOperationRegistry(): OpenApiRegistry {
@@ -26,6 +30,10 @@ export function createOperationRegistry(): OpenApiRegistry {
   registerStudentOperations(registry);
   registerParentOperations(registry);
   registerAssignmentOperations(registry);
+    registerNotificationOperations(registry);
+  registerRequestOperations(registry);
+  registerAnnouncementOperations(registry);
+  registerAttendanceOperations(registry);
   return registry;
 }
 
