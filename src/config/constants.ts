@@ -128,6 +128,7 @@ export const PERMISSIONS = {
   'grading-scale:read': [SA, AD, TE],
   'grading-scale:write': [SA],
   'uploads:presign': ALL_ROLES,
+    'tasks:own': [ST], // a student's own task list and analytics
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

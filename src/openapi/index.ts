@@ -15,6 +15,8 @@ import { registerAnnouncementOperations } from '../modules/announcements/announc
 import { registerAttendanceOperations } from '../modules/attendance/attendance.schema';
 import { registerNotificationOperations } from '../modules/notifications/notification.schema';
 import { registerRequestOperations } from '../modules/requests/request.schema';
+import { registerTaskOperations } from '../modules/tasks/task.schema';
+import { registerSettingsOperations } from '../modules/settings/settings.schema';
 
 /** Each phase adds its module's register function here. */
 export function createOperationRegistry(): OpenApiRegistry {
@@ -34,6 +36,9 @@ export function createOperationRegistry(): OpenApiRegistry {
   registerRequestOperations(registry);
   registerAnnouncementOperations(registry);
   registerAttendanceOperations(registry);
+    registerTaskOperations(registry);
+  registerSettingsOperations(registry);
+  
   return registry;
 }
 

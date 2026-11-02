@@ -10,6 +10,8 @@ import { createHealthRouter, type HealthDependencies } from './modules/health/he
 import { createUsersModule } from './modules/users/users.module';
 import type { Mailer } from './integrations/mailer';
 import { createCommunicationModule } from './modules/communication/communication.module';
+import { createTasksModule } from './modules/tasks/tasks.module';
+import { createSettingsModule } from './modules/settings/settings.module';
 
 export interface RouteDeps {
   health: HealthDependencies;
@@ -32,11 +34,12 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
   router.use(createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms }).router);
     const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms });
   router.use(users.router);
-  router.use(
-    createCommunicationModule({
-      audit, auth, mailer, scope: users.scope, armIdsOfUser: users.armIdsOfUser, teacherArms: academics.teacherArms,
-    }).router,
-  );
+    const communication = createCommunicationModule({
+    audit, auth, mailer, scope: users.scope, armIdsOfUser: users.armIdsOfUser, teacherArms: academics.teacherArms,
+  });
+  router.use(communication.router);
+  router.use(createTasksModule({ audit, auth, scope: users.scope, notifier: communication.notifier }).router);
+  router.use(createSettingsModule({ audit, auth }).router);
 
   // A route without authorize() or publicRoute() stops the app from starting.
   assertAllRoutesGuarded(router);
