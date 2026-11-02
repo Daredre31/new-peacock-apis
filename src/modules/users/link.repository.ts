@@ -111,6 +111,16 @@ async function activeStudentIdsOf(parentId: string): Promise<string[]> {
   if (!OBJECT_ID.test(parentId)) return [];
   const rows = await LinkModel.find({ parentId, status: LINK_STATUS.ACTIVE }, { studentId: 1 }).lean<Row[]>();
   return rows.map((r) => r.studentId.toString());
+
 }
 
-export const linkRepository = { find, findById, upsert, createPending, setStatus, list, hasActive, activeStudentIdsOf };
+async function activeParentIdsOf(studentIds: string[]): Promise<string[]> {
+  const ids = studentIds.filter((id) => OBJECT_ID.test(id));
+  if (ids.length === 0) return [];
+  const rows = await LinkModel.find({ studentId: { $in: ids }, status: LINK_STATUS.ACTIVE }, { parentId: 1 }).lean<Row[]>();
+  return [...new Set(rows.map((r) => r.parentId.toString()))];
+}
+
+export const linkRepository = { find, findById, upsert, createPending, setStatus, list, hasActive, activeStudentIdsOf,
+  activeParentIdsOf
+ };

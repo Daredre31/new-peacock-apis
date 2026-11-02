@@ -87,4 +87,14 @@ async function armIdsOfTeacher(teacherId: string, sessionId: string): Promise<st
   return ids.map(String);
 }
 
-export const assignmentRepository = { create, findById, list, changeTeacher, remove, armIdsOfTeacher };
+async function holds(teacherId: string, subjectId: string, classArmId: string, sessionId: string): Promise<boolean> {
+  if (![teacherId, subjectId, classArmId, sessionId].every((id) => OBJECT_ID.test(id))) return false;
+  return (await AssignmentModel.exists({ teacherId, subjectId, classArmId, sessionId })) !== null;
+}
+
+async function subjectIdsOfArm(classArmId: string, sessionId: string): Promise<string[]> {
+  if (!OBJECT_ID.test(classArmId) || !OBJECT_ID.test(sessionId)) return [];
+  return (await AssignmentModel.distinct('subjectId', { classArmId, sessionId })).map(String);
+}
+
+export const assignmentRepository = { create, findById, list, changeTeacher, remove, armIdsOfTeacher , holds , subjectIdsOfArm};

@@ -18,6 +18,7 @@ export interface OperationSpec {
   /** Route-specific errors. Common ones are added automatically by the builder. */
   errors?: ErrorCode[];
   upload?: boolean;
+  binaryResponse?: string;
 }
 
 export class OpenApiRegistry {

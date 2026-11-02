@@ -182,7 +182,32 @@ async function applyGrade(
   return row ? toSubmission(row) : null;
 }
 
+/** For each student: the average percentage over graded tasks marked "counts to CA" in this subject and class. */
+async function caAverages(classArmId: string, subjectId: string, sessionId: string) {
+  const found = await TaskModel.find({ classArmId, subjectId, sessionId, countsToCA: true }, { maxScore: 1 }).lean<Row<TaskDocument>[]>();
+  const byStudent = new Map<string, { average: number; graded: number }>();
+  if (found.length === 0) return { taskCount: 0, byStudent };
+
+  const max = new Map(found.map((t) => [t._id.toString(), t.maxScore]));
+  const subs = await SubmissionModel.find({
+    taskId: { $in: found.map((t) => t._id) }, status: SUBMISSION_STATUS.GRADED, score: { $ne: null },
+  }).lean<Row<SubmissionDocument>[]>();
+
+  const acc = new Map<string, { sum: number; n: number }>();
+  for (const s of subs) {
+    const m = max.get(s.taskId.toString());
+    if (!m || s.score === null) continue;
+    const key = s.studentId.toString();
+    const cur = acc.get(key) ?? { sum: 0, n: 0 };
+    cur.sum += (s.score / m) * 100;
+    cur.n += 1;
+    acc.set(key, cur);
+  }
+  for (const [key, v] of acc) byStudent.set(key, { average: Math.round((v.sum / v.n) * 10) / 10, graded: v.n });
+  return { taskCount: found.length, byStudent };
+}
+
 export const taskRepository = {
   createTask, findTask, updateTask, deleteTask, listTasks, allTasksForArm, hasSubmissions, highestScore,
-  upsertSubmission, findSubmission, submissionsOfTask, submissionsOfStudent, applyGrade,
+  upsertSubmission, findSubmission, submissionsOfTask, submissionsOfStudent, applyGrade,caAverages
 };

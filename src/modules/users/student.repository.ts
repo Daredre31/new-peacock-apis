@@ -126,7 +126,18 @@ async function softDelete(userId: string, now: Date, session: ClientSession): Pr
   const result = await StudentModel.updateOne({ userId, deletedAt: null }, { $set: { deletedAt: now } }, { session });
   return result.matchedCount > 0;
 }
+async function userIdsByAdmissionNos(nos: string[]): Promise<Map<string, string>> {
+  if (nos.length === 0) return new Map();
+  const rows = await StudentModel.find({ admissionNo: { $in: nos }, deletedAt: null }, { admissionNo: 1, userId: 1 }).lean<Row[]>();
+  return new Map(rows.map((r) => [r.admissionNo, r.userId.toString()]));
+}
 
+async function profileMap(userIds: string[]): Promise<Map<string, { name: string; admissionNo: string }>> {
+  const ids = [...new Set(userIds)].filter((id) => OBJECT_ID.test(id));
+  if (ids.length === 0) return new Map();
+  const rows = await StudentModel.find({ userId: { $in: ids } }).lean<Row[]>();
+  return new Map(rows.map((r) => [r.userId.toString(), { name: `${r.profile.firstName} ${r.profile.lastName}`, admissionNo: r.admissionNo }]));
+}
 export const studentRepository = {
-  create, findByUserId, findManyByUserIds, findUserIdByAdmissionNo, nameMap, list, update, softDelete,
+  create, findByUserId, findManyByUserIds, findUserIdByAdmissionNo, nameMap, list, update, softDelete, profileMap, userIdsByAdmissionNos
 };

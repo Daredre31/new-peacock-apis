@@ -15,7 +15,7 @@ export interface ParameterObject {
 
 export interface ResponseObject {
   description: string;
-  content: { 'application/json': { schema: JsonSchema } };
+ content: Record<string, { schema: JsonSchema }>;
 }
 
 export interface OperationObject {
@@ -125,10 +125,12 @@ function buildOperation(op: OperationSpec): OperationObject {
     },
   };
 
-  const responses: Record<string, ResponseObject> = {
+   const responses: Record<string, ResponseObject> = {
     [String(success.status)]: {
       description: success.description,
-      content: { 'application/json': { schema: envelope } },
+      content: op.binaryResponse
+        ? { [op.binaryResponse]: { schema: { type: 'string', format: 'binary' } } }
+        : { 'application/json': { schema: envelope } },
     },
   };
 

@@ -195,7 +195,29 @@ async function listStaffAttendance(
   return { items: rows.map(toStaff), total };
 }
 
+async function summaryForMany(studentIds: string[], from?: string, to?: string): Promise<Map<string, Record<AttendanceStatus, number>>> {
+  const ids = studentIds.filter((id) => OBJECT_ID.test(id)).map((id) => new mongoose.Types.ObjectId(id));
+  const result = new Map<string, Record<AttendanceStatus, number>>();
+  if (ids.length === 0) return result;
+
+  const match: Record<string, unknown> = { studentId: { $in: ids } };
+  const range = dateRange(from, to);
+  if (range) match.date = range;
+
+  const grouped = await AttendanceModel.aggregate<{ _id: { s: Types.ObjectId; st: AttendanceStatus }; count: number }>([
+    { $match: match },
+    { $group: { _id: { s: '$studentId', st: '$status' }, count: { $sum: 1 } } },
+  ]);
+  for (const g of grouped) {
+    const key = g._id.s.toString();
+    const entry = result.get(key) ?? { PRESENT: 0, ABSENT: 0, LATE: 0, EXCUSED: 0 };
+    entry[g._id.st] = g.count;
+    result.set(key, entry);
+  }
+  return result;
+}
+
 export const attendanceRepository = {
   upsertAttendance, listAttendance, summaryFor, markExcused, noticesCovering,
-  createNotice, listNotices, upsertStaffAttendance, listStaffAttendance,
+  createNotice, listNotices, upsertStaffAttendance, listStaffAttendance, summaryForMany
 };
