@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "dist/server.js",
+    "build": "tsup",
     "start": "node --enable-source-maps dist/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
