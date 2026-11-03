@@ -48,6 +48,12 @@ const schema = z
       .transform((value) => value === 'true')
       .optional(),
 
+          // Run the background workers inside the API process. Set to false to run them separately later.
+    WORKERS_ENABLED: z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .optional(),
+
     ACCESS_TOKEN_SECRET: secret,
     REFRESH_TOKEN_SECRET: secret,
     CSRF_SECRET: secret,
@@ -82,7 +88,11 @@ const schema = z
       }
     }
   })
-    .transform((cfg) => ({ ...cfg, DOCS_ENABLED: cfg.DOCS_ENABLED ?? cfg.NODE_ENV !== 'production' }));
+      .transform((cfg) => ({
+    ...cfg,
+    DOCS_ENABLED: cfg.DOCS_ENABLED ?? cfg.NODE_ENV !== 'production',
+    WORKERS_ENABLED: cfg.WORKERS_ENABLED ?? true,
+  }));
 
 export type Env = z.infer<typeof schema>;
 

@@ -43,7 +43,7 @@ export async function writeScores(scores: Pick<typeof scoreRepository, 'saveMany
   }
 }
 
-const fail = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
+// const fail = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
 
 export function createScoresService(deps: ScoresServiceDeps) {
   const { ctx, scores, settings, assignments, structure, students, tasks, users, notifier, audit } = deps;

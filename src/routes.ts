@@ -12,6 +12,10 @@ import type { Mailer } from './integrations/mailer';
 import { createCommunicationModule } from './modules/communication/communication.module';
 import { createTasksModule } from './modules/tasks/tasks.module';
 import { createSettingsModule } from './modules/settings/settings.module';
+import type { ExamJobs } from './jobs/exam.jobs';
+import { createResultsModule } from './modules/results/results.module';
+import { scoreRepository } from './modules/results/score.repository';
+import { createCbtModule } from './modules/cbt/cbt.module';
 
 export interface RouteDeps {
   health: HealthDependencies;
@@ -20,9 +24,10 @@ export interface RouteDeps {
   store: KeyValueStore;
   rateLimitRedis: RedisLike | null;
   mailer: Mailer;
+  examJobs: ExamJobs;
 }
 
-export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer }: RouteDeps): Router {
+export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer, examJobs }: RouteDeps): Router {
   const router = Router();
 
   router.use(createHealthRouter(health));
@@ -39,8 +44,16 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
   });
   router.use(communication.router);
   router.use(createTasksModule({ audit, auth, scope: users.scope, notifier: communication.notifier }).router);
-  router.use(createSettingsModule({ audit, auth }).router);
+  // router.use(createSettingsModule({ audit, auth }).router);
 
+    const settings = createSettingsModule({ audit, auth, assessmentInUse: () => scoreRepository.anyExists() });
+  router.use(settings.router);
+  router.use(createResultsModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store }).router);
+    router.use(
+    createCbtModule({
+      audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs,
+    }).router,
+  );
   // A route without authorize() or publicRoute() stops the app from starting.
   assertAllRoutesGuarded(router);
   return router;

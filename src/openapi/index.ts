@@ -18,6 +18,7 @@ import { registerRequestOperations } from '../modules/requests/request.schema';
 import { registerTaskOperations } from '../modules/tasks/task.schema';
 import { registerSettingsOperations } from '../modules/settings/settings.schema';
 import { registerResultsOperations } from '../modules/results/results.schema';
+import { registerCbtOperations } from '../modules/cbt/cbt.schema';
 
 /** Each phase adds its module's register function here. */
 export function createOperationRegistry(): OpenApiRegistry {
@@ -40,6 +41,7 @@ export function createOperationRegistry(): OpenApiRegistry {
     registerTaskOperations(registry);
   registerSettingsOperations(registry);
   registerResultsOperations(registry);
+  registerCbtOperations(registry);
   
   return registry;
 }

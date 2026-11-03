@@ -17,6 +17,9 @@ import { createAuthModule } from './modules/auth/auth.module';
 import type { KeyValueStore } from './modules/auth/keyValueStore';
 import { createAuditService } from './modules/audit/audit.service';
 import { createMailer, type Mailer } from './integrations/mailer';
+import { createExamJobs } from './jobs/exam.jobs'; 
+import type { ExamJobs } from './jobs/exam.jobs';
+
 
 
 
@@ -27,6 +30,7 @@ export interface AppDependencies extends HealthDependencies {
   docsEnabled?: boolean;
   sessionStore: KeyValueStore,
   mailer?: Mailer;
+  examJobs?: ExamJobs;
 }
 
 // Responses carry personal and financial data, so nothing may be cached anywhere.
@@ -93,7 +97,7 @@ export function createApp(deps: AppDependencies): Express {
 
     app.use(createCsrfMiddleware(auth.csrf));
 
-    app.use('/api/v1', createRoutes({ health: deps, auth, audit, mailer, store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis, }));
+      app.use('/api/v1', createRoutes({ health: deps, auth, audit, store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis, mailer, examJobs: deps.examJobs ?? createExamJobs(null) }));
 
   app.use(notFound);
   app.use(errorHandler);
