@@ -26,6 +26,7 @@ export function createStudentResultsService(deps: {
   attendance: Pick<typeof attendanceRepository, 'summaryForMany'>;
   scope: Pick<ScopeService, 'assertCanAccessStudent'>;
   gate: ReportGate;
+  school?: { getName(): Promise<string> }
 }) {
   const { ctx, scores, reportCards, sessions, staff, attendance, scope, gate } = deps;
 
@@ -101,7 +102,7 @@ export function createStudentResultsService(deps: {
         : attendanceSummaryOf((await attendance.summaryForMany([studentId], from, to)).get(studentId));
 
       const buffer = await renderReportCard({
-        school: SCHOOL_NAME, studentName: me.name, admissionNo: me.admissionNo, className: results.classArmName,
+        school: deps.school ? await deps.school.getName() : SCHOOL_NAME, studentName: me.name, admissionNo: me.admissionNo, className: results.classArmName,
         termName: results.term.name, sessionName: sessionRecord?.name ?? '',
         componentHeaders: results.config.components.map((c) => `${c.key} /${c.max}`),
         rows: results.subjects.flatMap((sub) => {

@@ -51,11 +51,12 @@ export function createResultsModule(deps: {
   const studentResults = createStudentResultsService({
     ctx, scores: scoreRepository, reportCards: reportCardRepository, sessions: sessionRepository, staff: staffRepository,
     attendance: attendanceRepository, scope: deps.scope, gate: deps.reportGate ?? openReportGate,
+    
   });
 
   return {
     router: createResultsRouter({
       scoresService, importService, resultsService, reportCardsService, studentResults, authenticate: deps.auth.middleware.authenticate,
-    }),
+    }), ctx
   };
 }

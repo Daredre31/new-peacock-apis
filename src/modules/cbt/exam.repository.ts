@@ -136,4 +136,11 @@ async function listForArm(armId: string, sessionId: string, since: Date): Promis
   return rows.map(toRecord);
 }
 
-export const examRepository = { create, findById, updateEditable, remove, list, transition, setQuestionStats, markReleased, listForArm };
+async function upcomingForTeacher(teacherId: string, now: Date, limit: number): Promise<ExamRecord[]> {
+  if (!OBJECT_ID.test(teacherId)) return [];
+  const rows = await ExamModel.find({ teacherId, status: EXAM_STATUS.PUBLISHED, windowEnd: { $gte: now } })
+    .sort({ windowStart: 1 }).limit(limit).lean<Row[]>();
+  return rows.map(toRecord);
+}
+
+export const examRepository = { create, findById, updateEditable, remove, list, transition, setQuestionStats, markReleased, listForArm , upcomingForTeacher};

@@ -121,6 +121,13 @@ async function activeParentIdsOf(studentIds: string[]): Promise<string[]> {
   return [...new Set(rows.map((r) => r.parentId.toString()))];
 }
 
+async function activeLinksForStudents(studentIds: string[]): Promise<{ studentId: string; parentId: string; relationship: Relationship }[]> {
+  const ids = studentIds.filter((id) => OBJECT_ID.test(id));
+  if (ids.length === 0) return [];
+  const rows = await LinkModel.find({ studentId: { $in: ids }, status: LINK_STATUS.ACTIVE }).lean<Row[]>();
+  return rows.map((r) => ({ studentId: r.studentId.toString(), parentId: r.parentId.toString(), relationship: r.relationship }));
+}
+
 export const linkRepository = { find, findById, upsert, createPending, setStatus, list, hasActive, activeStudentIdsOf,
-  activeParentIdsOf
+  activeParentIdsOf, activeLinksForStudents
  };

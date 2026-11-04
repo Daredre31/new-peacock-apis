@@ -52,7 +52,9 @@ export function createCbtModule(deps: {
     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository, students: studentRepository,
   });
 
-  return {
+    return {
     router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, authenticate: deps.auth.middleware.authenticate }),
+    attempts: attemptService,
+    exams: examService,
   };
 }

@@ -21,6 +21,7 @@ export interface AnnouncementServiceDeps {
   notifier: Pick<NotificationService, 'notify'>;
   armIdsOfUser: (actor: Actor) => Promise<string[]>;
   audit: AuditPort;
+  teacherPostsNeedApproval?: () => Promise<boolean>;
 }
 
 export interface AnnouncementInput {
@@ -37,6 +38,10 @@ const isStaffRole = (role: Role): boolean => role === ROLES.SUPER_ADMIN || role 
 
 export function createAnnouncementService(deps: AnnouncementServiceDeps) {
   const { repo, structure, staff, users, notifier, audit } = deps;
+
+    const needsApprovalFor = async (actor: Actor): Promise<boolean> =>
+    actor.role === ROLES.TEACHER &&
+    (deps.teacherPostsNeedApproval ? await deps.teacherPostsNeedApproval() : ANNOUNCEMENT_POLICY.teacherPostsNeedApproval);
 
   const log = (action: string, actor: Actor, ctx: Context, id: string, before: object | null, after: object | null) =>
     recordSafely(audit, {
@@ -112,7 +117,7 @@ export function createAnnouncementService(deps: AnnouncementServiceDeps) {
       if (input.pinned && !isStaffRole(actor.role)) throw new AppError('FORBIDDEN', { message: 'Only admins can pin announcements' });
       const dates = parseDates(input, now);
 
-      const needsApproval = actor.role === ROLES.TEACHER && ANNOUNCEMENT_POLICY.teacherPostsNeedApproval;
+      const needsApproval = await needsApprovalFor(actor)
       const created = await repo.create({
         authorId: actor.id, authorRole: actor.role, title: sanitizeText(input.title), body: sanitizeText(input.body), audience,
         publishAt: dates.publishAt, expiresAt: dates.expiresAt, pinned: input.pinned ?? false,
@@ -135,9 +140,7 @@ export function createAnnouncementService(deps: AnnouncementServiceDeps) {
       const dates = parseDates({ publishAt: patch.publishAt, expiresAt: patch.expiresAt }, new Date(), before);
 
       // A teacher's edit sends the post back for approval, because the content changed.
-      const status: AnnouncementStatus | undefined =
-        actor.role === ROLES.TEACHER && ANNOUNCEMENT_POLICY.teacherPostsNeedApproval ? ANNOUNCEMENT_STATUS.PENDING_APPROVAL : undefined;
-
+         const status: AnnouncementStatus | undefined = (await needsApprovalFor(actor)) ? ANNOUNCEMENT_STATUS.PENDING_APPROVAL : undefined;
       const updated = await repo.update(id, {
         ...(patch.title !== undefined ? { title: sanitizeText(patch.title) } : {}),
         ...(patch.body !== undefined ? { body: sanitizeText(patch.body) } : {}),

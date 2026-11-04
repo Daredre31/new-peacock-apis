@@ -138,6 +138,8 @@ async function profileMap(userIds: string[]): Promise<Map<string, { name: string
   const rows = await StudentModel.find({ userId: { $in: ids } }).lean<Row[]>();
   return new Map(rows.map((r) => [r.userId.toString(), { name: `${r.profile.firstName} ${r.profile.lastName}`, admissionNo: r.admissionNo }]));
 }
+const countActive = (): Promise<number> => StudentModel.countDocuments({ deletedAt: null, status: 'ACTIVE' });
 export const studentRepository = {
-  create, findByUserId, findManyByUserIds, findUserIdByAdmissionNo, nameMap, list, update, softDelete, profileMap, userIdsByAdmissionNos
+  create, findByUserId, findManyByUserIds, findUserIdByAdmissionNo,
+   nameMap, list, update, softDelete, profileMap, userIdsByAdmissionNos, countActive
 };

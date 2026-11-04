@@ -25,6 +25,7 @@ import { parentRepository } from '../users/parent.repository';
 import { staffRepository } from '../users/staff.repository';
 import { studentRepository } from '../users/student.repository';
 import { userRepository } from '../users/user.repository';
+import type { SettingsService } from '../settings/settings.service'
 
 export function createCommunicationModule(deps: {
   audit: AuditService;
@@ -33,8 +34,9 @@ export function createCommunicationModule(deps: {
   scope: ScopeService;
   armIdsOfUser: (actor: { id: string; role: Role }) => Promise<string[]>;
   teacherArms: TeacherArmsCache;
+  settings: SettingsService;
 }) {
-  const { audit, scope, teacherArms } = deps;
+  const { audit, scope, teacherArms  } = deps;
   const authenticate = deps.auth.middleware.authenticate;
 
   const notifications = createNotificationService({ repo: notificationRepository, users: userRepository, mailer: deps.mailer });
@@ -58,6 +60,7 @@ export function createCommunicationModule(deps: {
     notifier: notifications,
     armIdsOfUser: deps.armIdsOfUser,
     audit,
+    teacherPostsNeedApproval: async () => (await deps.settings.getPolicy()).teacherPostsNeedApproval,
   });
 
   const attendanceService = createAttendanceService({
@@ -80,5 +83,4 @@ export function createCommunicationModule(deps: {
   router.use(createAnnouncementRouter({ service: announcementService, authenticate }));
   router.use(createAttendanceRouter({ service: attendanceService, authenticate }));
 
-  return { router, notifier: notifications, events };
-}
+  return { router, notifier: notifications, events, announcements: announcementService } }

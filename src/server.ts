@@ -8,6 +8,7 @@ import { connectRedis, disconnectRedis, pingRedis, rateLimitRedis ,redis , creat
 import { createRedisKeyValueStore } from './modules/auth/keyValueStore';
 import type Redis from 'ioredis';
 import { createExamJobs, type ExamJobs } from './jobs/exam.jobs';
+import { createReportJobs, type ReportJobs } from './jobs/report.jobs';
 
 const SHUTDOWN_TIMEOUT_MS = 15_000;
 const HTTP_DRAIN_MS = 10_000;
@@ -16,6 +17,7 @@ let server: Server | undefined;
 let shuttingDown = false;
 let jobs: ExamJobs | undefined;
 let bullmq: Redis | undefined;
+let reportJobs: ReportJobs | undefined;
 // Order matters: stop taking requests first, then close what they were using.
 // Later phases add the BullMQ workers here, between http and redis.
 const shutdown = createShutdown({
@@ -31,7 +33,7 @@ const shutdown = createShutdown({
     },
     { name: 'redis', run: disconnectRedis },
     { name: 'mongodb', run: disconnectMongo },
-   { name: 'jobs', run: async () => { await jobs?.close(); } },
+   { name: 'jobs', run: async () => { await jobs?.close(); await reportJobs?.close(); } },
     { name: 'bullmq-redis', run: async () => { if (bullmq) await disconnectRedisClient(bullmq); } },
   ],
 });
@@ -51,6 +53,8 @@ async function main(): Promise<void> {
   await connectRedis();
     bullmq = createBullMQConnection();
   jobs = createExamJobs(bullmq);
+  
+  reportJobs = createReportJobs(bullmq);
 
   const app = createApp({
     sessionStore: createRedisKeyValueStore(redis),
@@ -59,6 +63,7 @@ async function main(): Promise<void> {
     // Once shutdown starts, /ready answers 503 so the load balancer stops sending traffic.
     checkMongo: () => (shuttingDown ? unavailable() : pingMongo()),
     checkRedis: () => (shuttingDown ? unavailable() : pingRedis()),
+    reportJobs
   });
 
   const httpServer = createServer(app);
@@ -77,7 +82,10 @@ async function main(): Promise<void> {
   });
 
   httpServer.on('error', (err) => logger.error({ err }, 'http server error'));
-    if (env.WORKERS_ENABLED) await jobs.startWorker();
+      if (env.WORKERS_ENABLED) {
+    await jobs.startWorker();
+    await reportJobs.startWorker();
+  }
   logger.info({ port: env.PORT, env: env.NODE_ENV }, 'server listening');
 }
 

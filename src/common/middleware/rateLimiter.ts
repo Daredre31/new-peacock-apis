@@ -171,3 +171,17 @@ export const createClaimRateLimiter = (redis: RedisLike | null): RequestHandler 
     redis,
     onRedisFailure: 'fail-closed',
   });
+
+  /** Report exports are heavy: 20 per hour per user. */
+export const createReportRateLimiter = (redis: RedisLike | null): RequestHandler =>
+  createRateLimiter({
+    name: 'reports', windowMs: 60 * 60 * 1000, limit: 20,
+    key: (req) => req.user?.id ?? clientIp(req), redis, onRedisFailure: 'use-memory',
+  });
+
+/** Opening conversations and posting messages: 20 per 10 minutes per user. */
+export const createThreadRateLimiter = (redis: RedisLike | null): RequestHandler =>
+  createRateLimiter({
+    name: 'threads', windowMs: 10 * 60 * 1000, limit: 20,
+    key: (req) => req.user?.id ?? clientIp(req), redis, onRedisFailure: 'use-memory',
+  });

@@ -29,3 +29,5 @@ export function eachDate(from: string, to: string, max: number): string[] {
 }
 
 export const workingDaysBetween = (from: string, to: string): number => eachDate(from, to, 400).filter(isWeekday).length;
+/** ISO weekday of a YYYY-MM-DD date: 1 = Monday ... 7 = Sunday. */
+export const isoWeekday = (iso: string): number => new Date(`${iso}T00:00:00Z`).getUTCDay() || 7;

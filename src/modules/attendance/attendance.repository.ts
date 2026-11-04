@@ -217,7 +217,60 @@ async function summaryForMany(studentIds: string[], from?: string, to?: string):
   return result;
 }
 
+async function studentSummaryForDate(date: string): Promise<Record<AttendanceStatus, number>> {
+  const grouped = await AttendanceModel.aggregate<{ _id: AttendanceStatus; count: number }>([
+    { $match: { date } },
+    { $group: { _id: '$status', count: { $sum: 1 } } },
+  ]);
+  const result: Record<AttendanceStatus, number> = { PRESENT: 0, ABSENT: 0, LATE: 0, EXCUSED: 0 };
+  for (const g of grouped) result[g._id] = g.count;
+  return result;
+}
+
+async function staffSummaryForDate(date: string): Promise<Record<StaffAttendanceStatus, number>> {
+  const grouped = await StaffAttendanceModel.aggregate<{ _id: StaffAttendanceStatus; count: number }>([
+    { $match: { date } },
+    { $group: { _id: '$status', count: { $sum: 1 } } },
+  ]);
+  const result: Record<StaffAttendanceStatus, number> = { PRESENT: 0, ABSENT: 0, LATE: 0, ON_LEAVE: 0 };
+  for (const g of grouped) result[g._id] = g.count;
+  return result;
+}
+
+async function armIdsMarkedOn(date: string): Promise<string[]> {
+  return (await AttendanceModel.distinct('classArmId', { date })).map(String);
+}
+
+/** Students whose attendance rate in a date range is below a threshold, lowest first. Needs `minDays` marked days. */
+async function lowAttendance(
+  from: string, to: string, below: number, limit: number, classArmIds?: string[], minDays = 5,
+): Promise<{ studentId: string; rate: number; days: number; absent: number }[]> {
+  if (classArmIds && classArmIds.length === 0) return [];
+  const match: Record<string, unknown> = { date: { $gte: from, $lte: to } };
+  if (classArmIds) match.classArmId = { $in: classArmIds.filter((id) => OBJECT_ID.test(id)).map((id) => new mongoose.Types.ObjectId(id)) };
+
+  const rows = await AttendanceModel.aggregate<{ _id: Types.ObjectId; days: number; attended: number; absent: number }>([
+    { $match: match },
+    {
+      $group: {
+        _id: '$studentId',
+        days: { $sum: 1 },
+        attended: { $sum: { $cond: [{ $in: ['$status', ['PRESENT', 'LATE', 'EXCUSED']] }, 1, 0] } },
+        absent: { $sum: { $cond: [{ $eq: ['$status', 'ABSENT'] }, 1, 0] } },
+      },
+    },
+    { $match: { days: { $gte: minDays } } },
+  ]);
+  return rows
+    .map((r) => ({ studentId: r._id.toString(), days: r.days, absent: r.absent, rate: Math.round((r.attended / r.days) * 1000) / 10 }))
+    .filter((r) => r.rate < below)
+    .sort((a, b) => a.rate - b.rate)
+    .slice(0, limit);
+}
+
 export const attendanceRepository = {
   upsertAttendance, listAttendance, summaryFor, markExcused, noticesCovering,
-  createNotice, listNotices, upsertStaffAttendance, listStaffAttendance, summaryForMany
+  createNotice, listNotices, upsertStaffAttendance,
+   listStaffAttendance, summaryForMany,
+    lowAttendance, staffSummaryForDate, studentSummaryForDate,armIdsMarkedOn
 };

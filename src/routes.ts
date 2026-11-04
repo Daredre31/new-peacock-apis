@@ -1,21 +1,23 @@
 import { Router } from 'express';
 import { assertAllRoutesGuarded } from './common/middleware/routeGuards';
 import type { RedisLike } from './common/middleware/rateLimiter';
+import type { ExamJobs } from './jobs/exam.jobs';
+import type { ReportJobs } from './jobs/report.jobs';
+import type { Mailer } from './integrations/mailer';
 import { createAcademicsModule } from './modules/academics/academics.module';
 import { createAuditRouter } from './modules/audit/audit.routes';
 import type { AuditService } from './modules/audit/audit.service';
 import type { AuthModule } from './modules/auth/auth.module';
 import type { KeyValueStore } from './modules/auth/keyValueStore';
-import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
-import { createUsersModule } from './modules/users/users.module';
-import type { Mailer } from './integrations/mailer';
+import { createCbtModule } from './modules/cbt/cbt.module';
 import { createCommunicationModule } from './modules/communication/communication.module';
-import { createTasksModule } from './modules/tasks/tasks.module';
-import { createSettingsModule } from './modules/settings/settings.module';
-import type { ExamJobs } from './jobs/exam.jobs';
+import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
+import { createPortalModule } from './modules/portal/portal.module';
 import { createResultsModule } from './modules/results/results.module';
 import { scoreRepository } from './modules/results/score.repository';
-import { createCbtModule } from './modules/cbt/cbt.module';
+import { createSettingsModule } from './modules/settings/settings.module';
+import { createTasksModule } from './modules/tasks/tasks.module';
+import { createUsersModule } from './modules/users/users.module';
 
 export interface RouteDeps {
   health: HealthDependencies;
@@ -25,9 +27,10 @@ export interface RouteDeps {
   rateLimitRedis: RedisLike | null;
   mailer: Mailer;
   examJobs: ExamJobs;
+  reportJobs: ReportJobs;
 }
 
-export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer, examJobs }: RouteDeps): Router {
+export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer, examJobs, reportJobs }: RouteDeps): Router {
   const router = Router();
 
   router.use(createHealthRouter(health));
@@ -36,24 +39,36 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
 
   const academics = createAcademicsModule({ audit, auth, store });
   router.use(academics.router);
-  router.use(createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms }).router);
-    const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms });
+
+  const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms });
   router.use(users.router);
-    const communication = createCommunicationModule({
-    audit, auth, mailer, scope: users.scope, armIdsOfUser: users.armIdsOfUser, teacherArms: academics.teacherArms,
+
+  // Settings come before the modules that read them.
+  const settings = createSettingsModule({ audit, auth, assessmentInUse: () => scoreRepository.anyExists() });
+  router.use(settings.router);
+
+  const communication = createCommunicationModule({
+    audit, auth, mailer, scope: users.scope, armIdsOfUser: users.armIdsOfUser, teacherArms: academics.teacherArms, settings: settings.service,
   });
   router.use(communication.router);
-  router.use(createTasksModule({ audit, auth, scope: users.scope, notifier: communication.notifier }).router);
-  // router.use(createSettingsModule({ audit, auth }).router);
 
-    const settings = createSettingsModule({ audit, auth, assessmentInUse: () => scoreRepository.anyExists() });
-  router.use(settings.router);
-  router.use(createResultsModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store }).router);
-    router.use(
-    createCbtModule({
-      audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs,
+  const tasks = createTasksModule({ audit, auth, scope: users.scope, notifier: communication.notifier });
+  router.use(tasks.router);
+
+  const results = createResultsModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store });
+  router.use(results.router);
+
+  const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs });
+  router.use(cbt.router);
+
+  router.use(
+    createPortalModule({
+      audit, auth, store, rateLimitRedis, scope: users.scope, armIdsOfUser: users.armIdsOfUser, teacherArms: academics.teacherArms,
+      notifier: communication.notifier, announcements: communication.announcements, taskService: tasks.service,
+      attempts: cbt.attempts, examService: cbt.exams, resultsCtx: results.ctx, settings: settings.service, reportJobs,
     }).router,
   );
+
   // A route without authorize() or publicRoute() stops the app from starting.
   assertAllRoutesGuarded(router);
   return router;

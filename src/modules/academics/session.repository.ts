@@ -187,6 +187,12 @@ async function findTermByDate(date: string): Promise<TermRecord | null> {
   }).lean<TermRow>();
   return row ? toTerm(row) : null;
 }
+async function findCurrentTerm(): Promise<TermRecord | null> {
+  const row = await TermModel.findOne({ isCurrent: true }).lean<TermRow>();
+  return row ? toTerm(row) : null;
+}
+
+
 export const sessionRepository = {
   listSessions,
   findSession,
@@ -202,5 +208,5 @@ export const sessionRepository = {
   setTermLocked,
   makeTermCurrent,
   findCurrentSession,
-  findTermByDate
+  findTermByDate,findCurrentTerm
 };

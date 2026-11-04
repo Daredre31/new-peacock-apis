@@ -59,5 +59,9 @@ async function studentIdsInArms(armIds: string[], sessionId: string): Promise<st
   const rows = await EnrolmentModel.find({ classArmId: { $in: ids }, sessionId }, { studentId: 1 }).lean<Row[]>();
   return rows.map((r) => r.studentId.toString());
 }
-
-export const enrolmentRepository = { upsert, forStudents, studentIdsInArms };
+async function listForSession(sessionId: string, armId: string | undefined, limit: number): Promise<EnrolmentRecord[]> {
+  if (!OBJECT_ID.test(sessionId) || (armId !== undefined && !OBJECT_ID.test(armId))) return [];
+  const rows = await EnrolmentModel.find({ sessionId, ...(armId ? { classArmId: armId } : {}) }).limit(limit).lean<Row[]>();
+  return rows.map(toRecord);
+}
+export const enrolmentRepository = { upsert, forStudents, studentIdsInArms,listForSession };

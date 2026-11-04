@@ -122,8 +122,15 @@ async function activeUserIds(userIds: string[]): Promise<Set<string>> {
   const rows = await StaffModel.find({ userId: { $in: valid }, deletedAt: null }, { userId: 1 }).lean<Row[]>();
   return new Set(rows.map((r) => r.userId.toString()));
 }
+async function countActiveByType(): Promise<{ ADMIN: number; TEACHER: number }> {
+  const [admins, teachers] = await Promise.all([
+    StaffModel.countDocuments({ type: 'ADMIN', deletedAt: null }),
+    StaffModel.countDocuments({ type: 'TEACHER', deletedAt: null }),
+  ]);
+  return { ADMIN: admins, TEACHER: teachers };
+}
 
 export const staffRepository = { create, findByUserId, 
   findUserIdByStaffNo,
    list, updateProfile, 
-   softDelete, nameMap , activeUserIds};
+   softDelete, nameMap , activeUserIds , countActiveByType};

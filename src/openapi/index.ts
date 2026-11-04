@@ -19,6 +19,11 @@ import { registerTaskOperations } from '../modules/tasks/task.schema';
 import { registerSettingsOperations } from '../modules/settings/settings.schema';
 import { registerResultsOperations } from '../modules/results/results.schema';
 import { registerCbtOperations } from '../modules/cbt/cbt.schema';
+import { registerTimetableOperations } from '../modules/timetable/timetable.schema';
+import { registerCalendarOperations } from '../modules/calendar/calendar.schema';
+import { registerThreadOperations } from '../modules/threads/thread.schema';
+import { registerReportOperations } from '../modules/reports/report.schema';
+import { registerDashboardOperations } from '../modules/dashboards/dashboard.schema';
 
 /** Each phase adds its module's register function here. */
 export function createOperationRegistry(): OpenApiRegistry {
@@ -42,6 +47,11 @@ export function createOperationRegistry(): OpenApiRegistry {
   registerSettingsOperations(registry);
   registerResultsOperations(registry);
   registerCbtOperations(registry);
+    registerTimetableOperations(registry);
+  registerCalendarOperations(registry);
+  registerThreadOperations(registry);
+  registerReportOperations(registry);
+  registerDashboardOperations(registry);
   
   return registry;
 }

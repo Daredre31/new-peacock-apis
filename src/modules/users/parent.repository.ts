@@ -69,4 +69,6 @@ async function softDelete(userId: string, now: Date, session: ClientSession): Pr
   return result.matchedCount > 0;
 }
 
-export const parentRepository = { create, findByUserId, nameMap, list, updateProfile, softDelete };
+const countActive = (): Promise<number> => ParentModel.countDocuments({ deletedAt: null });
+
+export const parentRepository = { create, findByUserId, nameMap, list, updateProfile, softDelete, countActive };

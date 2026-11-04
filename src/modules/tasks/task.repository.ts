@@ -206,8 +206,57 @@ async function caAverages(classArmId: string, subjectId: string, sessionId: stri
   for (const [key, v] of acc) byStudent.set(key, { average: Math.round((v.sum / v.n) * 10) / 10, graded: v.n });
   return { taskCount: found.length, byStudent };
 }
+/** Per task: how many submissions exist, how many wait for marking, how many are graded. */
+async function countsByTask(taskIds: string[]): Promise<Map<string, { submitted: number; awaiting: number; graded: number }>> {
+  const ids = taskIds.filter((id) => OBJECT_ID.test(id)).map((id) => new mongoose.Types.ObjectId(id));
+  const result = new Map<string, { submitted: number; awaiting: number; graded: number }>();
+  if (ids.length === 0) return result;
+
+  const rows = await SubmissionModel.aggregate<{ _id: { t: Types.ObjectId; s: SubmissionStatus }; count: number }>([
+    { $match: { taskId: { $in: ids } } },
+    { $group: { _id: { t: '$taskId', s: '$status' }, count: { $sum: 1 } } },
+  ]);
+  for (const r of rows) {
+    const key = r._id.t.toString();
+    const entry = result.get(key) ?? { submitted: 0, awaiting: 0, graded: 0 };
+    entry.submitted += r.count;
+    if (r._id.s === SUBMISSION_STATUS.SUBMITTED) entry.awaiting += r.count;
+    if (r._id.s === SUBMISSION_STATUS.GRADED) entry.graded += r.count;
+    result.set(key, entry);
+  }
+  return result;
+}
+
+/** Students averaging below a percentage on this teacher's graded tasks (at least `minGraded` of them). */
+async function lowPerformers(teacherId: string, sessionId: string, below: number, limit: number, minGraded = 2): Promise<{ studentId: string; average: number; graded: number }[]> {
+  if (!OBJECT_ID.test(teacherId) || !OBJECT_ID.test(sessionId)) return [];
+  const found = await TaskModel.find({ teacherId, sessionId }, { maxScore: 1 }).limit(500).lean<Row<TaskDocument>[]>();
+  if (found.length === 0) return [];
+
+  const max = new Map(found.map((t) => [t._id.toString(), t.maxScore]));
+  const subs = await SubmissionModel.find(
+    { taskId: { $in: found.map((t) => t._id) }, status: SUBMISSION_STATUS.GRADED, score: { $ne: null } },
+    { studentId: 1, taskId: 1, score: 1 },
+  ).limit(20_000).lean<Row<SubmissionDocument>[]>();
+
+  const acc = new Map<string, { sum: number; n: number }>();
+  for (const s of subs) {
+    const m = max.get(s.taskId.toString());
+    if (!m || s.score === null) continue;
+    const key = s.studentId.toString();
+    const cur = acc.get(key) ?? { sum: 0, n: 0 };
+    cur.sum += (s.score / m) * 100;
+    cur.n += 1;
+    acc.set(key, cur);
+  }
+  return [...acc]
+    .map(([studentId, v]) => ({ studentId, graded: v.n, average: Math.round((v.sum / v.n) * 10) / 10 }))
+    .filter((r) => r.graded >= minGraded && r.average < below)
+    .sort((a, b) => a.average - b.average)
+    .slice(0, limit);
+}
 
 export const taskRepository = {
   createTask, findTask, updateTask, deleteTask, listTasks, allTasksForArm, hasSubmissions, highestScore,
-  upsertSubmission, findSubmission, submissionsOfTask, submissionsOfStudent, applyGrade,caAverages
+  upsertSubmission, findSubmission, submissionsOfTask, submissionsOfStudent, applyGrade,caAverages, countsByTask, lowPerformers
 };

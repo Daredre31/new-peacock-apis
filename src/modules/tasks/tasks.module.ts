@@ -17,5 +17,5 @@ export function createTasksModule(deps: { audit: AuditService; auth: AuthModule;
     sessions: sessionRepository, structure: structureRepository, students: studentRepository,
     scope: deps.scope, notifier: deps.notifier, audit: deps.audit,
   });
-  return { router: createTaskRouter({ service, authenticate: deps.auth.middleware.authenticate, scope: deps.scope }) };
+ return { router: createTaskRouter({ service, authenticate: deps.auth.middleware.authenticate, scope: deps.scope }), service };
 }
