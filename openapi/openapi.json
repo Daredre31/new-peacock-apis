@@ -24156,6 +24156,16 @@
                                 "string",
                                 "null"
                               ]
+                            },
+                            "onlinePaymentFeeKobo": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "minPartPaymentPercent": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
                             }
                           },
                           "required": [
@@ -24165,7 +24175,9 @@
                             "address",
                             "phone",
                             "email",
-                            "website"
+                            "website",
+                            "onlinePaymentFeeKobo",
+                            "minPartPaymentPercent"
                           ],
                           "additionalProperties": false
                         },
@@ -24379,6 +24391,16 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 100
+                      },
+                      "onlinePaymentFeeKobo": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000
+                      },
+                      "minPartPaymentPercent": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100
                       }
                     },
                     "additionalProperties": false
@@ -24447,6 +24469,16 @@
                                 "string",
                                 "null"
                               ]
+                            },
+                            "onlinePaymentFeeKobo": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "minPartPaymentPercent": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
                             }
                           },
                           "required": [
@@ -24456,7 +24488,9 @@
                             "address",
                             "phone",
                             "email",
-                            "website"
+                            "website",
+                            "onlinePaymentFeeKobo",
+                            "minPartPaymentPercent"
                           ],
                           "additionalProperties": false
                         },
@@ -26177,6 +26211,12 @@
                           "firstName": {
                             "type": "string"
                           },
+                          "middleName": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "lastName": {
                             "type": "string"
                           },
@@ -26210,6 +26250,18 @@
                             "type": [
                               "string",
                               "null"
+                            ]
+                          },
+                          "passportUrl": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 500,
+                                "format": "uri"
+                              },
+                              {
+                                "type": "null"
+                              }
                             ]
                           },
                           "status": {
@@ -26287,10 +26339,12 @@
                           "id",
                           "admissionNo",
                           "firstName",
+                          "middleName",
                           "lastName",
                           "gender",
                           "dateOfBirth",
                           "address",
+                          "passportUrl",
                           "status",
                           "admissionSessionId",
                           "enrolment",
@@ -26385,6 +26439,11 @@
                     "minLength": 1,
                     "maxLength": 60
                   },
+                  "middleName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
                   "lastName": {
                     "type": "string",
                     "minLength": 1,
@@ -26472,6 +26531,12 @@
                             "firstName": {
                               "type": "string"
                             },
+                            "middleName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "lastName": {
                               "type": "string"
                             },
@@ -26505,6 +26570,18 @@
                               "type": [
                                 "string",
                                 "null"
+                              ]
+                            },
+                            "passportUrl": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 500,
+                                  "format": "uri"
+                                },
+                                {
+                                  "type": "null"
+                                }
                               ]
                             },
                             "status": {
@@ -26582,10 +26659,12 @@
                             "id",
                             "admissionNo",
                             "firstName",
+                            "middleName",
                             "lastName",
                             "gender",
                             "dateOfBirth",
                             "address",
+                            "passportUrl",
                             "status",
                             "admissionSessionId",
                             "enrolment",
@@ -26843,6 +26922,12 @@
                         "firstName": {
                           "type": "string"
                         },
+                        "middleName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "lastName": {
                           "type": "string"
                         },
@@ -26876,6 +26961,18 @@
                           "type": [
                             "string",
                             "null"
+                          ]
+                        },
+                        "passportUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 500,
+                              "format": "uri"
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "status": {
@@ -26953,10 +27050,12 @@
                         "id",
                         "admissionNo",
                         "firstName",
+                        "middleName",
                         "lastName",
                         "gender",
                         "dateOfBirth",
                         "address",
+                        "passportUrl",
                         "status",
                         "admissionSessionId",
                         "enrolment",
@@ -27068,6 +27167,18 @@
                     "minLength": 1,
                     "maxLength": 60
                   },
+                  "middleName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "lastName": {
                     "type": "string",
                     "minLength": 1,
@@ -27140,6 +27251,12 @@
                         "firstName": {
                           "type": "string"
                         },
+                        "middleName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "lastName": {
                           "type": "string"
                         },
@@ -27173,6 +27290,18 @@
                           "type": [
                             "string",
                             "null"
+                          ]
+                        },
+                        "passportUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 500,
+                              "format": "uri"
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "status": {
@@ -27250,10 +27379,12 @@
                         "id",
                         "admissionNo",
                         "firstName",
+                        "middleName",
                         "lastName",
                         "gender",
                         "dateOfBirth",
                         "address",
+                        "passportUrl",
                         "status",
                         "admissionSessionId",
                         "enrolment",
@@ -27794,6 +27925,12 @@
                         "firstName": {
                           "type": "string"
                         },
+                        "middleName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "lastName": {
                           "type": "string"
                         },
@@ -27827,6 +27964,18 @@
                           "type": [
                             "string",
                             "null"
+                          ]
+                        },
+                        "passportUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 500,
+                              "format": "uri"
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "status": {
@@ -27904,10 +28053,12 @@
                         "id",
                         "admissionNo",
                         "firstName",
+                        "middleName",
                         "lastName",
                         "gender",
                         "dateOfBirth",
                         "address",
+                        "passportUrl",
                         "status",
                         "admissionSessionId",
                         "enrolment",
@@ -27976,6 +28127,567 @@
           },
           "500": {
             "description": "INTERNAL_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/students/{id}/passport": {
+      "delete": {
+        "operationId": "deleteStudentPassport",
+        "summary": "Remove the passport photo",
+        "tags": [
+          "students"
+        ],
+        "x-roles": [
+          "SUPER_ADMIN",
+          "ADMIN"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "admissionNo": {
+                          "type": "string"
+                        },
+                        "firstName": {
+                          "type": "string"
+                        },
+                        "middleName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "lastName": {
+                          "type": "string"
+                        },
+                        "gender": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "MALE",
+                                "FEMALE"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dateOfBirth": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "address": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "passportUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 500,
+                              "format": "uri"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "ACTIVE",
+                            "GRADUATED",
+                            "WITHDRAWN"
+                          ]
+                        },
+                        "admissionSessionId": {
+                          "type": "string"
+                        },
+                        "enrolment": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string"
+                                },
+                                "classArmId": {
+                                  "type": "string"
+                                },
+                                "classArmName": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "classArmId",
+                                "classArmName"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "email": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "phone": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "mustChangePassword": {
+                          "type": "boolean"
+                        },
+                        "lastLoginAt": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "admissionNo",
+                        "firstName",
+                        "middleName",
+                        "lastName",
+                        "gender",
+                        "dateOfBirth",
+                        "address",
+                        "passportUrl",
+                        "status",
+                        "admissionSessionId",
+                        "enrolment",
+                        "email",
+                        "phone",
+                        "mustChangePassword",
+                        "lastLoginAt",
+                        "createdAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "SERVICE_UNAVAILABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "uploadStudentPassport",
+        "summary": "Upload or replace the passport photo (field \"file\", JPEG, PNG or WebP, max 2 MB). Stored in Cloudinary, only the URL is saved",
+        "tags": [
+          "students"
+        ],
+        "x-roles": [
+          "SUPER_ADMIN",
+          "ADMIN"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "admissionNo": {
+                          "type": "string"
+                        },
+                        "firstName": {
+                          "type": "string"
+                        },
+                        "middleName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "lastName": {
+                          "type": "string"
+                        },
+                        "gender": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "MALE",
+                                "FEMALE"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dateOfBirth": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "address": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "passportUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 500,
+                              "format": "uri"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "ACTIVE",
+                            "GRADUATED",
+                            "WITHDRAWN"
+                          ]
+                        },
+                        "admissionSessionId": {
+                          "type": "string"
+                        },
+                        "enrolment": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string"
+                                },
+                                "classArmId": {
+                                  "type": "string"
+                                },
+                                "classArmName": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "classArmId",
+                                "classArmName"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "email": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "phone": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "mustChangePassword": {
+                          "type": "boolean"
+                        },
+                        "lastLoginAt": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "admissionNo",
+                        "firstName",
+                        "middleName",
+                        "lastName",
+                        "gender",
+                        "dateOfBirth",
+                        "address",
+                        "passportUrl",
+                        "status",
+                        "admissionSessionId",
+                        "enrolment",
+                        "email",
+                        "phone",
+                        "mustChangePassword",
+                        "lastLoginAt",
+                        "createdAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "SERVICE_UNAVAILABLE",
             "content": {
               "application/json": {
                 "schema": {

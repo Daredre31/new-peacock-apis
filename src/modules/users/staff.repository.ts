@@ -19,10 +19,12 @@ export interface StaffRecord {
 
 export interface ProfileInput {
   firstName: string;
+  middleName?: string | null;
   lastName: string;
   gender?: Gender;
   dateOfBirth?: Date;
   address?: string;
+  passportUrl?: string | null;
 }
 
 const OBJECT_ID = /^[a-f0-9]{24}$/;

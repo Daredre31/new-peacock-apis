@@ -31,6 +31,8 @@ const policyBody = z.object({
   teacherPostsNeedApproval: z.boolean().optional(),
   lowAttendancePercent: z.number().int().min(1).max(100).optional(),
   lowScorePercent: z.number().int().min(1).max(100).optional(),
+    onlinePaymentFeeKobo: z.number().int().min(0).max(1_000_000).optional(),
+  minPartPaymentPercent: z.number().int().min(1).max(100).optional(),
 }).strict();
 export const updateSettingsBody = z.object({ profile: profileBody.optional(), policy: policyBody.optional() });
 export const updateSettingsSchemas = { body: updateSettingsBody };
@@ -38,6 +40,7 @@ export const updateSettingsSchemas = { body: updateSettingsBody };
 const profileView = z.object({
   name: z.string(), shortName: z.string().nullable(), motto: z.string().nullable(), address: z.string().nullable(),
   phone: z.string().nullable(), email: z.string().nullable(), website: z.string().nullable(),
+    onlinePaymentFeeKobo: z.number().int(), minPartPaymentPercent: z.number().int(),
 });
 const policyView = z.object({
   withholdReportsIfOwing: z.boolean(), teacherPostsNeedApproval: z.boolean(),

@@ -66,11 +66,11 @@ export function createReportGenerators(deps: {
         const rows = records
           .map((s) => ({ class: labels.get(arm.get(s.userId) ?? '') ?? '', s }))
           .sort((a, b) => a.class.localeCompare(b.class) || a.s.lastName.localeCompare(b.s.lastName))
-          .map(({ class: c, s }) => [s.admissionNo, s.lastName, s.firstName, s.gender, c, s.status]);
+          .map(({ class: c, s }) => [s.admissionNo, s.lastName, s.firstName, s.middleName ?? '', s.gender, c, s.status]);
 
         return {
           title: 'Enrolment', subtitle: `${session.name}${params.classArmId ? ` - ${labels.get(params.classArmId) ?? ''}` : ''}. Generated ${schoolToday()}`,
-          columns: ['Admission No', 'Last name', 'First name', 'Gender', 'Class', 'Status'], rows,
+          columns: ['Admission No', 'Last name', 'First name', 'Middle name', 'Gender', 'Class', 'Status'], rows,
         };
       },
     },
@@ -98,7 +98,7 @@ export function createReportGenerators(deps: {
         const rows = records
           .map((s) => ({ class: labels.get(arm.get(s.userId) ?? '') ?? '', s, a: attendanceSummaryOf(counts.get(s.userId)) }))
           .sort((a, b) => a.class.localeCompare(b.class) || a.s.lastName.localeCompare(b.s.lastName))
-          .map(({ class: c, s, a }) => [s.admissionNo, `${s.lastName} ${s.firstName}`, c, a.present, a.late, a.excused, a.absent, a.days, a.rate]);
+          .map(({ class: c, s, a }) => [s.admissionNo, [s.lastName, s.firstName, s.middleName].filter(Boolean).join(' '), c, a.present, a.late, a.excused, a.absent, a.days, a.rate]);
 
         return {
           title: 'Attendance', subtitle: `${from} to ${to}${params.classArmId ? ` - ${labels.get(params.classArmId) ?? ''}` : ''}`,

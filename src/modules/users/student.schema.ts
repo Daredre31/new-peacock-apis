@@ -8,6 +8,7 @@ import { STUDENT_STATUS, type StudentStatus } from './student.model';
 const objectId = z.string().regex(/^[a-f0-9]{24}$/);
 const idParams = z.object({ id: objectId });
 const name = z.string().trim().min(1).max(60);
+const passportUrl = z.url().max(500).nullable();
 const statusValues = Object.values(STUDENT_STATUS) as [StudentStatus, ...StudentStatus[]];
 
 export const studentIdSchemas = { params: idParams };
@@ -23,6 +24,7 @@ export const listStudentsSchemas = { query: listStudentsQuery };
 
 const createBody = z.object({
   firstName: name,
+  middleName: name.optional(),
   lastName: name,
   gender: z.enum(GENDERS).optional(),
   dateOfBirth: z.iso.date().optional(),
@@ -39,6 +41,8 @@ export const createStudentSchemas = { body: createBody };
 
 const updateBody = z.object({
   firstName: name.optional(),
+  /** Send null to clear it. */
+  middleName: name.nullable().optional(),
   lastName: name.optional(),
   gender: z.enum(GENDERS).optional(),
   dateOfBirth: z.iso.date().optional(),
@@ -59,10 +63,12 @@ const studentView = z.object({
   id: z.string(),
   admissionNo: z.string(),
   firstName: z.string(),
+  middleName: z.string().nullable(),
   lastName: z.string(),
   gender: z.enum(GENDERS).nullable(),
   dateOfBirth: z.iso.date().nullable(),
   address: z.string().nullable(),
+  passportUrl: passportUrl,
   status: z.enum(statusValues),
   admissionSessionId: z.string(),
   enrolment: z.object({ sessionId: z.string(), classArmId: z.string(), classArmName: z.string() }).nullable(),
@@ -95,6 +101,8 @@ export function registerStudentOperations(registry: OpenApiRegistry): void {
   registry.register({ method: 'post', path: '/students', operationId: 'createStudent', summary: 'Admit a student. Returns the registration number and a one-time temporary password', tags, roles: writeRoles, request: { body: createBody }, success: { status: 201, description: 'Created', data: z.object({ account: studentView, temporaryPassword: z.string().nullable(), inviteEmailSent: z.boolean().nullable() }) }, errors: ['CONFLICT'] });
   registry.register({ method: 'get', path: '/students/{id}', operationId: 'getStudent', summary: 'One student (a parent sees only their children, a student only themselves)', tags, roles: PERMISSIONS['students:read'], request: { params: idParams }, success: { status: 200, description: 'Found', data: studentView }, errors: ['NOT_FOUND'] });
   registry.register({ method: 'patch', path: '/students/{id}', operationId: 'updateStudent', summary: 'Update a student', tags, roles: writeRoles, request: { params: idParams, body: updateBody }, success: { status: 200, description: 'Updated', data: studentView }, errors: ['NOT_FOUND', 'CONFLICT'] });
+  registry.register({ method: 'put', path: '/students/{id}/passport', operationId: 'uploadStudentPassport', summary: 'Upload or replace the passport photo (field "file", JPEG, PNG or WebP, max 2 MB). Stored in Cloudinary, only the URL is saved', tags, roles: writeRoles, request: { params: idParams }, upload: true, success: { status: 200, description: 'Updated', data: studentView }, errors: ['NOT_FOUND', 'SERVICE_UNAVAILABLE'] });
+  registry.register({ method: 'delete', path: '/students/{id}/passport', operationId: 'deleteStudentPassport', summary: 'Remove the passport photo', tags, roles: writeRoles, request: { params: idParams }, success: { status: 200, description: 'Updated', data: studentView }, errors: ['NOT_FOUND', 'SERVICE_UNAVAILABLE'] });
   registry.register({ method: 'delete', path: '/students/{id}', operationId: 'deleteStudent', summary: 'Remove a student (soft delete). Ends all their logins', tags, roles: writeRoles, request: { params: idParams }, success: { status: 200, description: 'Removed', data: z.null() }, errors: ['NOT_FOUND'] });
   registry.register({ method: 'put', path: '/students/{id}/enrolment', operationId: 'enrolStudent', summary: 'Put a student in a class for a session (defaults to the current one)', tags, roles: writeRoles, request: { params: idParams, body: enrolBody }, success: { status: 200, description: 'Enrolled', data: studentView }, errors: ['NOT_FOUND'] });
   registry.register({ method: 'post', path: '/students/import', operationId: 'importStudents', summary: 'Upload a CSV (field "file", max 2 MB, 1000 rows). Validates every row and returns a report; nothing is saved', tags, roles: PERMISSIONS['students:import'], upload: true, success: { status: 200, description: 'Validation report', data: importReport }, errors: ['IMPORT_INVALID'] });

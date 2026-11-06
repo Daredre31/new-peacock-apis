@@ -8,7 +8,16 @@ export interface StudentDocument {
   userId: Types.ObjectId;
   admissionNo: string;
   admissionSessionId: Types.ObjectId;
-  profile: { firstName: string; lastName: string; gender?: Gender | null; dateOfBirth?: Date | null; address?: string | null };
+  profile: {
+    firstName: string;
+    middleName?: string | null;
+    lastName: string;
+    gender?: Gender | null;
+    dateOfBirth?: Date | null;
+    address?: string | null;
+    /** Cloudinary delivery URL. The image itself never touches our database. */
+    passportUrl?: string | null;
+  };
   status: StudentStatus;
   deletedAt?: Date | null;
   createdAt: Date;
@@ -18,10 +27,18 @@ export interface StudentDocument {
 const profileSchema = new mongoose.Schema(
   {
     firstName: { type: String, required: true, trim: true, maxlength: 60 },
+    middleName: { type: String, trim: true, maxlength: 60, default: null },
     lastName: { type: String, required: true, trim: true, maxlength: 60 },
     gender: { type: String, enum: GENDERS, default: null },
     dateOfBirth: { type: Date, default: null },
     address: { type: String, trim: true, maxlength: 200, default: null },
+    passportUrl: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+      default: null,
+      validate: { validator: (v: string | null) => v === null || /^https:\/\/res\.cloudinary\.com\//.test(v), message: 'Must be a Cloudinary https URL' },
+    },
   },
   { _id: false },
 );

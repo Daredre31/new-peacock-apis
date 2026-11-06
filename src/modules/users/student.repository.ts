@@ -13,10 +13,12 @@ export interface StudentRecord {
   admissionNo: string;
   admissionSessionId: string;
   firstName: string;
+  middleName: string | null;
   lastName: string;
   gender: Gender | null;
   dateOfBirth: Date | null;
   address: string | null;
+  passportUrl: string | null;
   status: StudentStatus;
 }
 
@@ -38,10 +40,12 @@ const toRecord = (r: Row): StudentRecord => ({
   admissionNo: r.admissionNo,
   admissionSessionId: r.admissionSessionId.toString(),
   firstName: r.profile.firstName,
+  middleName: r.profile.middleName ?? null,
   lastName: r.profile.lastName,
   gender: r.profile.gender ?? null,
   dateOfBirth: r.profile.dateOfBirth ?? null,
   address: r.profile.address ?? null,
+  passportUrl: r.profile.passportUrl ?? null,
   status: r.status,
 });
 
@@ -94,7 +98,7 @@ async function list(
   if (filter.userIds) query.userId = { $in: filter.userIds };
   if (filter.q) {
     const rx = { $regex: escapeRegex(filter.q), $options: 'i' };
-    query.$or = [{ 'profile.firstName': rx }, { 'profile.lastName': rx }, { admissionNo: rx }];
+    query.$or = [{ 'profile.firstName': rx }, { 'profile.middleName': rx }, { 'profile.lastName': rx }, { admissionNo: rx }];
   }
 
   const [rows, total] = await Promise.all([

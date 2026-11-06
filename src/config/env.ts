@@ -54,6 +54,12 @@ const schema = z
       .transform((value) => value === 'true')
       .optional(),
 
+    // Cloudinary stores the student passport photos. All three are needed for uploads to work;
+    // without them the API still starts and the photo routes answer 503.
+    CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
+    CLOUDINARY_API_KEY: z.string().min(1).optional(),
+    CLOUDINARY_API_SECRET: z.string().min(1).optional(),
+
     ACCESS_TOKEN_SECRET: secret,
     REFRESH_TOKEN_SECRET: secret,
     CSRF_SECRET: secret,

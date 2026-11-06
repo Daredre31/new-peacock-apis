@@ -66,7 +66,10 @@ export const errorHandler: ErrorRequestHandler = (err: unknown, req, res, next) 
   if (appError.statusCode >= 500) {
     log.error({ err, code: appError.code, status: appError.statusCode }, 'request failed');
   } else {
-    log.info({ code: appError.code, status: appError.statusCode }, 'request rejected');
+    log.info(
+  { code: appError.code, status: appError.statusCode, method: req.method, url: req.originalUrl },
+  'request rejected',
+);
   }
 
   // A response is already streaming. We cannot send an envelope now,

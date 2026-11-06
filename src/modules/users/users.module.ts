@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { createClaimRateLimiter, type RedisLike } from '../../common/middleware/rateLimiter';
 import { createScopeService } from '../../common/scope';
 import { env } from '../../config/env';
+import type { ImageStore } from '../../integrations/imageStore';
 import { enrolmentRepository } from '../academics/enrolment.repository';
 import { sessionRepository } from '../academics/session.repository';
 import { structureRepository } from '../academics/structure.repository';
@@ -35,8 +36,9 @@ export function createUsersModule(deps: {
   store: KeyValueStore;
   rateLimitRedis: RedisLike | null;
   teacherArms: TeacherArmsCache;
+  images: ImageStore;
 }) {
-  const { audit, auth, store, teacherArms } = deps;
+  const { audit, auth, store, teacherArms, images } = deps;
   const authenticate = auth.middleware.authenticate;
   const common = { passwords: passwordService, credentials: auth.credentials, tokens: auth.tokens, audit };
 
@@ -79,6 +81,7 @@ export function createUsersModule(deps: {
     enrolments: enrolmentRepository,
     sessions: sessionRepository,
     structure: structureRepository,
+    images,
     teacherArmIds: (teacherUserId) => teacherArms.armIdsOf(teacherUserId),
     ...common,
   });

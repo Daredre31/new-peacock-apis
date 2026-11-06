@@ -16,7 +16,7 @@ const TOKEN_TTL_SECONDS = 15 * 60;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 const COLUMNS: Record<string, string> = {
-  firstname: 'firstName', lastname: 'lastName', gender: 'gender', dateofbirth: 'dateOfBirth', address: 'address',
+  firstname: 'firstName', middlename: 'middleName', lastname: 'lastName', gender: 'gender', dateofbirth: 'dateOfBirth', address: 'address',
   email: 'email', phone: 'phone', classname: 'className', armname: 'armName',
 };
 const REQUIRED = ['firstName', 'lastName'];
@@ -26,6 +26,7 @@ const FORMULA_START = /^[=+\-@\t\r]/;
 interface ImportRow {
   row: number;
   firstName: string;
+  middleName?: string;
   lastName: string;
   gender?: Gender;
   dateOfBirth?: string;
@@ -118,6 +119,7 @@ export function createStudentImportService(deps: {
         };
 
         const firstName = textField('firstName', true, 60);
+        const middleName = textField('middleName', false, 60);
         const lastName = textField('lastName', true, 60);
         const address = textField('address', false, 200);
 
@@ -160,6 +162,7 @@ export function createStudentImportService(deps: {
         if (errors.length === before && firstName && lastName) {
           valid.push({
             row, firstName, lastName,
+            ...(middleName ? { middleName } : {}),
             ...(gender ? { gender } : {}), ...(dateOfBirth ? { dateOfBirth } : {}), ...(address ? { address } : {}),
             ...(email ? { email } : {}), ...(phone ? { phone } : {}), ...(classArmId ? { classArmId } : {}),
           });
@@ -212,7 +215,7 @@ export function createStudentImportService(deps: {
         try {
           const result = await students.create(
             {
-              firstName: r.firstName, lastName: r.lastName, gender: r.gender, dateOfBirth: r.dateOfBirth, address: r.address,
+              firstName: r.firstName, middleName: r.middleName, lastName: r.lastName, gender: r.gender, dateOfBirth: r.dateOfBirth, address: r.address,
               email: r.email, phone: r.phone, classArmId: r.classArmId, delivery: 'TEMPORARY_PASSWORD',
             },
             actor,
@@ -220,7 +223,7 @@ export function createStudentImportService(deps: {
           );
           created.push({
             row: r.row, id: result.account.id, admissionNo: result.account.admissionNo,
-            name: `${r.firstName} ${r.lastName}`, temporaryPassword: result.temporaryPassword ?? '',
+            name: [r.firstName, r.middleName, r.lastName].filter(Boolean).join(' '), temporaryPassword: result.temporaryPassword ?? '',
           });
         } catch (err) {
           if (!isAppError(err)) logger.error({ err, row: r.row }, 'student import row failed');

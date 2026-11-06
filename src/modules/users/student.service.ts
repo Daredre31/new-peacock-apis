@@ -5,6 +5,7 @@ import { withTransaction } from '../../config/db';
 import type { EnrolmentRecord, enrolmentRepository } from '../academics/enrolment.repository';
 import type { sessionRepository } from '../academics/session.repository';
 import type { structureRepository } from '../academics/structure.repository';
+import type { ImageStore } from '../../integrations/imageStore';
 import { recordSafely, type AuditPort } from '../audit/audit.port';
 import type { CredentialsService } from '../auth/credentials.service';
 import type { PasswordService } from '../auth/password.service';
@@ -19,6 +20,7 @@ interface Context { ip: string; requestId: string }
 
 export interface CreateStudentInput {
   firstName: string;
+  middleName?: string | undefined;
   lastName: string;
   gender?: Gender | undefined;
   dateOfBirth?: string | undefined;
@@ -29,7 +31,9 @@ export interface CreateStudentInput {
   classArmId?: string | undefined;
   delivery: 'TEMPORARY_PASSWORD' | 'EMAIL_INVITE';
 }
-export type UpdateStudentInput = Partial<Omit<CreateStudentInput, 'delivery' | 'admissionSessionId' | 'classArmId'>> & {
+export type UpdateStudentInput = Partial<Omit<CreateStudentInput, 'delivery' | 'admissionSessionId' | 'classArmId' | 'middleName'>> & {
+  /** null clears it. */
+  middleName?: string | null | undefined;
   status?: StudentStatus | undefined;
 };
 
@@ -43,9 +47,13 @@ export interface StudentServiceDeps {
   credentials: Pick<CredentialsService, 'issueInvite'>;
   tokens: Pick<TokenService, 'revokeAllSessions'>;
   audit: AuditPort;
+  images: ImageStore;
   /** Class arms this teacher teaches or is class teacher of, this session. */
   teacherArmIds: (teacherUserId: string) => Promise<string[]>;
 }
+
+/** One fixed Cloudinary id per student: uploading again replaces the old photo in place. */
+const passportPublicId = (userId: string): string => `peacock/students/${userId}`;
 
 interface EnrolmentView { sessionId: string; classArmId: string; classArmName: string }
 
@@ -57,10 +65,12 @@ function toView(s: StudentRecord, user: UserRecord, enrolment: EnrolmentView | n
     id: user.id,
     admissionNo: s.admissionNo,
     firstName: s.firstName,
+    middleName: s.middleName,
     lastName: s.lastName,
     gender: s.gender,
     dateOfBirth: s.dateOfBirth ? s.dateOfBirth.toISOString().slice(0, 10) : null,
     address: s.address,
+    passportUrl: s.passportUrl,
     status: s.status,
     admissionSessionId: s.admissionSessionId,
     enrolment,
@@ -172,6 +182,7 @@ export function createStudentService(deps: StudentServiceDeps) {
       const passwordHash = temporaryPassword ? await passwords.hashPassword(temporaryPassword) : undefined;
       const profile = {
         firstName: input.firstName,
+        ...(input.middleName ? { middleName: input.middleName } : {}),
         lastName: input.lastName,
         ...(input.gender ? { gender: input.gender } : {}),
         ...(dateOfBirth ? { dateOfBirth } : {}),
@@ -226,6 +237,7 @@ export function createStudentService(deps: StudentServiceDeps) {
       };
       const profile = {
         ...(patch.firstName !== undefined ? { firstName: patch.firstName } : {}),
+        ...(patch.middleName !== undefined ? { middleName: patch.middleName } : {}),
         ...(patch.lastName !== undefined ? { lastName: patch.lastName } : {}),
         ...(patch.gender !== undefined ? { gender: patch.gender } : {}),
         ...(patch.dateOfBirth !== undefined ? { dateOfBirth: parseBirthDate(patch.dateOfBirth) } : {}),
@@ -255,6 +267,27 @@ export function createStudentService(deps: StudentServiceDeps) {
 
       const after = await mustGet(userId);
       await log('ENROLLED', actor, ctx, userId, before.enrolment, { sessionId: session.id, classArmId: arm.id });
+      return after;
+    },
+
+    /** Stores the photo in Cloudinary and keeps only its URL. Uploading again replaces the old photo. */
+    async setPassport(userId: string, image: Buffer, actor: Actor, ctx: Context): Promise<StudentView> {
+      const before = await mustGet(userId);
+      const stored = await deps.images.upload(image, passportPublicId(userId));
+      await students.update(userId, { passportUrl: stored.url });
+      const after = await mustGet(userId);
+      await log('PASSPORT_UPDATED', actor, ctx, userId, { passportUrl: before.passportUrl }, { passportUrl: after.passportUrl });
+      return after;
+    },
+
+    async removePassport(userId: string, actor: Actor, ctx: Context): Promise<StudentView> {
+      const before = await mustGet(userId);
+      if (before.passportUrl) {
+        await deps.images.remove(passportPublicId(userId));
+        await students.update(userId, { passportUrl: null });
+      }
+      const after = await mustGet(userId);
+      await log('PASSPORT_REMOVED', actor, ctx, userId, { passportUrl: before.passportUrl }, { passportUrl: null });
       return after;
     },
 

@@ -16,6 +16,7 @@ import { createCsrfService } from './modules/auth/csrf.service';
 import { createAuthModule } from './modules/auth/auth.module';
 import type { KeyValueStore } from './modules/auth/keyValueStore';
 import { createAuditService } from './modules/audit/audit.service';
+import { createImageStore, type ImageStore } from './integrations/imageStore';
 import { createMailer, type Mailer } from './integrations/mailer';
 import { createExamJobs } from './jobs/exam.jobs'; 
 import type { ExamJobs } from './jobs/exam.jobs';
@@ -30,6 +31,8 @@ export interface AppDependencies extends HealthDependencies {
   docsEnabled?: boolean;
   sessionStore: KeyValueStore,
   mailer?: Mailer;
+  /** Overrides the Cloudinary store. Meant for tests. */
+  images?: ImageStore;
   examJobs?: ExamJobs;
   reportJobs?: ReportJobs;
 }
@@ -100,7 +103,7 @@ export function createApp(deps: AppDependencies): Express {
 
       app.use('/api/v1', createRoutes({ health: deps, auth, audit,
          store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis,
-          mailer, examJobs: deps.examJobs ?? createExamJobs(null),reportJobs: deps.reportJobs ?? createReportJobs(null), }));
+          mailer, images: deps.images ?? createImageStore(), examJobs: deps.examJobs ?? createExamJobs(null),reportJobs: deps.reportJobs ?? createReportJobs(null), }));
 
   app.use(notFound);
   app.use(errorHandler);

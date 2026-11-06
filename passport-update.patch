@@ -1,0 +1,598 @@
+diff --git a/.env.example b/.env.example
+index 452b974..41625e0 100644
+--- a/.env.example
++++ b/.env.example
+@@ -16,4 +16,9 @@ ACCESS_TOKEN_SECRET=
+ REFRESH_TOKEN_SECRET=
+ CSRF_SECRET=
+ DOCS_ENABLED=true
+-# WORKERS_ENABLED=true
+\ No newline at end of file
++# WORKERS_ENABLED=true
++
++# Student passport photos are stored in Cloudinary (Dashboard > API Keys). Without these, the photo routes answer 503.
++CLOUDINARY_CLOUD_NAME=
++CLOUDINARY_API_KEY=
++CLOUDINARY_API_SECRET=
+diff --git a/src/app.ts b/src/app.ts
+index eacdf59..b26b3b4 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -16,6 +16,7 @@ import { createCsrfService } from './modules/auth/csrf.service';
+ import { createAuthModule } from './modules/auth/auth.module';
+ import type { KeyValueStore } from './modules/auth/keyValueStore';
+ import { createAuditService } from './modules/audit/audit.service';
++import { createImageStore, type ImageStore } from './integrations/imageStore';
+ import { createMailer, type Mailer } from './integrations/mailer';
+ import { createExamJobs } from './jobs/exam.jobs'; 
+ import type { ExamJobs } from './jobs/exam.jobs';
+@@ -30,6 +31,8 @@ export interface AppDependencies extends HealthDependencies {
+   docsEnabled?: boolean;
+   sessionStore: KeyValueStore,
+   mailer?: Mailer;
++  /** Overrides the Cloudinary store. Meant for tests. */
++  images?: ImageStore;
+   examJobs?: ExamJobs;
+   reportJobs?: ReportJobs;
+ }
+@@ -100,7 +103,7 @@ export function createApp(deps: AppDependencies): Express {
+ 
+       app.use('/api/v1', createRoutes({ health: deps, auth, audit,
+          store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis,
+-          mailer, examJobs: deps.examJobs ?? createExamJobs(null),reportJobs: deps.reportJobs ?? createReportJobs(null), }));
++          mailer, images: deps.images ?? createImageStore(), examJobs: deps.examJobs ?? createExamJobs(null),reportJobs: deps.reportJobs ?? createReportJobs(null), }));
+ 
+   app.use(notFound);
+   app.use(errorHandler);
+diff --git a/pb/src/common/utils/image.ts b/src/common/utils/image.ts
+new file mode 100644
+index 0000000..6fc98b3
+--- /dev/null
++++ b/src/common/utils/image.ts
+@@ -0,0 +1,12 @@
++/**
++ * Works out the real type of an uploaded image from its first bytes.
++ * The filename and the Content-Type header come from the client, so they prove nothing.
++ */
++export type ImageType = 'jpeg' | 'png' | 'webp';
++
++export function detectImageType(buf: Buffer): ImageType | null {
++  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpeg';
++  if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
++  if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'webp';
++  return null;
++}
+diff --git a/src/config/env.ts b/src/config/env.ts
+index f771064..45d84ec 100644
+--- a/src/config/env.ts
++++ b/src/config/env.ts
+@@ -54,6 +54,12 @@ const schema = z
+       .transform((value) => value === 'true')
+       .optional(),
+ 
++    // Cloudinary stores the student passport photos. All three are needed for uploads to work;
++    // without them the API still starts and the photo routes answer 503.
++    CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
++    CLOUDINARY_API_KEY: z.string().min(1).optional(),
++    CLOUDINARY_API_SECRET: z.string().min(1).optional(),
++
+     ACCESS_TOKEN_SECRET: secret,
+     REFRESH_TOKEN_SECRET: secret,
+     CSRF_SECRET: secret,
+diff --git a/pb/src/integrations/imageStore.ts b/src/integrations/imageStore.ts
+new file mode 100644
+index 0000000..154b16f
+--- /dev/null
++++ b/src/integrations/imageStore.ts
+@@ -0,0 +1,68 @@
++import { v2 as cloudinary } from 'cloudinary';
++import { AppError } from '../common/errors/AppError';
++import { logger } from '../common/utils/logger';
++import { env } from '../config/env';
++
++export interface StoredImage {
++  /** HTTPS delivery URL. This is the only thing we keep in our database. */
++  url: string;
++}
++
++export interface ImageStore {
++  /**
++   * Saves the image under `publicId`. Uploading again with the same id replaces the old image,
++   * so a re-upload never leaves an orphan behind.
++   */
++  upload(buffer: Buffer, publicId: string): Promise<StoredImage>;
++  remove(publicId: string): Promise<void>;
++}
++
++/** Passport framing: 600x800 (3:4), cropped around the face, and capped in size. */
++const PASSPORT_TRANSFORMATION = [{ width: 600, height: 800, crop: 'fill', gravity: 'face' }, { quality: 'auto', fetch_format: 'auto' }];
++
++export function createCloudinaryImageStore(config: { cloudName: string; apiKey: string; apiSecret: string }): ImageStore {
++  cloudinary.config({ cloud_name: config.cloudName, api_key: config.apiKey, api_secret: config.apiSecret, secure: true });
++
++  return {
++    upload: (buffer, publicId) =>
++      new Promise((resolve, reject) => {
++        const stream = cloudinary.uploader.upload_stream(
++          { public_id: publicId, overwrite: true, invalidate: true, resource_type: 'image', transformation: PASSPORT_TRANSFORMATION },
++          (error, result) => {
++            if (error || !result) {
++              logger.error({ err: error }, 'cloudinary upload failed');
++              reject(new AppError('SERVICE_UNAVAILABLE'));
++              return;
++            }
++            resolve({ url: result.secure_url });
++          },
++        );
++        stream.end(buffer);
++      }),
++
++    async remove(publicId) {
++      try {
++        await cloudinary.uploader.destroy(publicId, { invalidate: true, resource_type: 'image' });
++      } catch (err) {
++        logger.error({ err }, 'cloudinary delete failed');
++        throw new AppError('SERVICE_UNAVAILABLE');
++      }
++    },
++  };
++}
++
++/** Used when Cloudinary is not configured: the API runs, and photo routes answer 503. */
++export function createDisabledImageStore(): ImageStore {
++  const unavailable = async (): Promise<never> => {
++    logger.error('image not stored: Cloudinary is not configured');
++    throw new AppError('SERVICE_UNAVAILABLE');
++  };
++  return { upload: unavailable, remove: unavailable };
++}
++
++export function createImageStore(): ImageStore {
++  const { CLOUDINARY_CLOUD_NAME: cloudName, CLOUDINARY_API_KEY: apiKey, CLOUDINARY_API_SECRET: apiSecret } = env;
++  return cloudName && apiKey && apiSecret
++    ? createCloudinaryImageStore({ cloudName, apiKey, apiSecret })
++    : createDisabledImageStore();
++}
+diff --git a/src/modules/reports/report.generators.ts b/src/modules/reports/report.generators.ts
+index 003875c..de1103e 100644
+--- a/src/modules/reports/report.generators.ts
++++ b/src/modules/reports/report.generators.ts
+@@ -66,11 +66,11 @@ export function createReportGenerators(deps: {
+         const rows = records
+           .map((s) => ({ class: labels.get(arm.get(s.userId) ?? '') ?? '', s }))
+           .sort((a, b) => a.class.localeCompare(b.class) || a.s.lastName.localeCompare(b.s.lastName))
+-          .map(({ class: c, s }) => [s.admissionNo, s.lastName, s.firstName, s.gender, c, s.status]);
++          .map(({ class: c, s }) => [s.admissionNo, s.lastName, s.firstName, s.middleName ?? '', s.gender, c, s.status]);
+ 
+         return {
+           title: 'Enrolment', subtitle: `${session.name}${params.classArmId ? ` - ${labels.get(params.classArmId) ?? ''}` : ''}. Generated ${schoolToday()}`,
+-          columns: ['Admission No', 'Last name', 'First name', 'Gender', 'Class', 'Status'], rows,
++          columns: ['Admission No', 'Last name', 'First name', 'Middle name', 'Gender', 'Class', 'Status'], rows,
+         };
+       },
+     },
+@@ -98,7 +98,7 @@ export function createReportGenerators(deps: {
+         const rows = records
+           .map((s) => ({ class: labels.get(arm.get(s.userId) ?? '') ?? '', s, a: attendanceSummaryOf(counts.get(s.userId)) }))
+           .sort((a, b) => a.class.localeCompare(b.class) || a.s.lastName.localeCompare(b.s.lastName))
+-          .map(({ class: c, s, a }) => [s.admissionNo, `${s.lastName} ${s.firstName}`, c, a.present, a.late, a.excused, a.absent, a.days, a.rate]);
++          .map(({ class: c, s, a }) => [s.admissionNo, [s.lastName, s.firstName, s.middleName].filter(Boolean).join(' '), c, a.present, a.late, a.excused, a.absent, a.days, a.rate]);
+ 
+         return {
+           title: 'Attendance', subtitle: `${from} to ${to}${params.classArmId ? ` - ${labels.get(params.classArmId) ?? ''}` : ''}`,
+diff --git a/src/modules/users/staff.repository.ts b/src/modules/users/staff.repository.ts
+index 783899a..4e9ce2f 100644
+--- a/src/modules/users/staff.repository.ts
++++ b/src/modules/users/staff.repository.ts
+@@ -19,10 +19,12 @@ export interface StaffRecord {
+ 
+ export interface ProfileInput {
+   firstName: string;
++  middleName?: string | null;
+   lastName: string;
+   gender?: Gender;
+   dateOfBirth?: Date;
+   address?: string;
++  passportUrl?: string | null;
+ }
+ 
+ const OBJECT_ID = /^[a-f0-9]{24}$/;
+diff --git a/src/modules/users/student.import.ts b/src/modules/users/student.import.ts
+index 659427e..3fd2298 100644
+--- a/src/modules/users/student.import.ts
++++ b/src/modules/users/student.import.ts
+@@ -16,7 +16,7 @@ const TOKEN_TTL_SECONDS = 15 * 60;
+ const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+ 
+ const COLUMNS: Record<string, string> = {
+-  firstname: 'firstName', lastname: 'lastName', gender: 'gender', dateofbirth: 'dateOfBirth', address: 'address',
++  firstname: 'firstName', middlename: 'middleName', lastname: 'lastName', gender: 'gender', dateofbirth: 'dateOfBirth', address: 'address',
+   email: 'email', phone: 'phone', classname: 'className', armname: 'armName',
+ };
+ const REQUIRED = ['firstName', 'lastName'];
+@@ -26,6 +26,7 @@ const FORMULA_START = /^[=+\-@\t\r]/;
+ interface ImportRow {
+   row: number;
+   firstName: string;
++  middleName?: string;
+   lastName: string;
+   gender?: Gender;
+   dateOfBirth?: string;
+@@ -118,6 +119,7 @@ export function createStudentImportService(deps: {
+         };
+ 
+         const firstName = textField('firstName', true, 60);
++        const middleName = textField('middleName', false, 60);
+         const lastName = textField('lastName', true, 60);
+         const address = textField('address', false, 200);
+ 
+@@ -160,6 +162,7 @@ export function createStudentImportService(deps: {
+         if (errors.length === before && firstName && lastName) {
+           valid.push({
+             row, firstName, lastName,
++            ...(middleName ? { middleName } : {}),
+             ...(gender ? { gender } : {}), ...(dateOfBirth ? { dateOfBirth } : {}), ...(address ? { address } : {}),
+             ...(email ? { email } : {}), ...(phone ? { phone } : {}), ...(classArmId ? { classArmId } : {}),
+           });
+@@ -212,7 +215,7 @@ export function createStudentImportService(deps: {
+         try {
+           const result = await students.create(
+             {
+-              firstName: r.firstName, lastName: r.lastName, gender: r.gender, dateOfBirth: r.dateOfBirth, address: r.address,
++              firstName: r.firstName, middleName: r.middleName, lastName: r.lastName, gender: r.gender, dateOfBirth: r.dateOfBirth, address: r.address,
+               email: r.email, phone: r.phone, classArmId: r.classArmId, delivery: 'TEMPORARY_PASSWORD',
+             },
+             actor,
+@@ -220,7 +223,7 @@ export function createStudentImportService(deps: {
+           );
+           created.push({
+             row: r.row, id: result.account.id, admissionNo: result.account.admissionNo,
+-            name: `${r.firstName} ${r.lastName}`, temporaryPassword: result.temporaryPassword ?? '',
++            name: [r.firstName, r.middleName, r.lastName].filter(Boolean).join(' '), temporaryPassword: result.temporaryPassword ?? '',
+           });
+         } catch (err) {
+           if (!isAppError(err)) logger.error({ err, row: r.row }, 'student import row failed');
+diff --git a/src/modules/users/student.model.ts b/src/modules/users/student.model.ts
+index bbe43c7..31eae2a 100644
+--- a/src/modules/users/student.model.ts
++++ b/src/modules/users/student.model.ts
+@@ -8,7 +8,16 @@ export interface StudentDocument {
+   userId: Types.ObjectId;
+   admissionNo: string;
+   admissionSessionId: Types.ObjectId;
+-  profile: { firstName: string; lastName: string; gender?: Gender | null; dateOfBirth?: Date | null; address?: string | null };
++  profile: {
++    firstName: string;
++    middleName?: string | null;
++    lastName: string;
++    gender?: Gender | null;
++    dateOfBirth?: Date | null;
++    address?: string | null;
++    /** Cloudinary delivery URL. The image itself never touches our database. */
++    passportUrl?: string | null;
++  };
+   status: StudentStatus;
+   deletedAt?: Date | null;
+   createdAt: Date;
+@@ -18,10 +27,18 @@ export interface StudentDocument {
+ const profileSchema = new mongoose.Schema(
+   {
+     firstName: { type: String, required: true, trim: true, maxlength: 60 },
++    middleName: { type: String, trim: true, maxlength: 60, default: null },
+     lastName: { type: String, required: true, trim: true, maxlength: 60 },
+     gender: { type: String, enum: GENDERS, default: null },
+     dateOfBirth: { type: Date, default: null },
+     address: { type: String, trim: true, maxlength: 200, default: null },
++    passportUrl: {
++      type: String,
++      trim: true,
++      maxlength: 500,
++      default: null,
++      validate: { validator: (v: string | null) => v === null || /^https:\/\/res\.cloudinary\.com\//.test(v), message: 'Must be a Cloudinary https URL' },
++    },
+   },
+   { _id: false },
+ );
+diff --git a/src/modules/users/student.repository.ts b/src/modules/users/student.repository.ts
+index 3b0fd98..a057553 100644
+--- a/src/modules/users/student.repository.ts
++++ b/src/modules/users/student.repository.ts
+@@ -13,10 +13,12 @@ export interface StudentRecord {
+   admissionNo: string;
+   admissionSessionId: string;
+   firstName: string;
++  middleName: string | null;
+   lastName: string;
+   gender: Gender | null;
+   dateOfBirth: Date | null;
+   address: string | null;
++  passportUrl: string | null;
+   status: StudentStatus;
+ }
+ 
+@@ -38,10 +40,12 @@ const toRecord = (r: Row): StudentRecord => ({
+   admissionNo: r.admissionNo,
+   admissionSessionId: r.admissionSessionId.toString(),
+   firstName: r.profile.firstName,
++  middleName: r.profile.middleName ?? null,
+   lastName: r.profile.lastName,
+   gender: r.profile.gender ?? null,
+   dateOfBirth: r.profile.dateOfBirth ?? null,
+   address: r.profile.address ?? null,
++  passportUrl: r.profile.passportUrl ?? null,
+   status: r.status,
+ });
+ 
+@@ -94,7 +98,7 @@ async function list(
+   if (filter.userIds) query.userId = { $in: filter.userIds };
+   if (filter.q) {
+     const rx = { $regex: escapeRegex(filter.q), $options: 'i' };
+-    query.$or = [{ 'profile.firstName': rx }, { 'profile.lastName': rx }, { admissionNo: rx }];
++    query.$or = [{ 'profile.firstName': rx }, { 'profile.middleName': rx }, { 'profile.lastName': rx }, { admissionNo: rx }];
+   }
+ 
+   const [rows, total] = await Promise.all([
+diff --git a/src/modules/users/student.routes.ts b/src/modules/users/student.routes.ts
+index 5a6139f..90e9f73 100644
+--- a/src/modules/users/student.routes.ts
++++ b/src/modules/users/student.routes.ts
+@@ -5,6 +5,7 @@ import { authorize } from '../../common/middleware/authorize';
+ import { validate, type Validated } from '../../common/middleware/validate';
+ import type { ScopeService } from '../../common/scope/scope.service';
+ import { buildPageMeta, sendCreated, sendSuccess } from '../../common/utils/apiResponse';
++import { detectImageType } from '../../common/utils/image';
+ import { contextOf, requireUser } from '../../common/utils/request';
+ import { ROLES } from '../../config/constants';
+ import type { StudentImportService } from './student.import';
+@@ -14,6 +15,7 @@ import {
+ import type { StudentService } from './student.service';
+ 
+ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
++const uploadImage = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
+ const CSV_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain']);
+ 
+ export function createStudentRouter(deps: {
+@@ -66,6 +68,23 @@ export function createStudentRouter(deps: {
+     sendSuccess(res, await service.update(params.id, body, requireUser(req), contextOf(req)));
+   });
+ 
++  router.put(
++    '/students/:id/passport', auth, authorize('students:write'), uploadImage.single('file'), validate(studentIdSchemas),
++    async (req, res) => {
++      const { params } = req.validated as Validated<typeof studentIdSchemas>;
++      const file = req.file;
++      if (!file || !detectImageType(file.buffer)) {
++        throw new AppError('VALIDATION_ERROR', { details: [{ field: 'file', issue: 'Attach a JPEG, PNG or WebP image in the "file" field' }] });
++      }
++      sendSuccess(res, await service.setPassport(params.id, file.buffer, requireUser(req), contextOf(req)));
++    },
++  );
++
++  router.delete('/students/:id/passport', auth, authorize('students:write'), validate(studentIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof studentIdSchemas>;
++    sendSuccess(res, await service.removePassport(params.id, requireUser(req), contextOf(req)));
++  });
++
+   router.delete('/students/:id', auth, authorize('students:write'), validate(studentIdSchemas), async (req, res) => {
+     const { params } = req.validated as Validated<typeof studentIdSchemas>;
+     await service.remove(params.id, requireUser(req), contextOf(req));
+diff --git a/src/modules/users/student.schema.ts b/src/modules/users/student.schema.ts
+index 8a0a785..81b618c 100644
+--- a/src/modules/users/student.schema.ts
++++ b/src/modules/users/student.schema.ts
+@@ -8,6 +8,7 @@ import { STUDENT_STATUS, type StudentStatus } from './student.model';
+ const objectId = z.string().regex(/^[a-f0-9]{24}$/);
+ const idParams = z.object({ id: objectId });
+ const name = z.string().trim().min(1).max(60);
++const passportUrl = z.url().max(500).nullable();
+ const statusValues = Object.values(STUDENT_STATUS) as [StudentStatus, ...StudentStatus[]];
+ 
+ export const studentIdSchemas = { params: idParams };
+@@ -23,6 +24,7 @@ export const listStudentsSchemas = { query: listStudentsQuery };
+ 
+ const createBody = z.object({
+   firstName: name,
++  middleName: name.optional(),
+   lastName: name,
+   gender: z.enum(GENDERS).optional(),
+   dateOfBirth: z.iso.date().optional(),
+@@ -39,6 +41,8 @@ export const createStudentSchemas = { body: createBody };
+ 
+ const updateBody = z.object({
+   firstName: name.optional(),
++  /** Send null to clear it. */
++  middleName: name.nullable().optional(),
+   lastName: name.optional(),
+   gender: z.enum(GENDERS).optional(),
+   dateOfBirth: z.iso.date().optional(),
+@@ -59,10 +63,12 @@ const studentView = z.object({
+   id: z.string(),
+   admissionNo: z.string(),
+   firstName: z.string(),
++  middleName: z.string().nullable(),
+   lastName: z.string(),
+   gender: z.enum(GENDERS).nullable(),
+   dateOfBirth: z.iso.date().nullable(),
+   address: z.string().nullable(),
++  passportUrl: passportUrl,
+   status: z.enum(statusValues),
+   admissionSessionId: z.string(),
+   enrolment: z.object({ sessionId: z.string(), classArmId: z.string(), classArmName: z.string() }).nullable(),
+@@ -95,6 +101,8 @@ export function registerStudentOperations(registry: OpenApiRegistry): void {
+   registry.register({ method: 'post', path: '/students', operationId: 'createStudent', summary: 'Admit a student. Returns the registration number and a one-time temporary password', tags, roles: writeRoles, request: { body: createBody }, success: { status: 201, description: 'Created', data: z.object({ account: studentView, temporaryPassword: z.string().nullable(), inviteEmailSent: z.boolean().nullable() }) }, errors: ['CONFLICT'] });
+   registry.register({ method: 'get', path: '/students/{id}', operationId: 'getStudent', summary: 'One student (a parent sees only their children, a student only themselves)', tags, roles: PERMISSIONS['students:read'], request: { params: idParams }, success: { status: 200, description: 'Found', data: studentView }, errors: ['NOT_FOUND'] });
+   registry.register({ method: 'patch', path: '/students/{id}', operationId: 'updateStudent', summary: 'Update a student', tags, roles: writeRoles, request: { params: idParams, body: updateBody }, success: { status: 200, description: 'Updated', data: studentView }, errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'put', path: '/students/{id}/passport', operationId: 'uploadStudentPassport', summary: 'Upload or replace the passport photo (field "file", JPEG, PNG or WebP, max 2 MB). Stored in Cloudinary, only the URL is saved', tags, roles: writeRoles, request: { params: idParams }, upload: true, success: { status: 200, description: 'Updated', data: studentView }, errors: ['NOT_FOUND', 'SERVICE_UNAVAILABLE'] });
++  registry.register({ method: 'delete', path: '/students/{id}/passport', operationId: 'deleteStudentPassport', summary: 'Remove the passport photo', tags, roles: writeRoles, request: { params: idParams }, success: { status: 200, description: 'Updated', data: studentView }, errors: ['NOT_FOUND', 'SERVICE_UNAVAILABLE'] });
+   registry.register({ method: 'delete', path: '/students/{id}', operationId: 'deleteStudent', summary: 'Remove a student (soft delete). Ends all their logins', tags, roles: writeRoles, request: { params: idParams }, success: { status: 200, description: 'Removed', data: z.null() }, errors: ['NOT_FOUND'] });
+   registry.register({ method: 'put', path: '/students/{id}/enrolment', operationId: 'enrolStudent', summary: 'Put a student in a class for a session (defaults to the current one)', tags, roles: writeRoles, request: { params: idParams, body: enrolBody }, success: { status: 200, description: 'Enrolled', data: studentView }, errors: ['NOT_FOUND'] });
+   registry.register({ method: 'post', path: '/students/import', operationId: 'importStudents', summary: 'Upload a CSV (field "file", max 2 MB, 1000 rows). Validates every row and returns a report; nothing is saved', tags, roles: PERMISSIONS['students:import'], upload: true, success: { status: 200, description: 'Validation report', data: importReport }, errors: ['IMPORT_INVALID'] });
+diff --git a/src/modules/users/student.service.ts b/src/modules/users/student.service.ts
+index c2e8456..78f49f9 100644
+--- a/src/modules/users/student.service.ts
++++ b/src/modules/users/student.service.ts
+@@ -5,6 +5,7 @@ import { withTransaction } from '../../config/db';
+ import type { EnrolmentRecord, enrolmentRepository } from '../academics/enrolment.repository';
+ import type { sessionRepository } from '../academics/session.repository';
+ import type { structureRepository } from '../academics/structure.repository';
++import type { ImageStore } from '../../integrations/imageStore';
+ import { recordSafely, type AuditPort } from '../audit/audit.port';
+ import type { CredentialsService } from '../auth/credentials.service';
+ import type { PasswordService } from '../auth/password.service';
+@@ -19,6 +20,7 @@ interface Context { ip: string; requestId: string }
+ 
+ export interface CreateStudentInput {
+   firstName: string;
++  middleName?: string | undefined;
+   lastName: string;
+   gender?: Gender | undefined;
+   dateOfBirth?: string | undefined;
+@@ -29,7 +31,9 @@ export interface CreateStudentInput {
+   classArmId?: string | undefined;
+   delivery: 'TEMPORARY_PASSWORD' | 'EMAIL_INVITE';
+ }
+-export type UpdateStudentInput = Partial<Omit<CreateStudentInput, 'delivery' | 'admissionSessionId' | 'classArmId'>> & {
++export type UpdateStudentInput = Partial<Omit<CreateStudentInput, 'delivery' | 'admissionSessionId' | 'classArmId' | 'middleName'>> & {
++  /** null clears it. */
++  middleName?: string | null | undefined;
+   status?: StudentStatus | undefined;
+ };
+ 
+@@ -43,10 +47,14 @@ export interface StudentServiceDeps {
+   credentials: Pick<CredentialsService, 'issueInvite'>;
+   tokens: Pick<TokenService, 'revokeAllSessions'>;
+   audit: AuditPort;
++  images: ImageStore;
+   /** Class arms this teacher teaches or is class teacher of, this session. */
+   teacherArmIds: (teacherUserId: string) => Promise<string[]>;
+ }
+ 
++/** One fixed Cloudinary id per student: uploading again replaces the old photo in place. */
++const passportPublicId = (userId: string): string => `peacock/students/${userId}`;
++
+ interface EnrolmentView { sessionId: string; classArmId: string; classArmName: string }
+ 
+ const fail = (field: string, issue: string): AppError =>
+@@ -57,10 +65,12 @@ function toView(s: StudentRecord, user: UserRecord, enrolment: EnrolmentView | n
+     id: user.id,
+     admissionNo: s.admissionNo,
+     firstName: s.firstName,
++    middleName: s.middleName,
+     lastName: s.lastName,
+     gender: s.gender,
+     dateOfBirth: s.dateOfBirth ? s.dateOfBirth.toISOString().slice(0, 10) : null,
+     address: s.address,
++    passportUrl: s.passportUrl,
+     status: s.status,
+     admissionSessionId: s.admissionSessionId,
+     enrolment,
+@@ -172,6 +182,7 @@ export function createStudentService(deps: StudentServiceDeps) {
+       const passwordHash = temporaryPassword ? await passwords.hashPassword(temporaryPassword) : undefined;
+       const profile = {
+         firstName: input.firstName,
++        ...(input.middleName ? { middleName: input.middleName } : {}),
+         lastName: input.lastName,
+         ...(input.gender ? { gender: input.gender } : {}),
+         ...(dateOfBirth ? { dateOfBirth } : {}),
+@@ -226,6 +237,7 @@ export function createStudentService(deps: StudentServiceDeps) {
+       };
+       const profile = {
+         ...(patch.firstName !== undefined ? { firstName: patch.firstName } : {}),
++        ...(patch.middleName !== undefined ? { middleName: patch.middleName } : {}),
+         ...(patch.lastName !== undefined ? { lastName: patch.lastName } : {}),
+         ...(patch.gender !== undefined ? { gender: patch.gender } : {}),
+         ...(patch.dateOfBirth !== undefined ? { dateOfBirth: parseBirthDate(patch.dateOfBirth) } : {}),
+@@ -258,6 +270,27 @@ export function createStudentService(deps: StudentServiceDeps) {
+       return after;
+     },
+ 
++    /** Stores the photo in Cloudinary and keeps only its URL. Uploading again replaces the old photo. */
++    async setPassport(userId: string, image: Buffer, actor: Actor, ctx: Context): Promise<StudentView> {
++      const before = await mustGet(userId);
++      const stored = await deps.images.upload(image, passportPublicId(userId));
++      await students.update(userId, { passportUrl: stored.url });
++      const after = await mustGet(userId);
++      await log('PASSPORT_UPDATED', actor, ctx, userId, { passportUrl: before.passportUrl }, { passportUrl: after.passportUrl });
++      return after;
++    },
++
++    async removePassport(userId: string, actor: Actor, ctx: Context): Promise<StudentView> {
++      const before = await mustGet(userId);
++      if (before.passportUrl) {
++        await deps.images.remove(passportPublicId(userId));
++        await students.update(userId, { passportUrl: null });
++      }
++      const after = await mustGet(userId);
++      await log('PASSPORT_REMOVED', actor, ctx, userId, { passportUrl: before.passportUrl }, { passportUrl: null });
++      return after;
++    },
++
+     async remove(userId: string, actor: Actor, ctx: Context): Promise<void> {
+       const before = await mustGet(userId);
+       const now = new Date();
+diff --git a/src/modules/users/users.module.ts b/src/modules/users/users.module.ts
+index c069e46..b8be771 100644
+--- a/src/modules/users/users.module.ts
++++ b/src/modules/users/users.module.ts
+@@ -2,6 +2,7 @@ import { Router } from 'express';
+ import { createClaimRateLimiter, type RedisLike } from '../../common/middleware/rateLimiter';
+ import { createScopeService } from '../../common/scope';
+ import { env } from '../../config/env';
++import type { ImageStore } from '../../integrations/imageStore';
+ import { enrolmentRepository } from '../academics/enrolment.repository';
+ import { sessionRepository } from '../academics/session.repository';
+ import { structureRepository } from '../academics/structure.repository';
+@@ -35,8 +36,9 @@ export function createUsersModule(deps: {
+   store: KeyValueStore;
+   rateLimitRedis: RedisLike | null;
+   teacherArms: TeacherArmsCache;
++  images: ImageStore;
+ }) {
+-  const { audit, auth, store, teacherArms } = deps;
++  const { audit, auth, store, teacherArms, images } = deps;
+   const authenticate = auth.middleware.authenticate;
+   const common = { passwords: passwordService, credentials: auth.credentials, tokens: auth.tokens, audit };
+ 
+@@ -79,6 +81,7 @@ export function createUsersModule(deps: {
+     enrolments: enrolmentRepository,
+     sessions: sessionRepository,
+     structure: structureRepository,
++    images,
+     teacherArmIds: (teacherUserId) => teacherArms.armIdsOf(teacherUserId),
+     ...common,
+   });
+diff --git a/src/routes.ts b/src/routes.ts
+index bbe899a..7aa70b5 100644
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -3,6 +3,7 @@ import { assertAllRoutesGuarded } from './common/middleware/routeGuards';
+ import type { RedisLike } from './common/middleware/rateLimiter';
+ import type { ExamJobs } from './jobs/exam.jobs';
+ import type { ReportJobs } from './jobs/report.jobs';
++import type { ImageStore } from './integrations/imageStore';
+ import type { Mailer } from './integrations/mailer';
+ import { createAcademicsModule } from './modules/academics/academics.module';
+ import { createAuditRouter } from './modules/audit/audit.routes';
+@@ -26,11 +27,12 @@ export interface RouteDeps {
+   store: KeyValueStore;
+   rateLimitRedis: RedisLike | null;
+   mailer: Mailer;
++  images: ImageStore;
+   examJobs: ExamJobs;
+   reportJobs: ReportJobs;
+ }
+ 
+-export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer, examJobs, reportJobs }: RouteDeps): Router {
++export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer, images, examJobs, reportJobs }: RouteDeps): Router {
+   const router = Router();
+ 
+   router.use(createHealthRouter(health));
+@@ -40,7 +42,7 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
+   const academics = createAcademicsModule({ audit, auth, store });
+   router.use(academics.router);
+ 
+-  const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms });
++  const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms, images });
+   router.use(users.router);
+ 
+   // Settings come before the modules that read them.

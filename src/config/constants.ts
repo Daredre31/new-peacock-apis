@@ -130,6 +130,7 @@ export const PERMISSIONS = {
   'uploads:presign': ALL_ROLES,
     'tasks:own': [ST], // a student's own task list and analytics
      'results:sheet': [SA, AD],
+       'payments:reverse': [SA], // undo a recorded offline payment, with a reason
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

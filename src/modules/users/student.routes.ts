@@ -5,6 +5,7 @@ import { authorize } from '../../common/middleware/authorize';
 import { validate, type Validated } from '../../common/middleware/validate';
 import type { ScopeService } from '../../common/scope/scope.service';
 import { buildPageMeta, sendCreated, sendSuccess } from '../../common/utils/apiResponse';
+import { detectImageType } from '../../common/utils/image';
 import { contextOf, requireUser } from '../../common/utils/request';
 import { ROLES } from '../../config/constants';
 import type { StudentImportService } from './student.import';
@@ -14,6 +15,7 @@ import {
 import type { StudentService } from './student.service';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
+const uploadImage = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
 const CSV_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain']);
 
 export function createStudentRouter(deps: {
@@ -64,6 +66,23 @@ export function createStudentRouter(deps: {
   router.patch('/students/:id', auth, authorize('students:write'), validate(updateStudentSchemas), async (req, res) => {
     const { params, body } = req.validated as Validated<typeof updateStudentSchemas>;
     sendSuccess(res, await service.update(params.id, body, requireUser(req), contextOf(req)));
+  });
+
+  router.put(
+    '/students/:id/passport', auth, authorize('students:write'), uploadImage.single('file'), validate(studentIdSchemas),
+    async (req, res) => {
+      const { params } = req.validated as Validated<typeof studentIdSchemas>;
+      const file = req.file;
+      if (!file || !detectImageType(file.buffer)) {
+        throw new AppError('VALIDATION_ERROR', { details: [{ field: 'file', issue: 'Attach a JPEG, PNG or WebP image in the "file" field' }] });
+      }
+      sendSuccess(res, await service.setPassport(params.id, file.buffer, requireUser(req), contextOf(req)));
+    },
+  );
+
+  router.delete('/students/:id/passport', auth, authorize('students:write'), validate(studentIdSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof studentIdSchemas>;
+    sendSuccess(res, await service.removePassport(params.id, requireUser(req), contextOf(req)));
   });
 
   router.delete('/students/:id', auth, authorize('students:write'), validate(studentIdSchemas), async (req, res) => {

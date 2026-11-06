@@ -3,6 +3,7 @@ import { assertAllRoutesGuarded } from './common/middleware/routeGuards';
 import type { RedisLike } from './common/middleware/rateLimiter';
 import type { ExamJobs } from './jobs/exam.jobs';
 import type { ReportJobs } from './jobs/report.jobs';
+import type { ImageStore } from './integrations/imageStore';
 import type { Mailer } from './integrations/mailer';
 import { createAcademicsModule } from './modules/academics/academics.module';
 import { createAuditRouter } from './modules/audit/audit.routes';
@@ -26,11 +27,12 @@ export interface RouteDeps {
   store: KeyValueStore;
   rateLimitRedis: RedisLike | null;
   mailer: Mailer;
+  images: ImageStore;
   examJobs: ExamJobs;
   reportJobs: ReportJobs;
 }
 
-export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer, examJobs, reportJobs }: RouteDeps): Router {
+export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer, images, examJobs, reportJobs }: RouteDeps): Router {
   const router = Router();
 
   router.use(createHealthRouter(health));
@@ -40,7 +42,7 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
   const academics = createAcademicsModule({ audit, auth, store });
   router.use(academics.router);
 
-  const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms });
+  const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms, images });
   router.use(users.router);
 
   // Settings come before the modules that read them.
