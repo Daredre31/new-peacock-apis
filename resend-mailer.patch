@@ -1,0 +1,117 @@
+diff --git a/src/config/env.ts b/src/config/env.ts
+index 45d84ec..b3e2655 100644
+--- a/src/config/env.ts
++++ b/src/config/env.ts
+@@ -62,2 +62,7 @@ const schema = z
+ 
++    // Resend sends the emails (reset links, notifications). Set both to turn it on.
++    // Development without them prints emails to the console instead.
++    RESEND_API_KEY: z.string().min(1).optional(),
++    MAIL_FROM: z.string().min(3).optional(),
++
+     ACCESS_TOKEN_SECRET: secret,
+@@ -77,2 +82,10 @@ const schema = z
+ 
++    if (Boolean(cfg.RESEND_API_KEY) !== Boolean(cfg.MAIL_FROM)) {
++      ctx.addIssue({
++        code: 'custom',
++        path: [cfg.RESEND_API_KEY ? 'MAIL_FROM' : 'RESEND_API_KEY'],
++        message: 'RESEND_API_KEY and MAIL_FROM must be set together',
++      });
++    }
++
+     if (cfg.NODE_ENV === 'production') {
+diff --git a/src/integrations/mailer.ts b/src/integrations/mailer.ts
+index 98d41f9..efb4be3 100644
+--- a/src/integrations/mailer.ts
++++ b/src/integrations/mailer.ts
+@@ -1,3 +1,3 @@
+ import { logger } from '../common/utils/logger';
+-import { isProduction } from '../config/env';
++import { env, isProduction } from '../config/env';
+ 
+@@ -32,2 +32,71 @@ export function createDisabledMailer(): Mailer {
+ 
+-export const createMailer = (): Mailer => (isProduction ? createDisabledMailer() : createConsoleMailer());
++export interface ResendOptions {
++  apiKey: string;
++  /** Verified sender, e.g. "Peacock Academy <no-reply@yourschool.com>". */
++  from: string;
++  /** Overridable for tests. */
++  baseUrl?: string;
++  /** Minimum gap between requests. Resend allows 2 requests a second by default. */
++  minGapMs?: number;
++  maxRetries?: number;
++}
++
++const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
++
++/**
++ * Sends through Resend's HTTP API (no extra package). Requests go out one at a time, spaced
++ * to stay under Resend's rate limit, and a 429 or 5xx answer is retried a few times.
++ * Errors never include the email body.
++ */
++export function createResendMailer(options: ResendOptions): Mailer {
++  const baseUrl = options.baseUrl ?? 'https://api.resend.com';
++  const minGap = options.minGapMs ?? 550;
++  const maxRetries = options.maxRetries ?? 3;
++  let chain: Promise<unknown> = Promise.resolve();
++  let lastSent = 0;
++
++  async function deliver(message: MailMessage): Promise<void> {
++    for (let attempt = 0; ; attempt++) {
++      const wait = lastSent + minGap - Date.now();
++      if (wait > 0) await sleep(wait);
++      lastSent = Date.now();
++      let res: Response;
++      try {
++        res = await fetch(`${baseUrl}/emails`, {
++          method: 'POST',
++          headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
++          body: JSON.stringify({ from: options.from, to: [message.to], subject: message.subject, text: message.text }),
++          signal: AbortSignal.timeout(10_000),
++        });
++      } catch (err) {
++        if (attempt < maxRetries) { await sleep(500 * 2 ** attempt); continue; }
++        throw new Error(`Resend request failed: ${err instanceof Error ? err.message : 'network error'}`);
++      }
++      if (res.ok) return;
++      const retryable = res.status === 429 || res.status >= 500;
++      if (retryable && attempt < maxRetries) {
++        const retryAfter = Number(res.headers.get('retry-after'));
++        await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 5) * 1000 : 500 * 2 ** attempt);
++        continue;
++      }
++      const detail = await res.text().then((t) => t.slice(0, 300)).catch(() => '');
++      logger.error({ to: message.to, subject: message.subject, status: res.status, detail }, 'resend rejected the email');
++      throw new Error(`Resend answered ${res.status}`);
++    }
++  }
++
++  return {
++    send: (message) => {
++      const run = chain.then(() => deliver(message));
++      chain = run.catch(() => undefined);
++      return run;
++    },
++  };
++}
++
++export function createMailer(): Mailer {
++  if (env.RESEND_API_KEY && env.MAIL_FROM) {
++    return createResendMailer({ apiKey: env.RESEND_API_KEY, from: env.MAIL_FROM });
++  }
++  return isProduction ? createDisabledMailer() : createConsoleMailer();
++}
+diff --git a/.env.example b/.env.example
+index 41625e0..dd202d8 100644
+--- a/.env.example
++++ b/.env.example
+@@ -24 +24,7 @@ CLOUDINARY_API_KEY=
+ CLOUDINARY_API_SECRET=
++
++# Emails (password reset links, notifications) go out through Resend. Set both or neither.
++# MAIL_FROM must use a domain you verified in Resend (Dashboard > Domains), e.g. Peacock Academy <no-reply@yourschool.com>
++# Without them: development prints emails to the console, production sends nothing.
++RESEND_API_KEY=
++MAIL_FROM=

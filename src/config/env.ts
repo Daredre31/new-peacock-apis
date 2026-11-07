@@ -60,6 +60,11 @@ const schema = z
     CLOUDINARY_API_KEY: z.string().min(1).optional(),
     CLOUDINARY_API_SECRET: z.string().min(1).optional(),
 
+    // Resend sends the emails (reset links, notifications). Set both to turn it on.
+    // Development without them prints emails to the console instead.
+    RESEND_API_KEY: z.string().min(1).optional(),
+    MAIL_FROM: z.string().min(3).optional(),
+
     ACCESS_TOKEN_SECRET: secret,
     REFRESH_TOKEN_SECRET: secret,
     CSRF_SECRET: secret,
@@ -74,6 +79,14 @@ const schema = z
       });
     }
     
+
+    if (Boolean(cfg.RESEND_API_KEY) !== Boolean(cfg.MAIL_FROM)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [cfg.RESEND_API_KEY ? 'MAIL_FROM' : 'RESEND_API_KEY'],
+        message: 'RESEND_API_KEY and MAIL_FROM must be set together',
+      });
+    }
 
     if (cfg.NODE_ENV === 'production') {
       if (!cfg.CORS_ORIGIN.startsWith('https://')) {
