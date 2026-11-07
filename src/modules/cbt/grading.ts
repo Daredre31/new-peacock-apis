@@ -6,7 +6,6 @@ export interface KeyedQuestion extends PaperQuestion { correctAnswer: string | s
 export interface StoredQuestion extends KeyedQuestion { order: number; topic: string | null; difficulty: Difficulty; explanation: string | null }
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
-// eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/g;
 
 export function normalizeAnswer(value: string): string {

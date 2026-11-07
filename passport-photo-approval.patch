@@ -1,0 +1,536 @@
+diff --git a/src/config/constants.ts b/src/config/constants.ts
+index 88b9acd..7cc1d53 100644
+--- a/src/config/constants.ts
++++ b/src/config/constants.ts
+@@ -36,2 +36,5 @@ export const PERMISSIONS = {
+   'students:import': [SA, AD],
++  'passport-photos:submit': [PA, ST], // service: a student for themselves, a parent for a linked child
++  'passport-photos:read': [SA, AD, PA, ST], // service: same scope as above, admins see all
++  'passport-photos:review': [AD], // approve and reject
+   'parents:read': [SA, AD, PA], // service: parent sees own profile only
+diff --git a/src/integrations/imageStore.ts b/src/integrations/imageStore.ts
+index 154b16f..7b8f250 100644
+--- a/src/integrations/imageStore.ts
++++ b/src/integrations/imageStore.ts
+@@ -17,2 +17,4 @@ export interface ImageStore {
+   remove(publicId: string): Promise<void>;
++  /** Renames an image, replacing anything already stored under the new id. Returns the new delivery URL. */
++  promote(fromId: string, toId: string): Promise<StoredImage>;
+ }
+@@ -42,2 +44,12 @@ export function createCloudinaryImageStore(config: { cloudName: string; apiKey:
+ 
++    async promote(fromId, toId) {
++      try {
++        const result = await cloudinary.uploader.rename(fromId, toId, { overwrite: true, invalidate: true, resource_type: 'image' });
++        return { url: result.secure_url };
++      } catch (err) {
++        logger.error({ err }, 'cloudinary rename failed');
++        throw new AppError('SERVICE_UNAVAILABLE');
++      }
++    },
++
+     async remove(publicId) {
+@@ -59,3 +71,3 @@ export function createDisabledImageStore(): ImageStore {
+   };
+-  return { upload: unavailable, remove: unavailable };
++  return { upload: unavailable, remove: unavailable, promote: unavailable };
+ }
+diff --git a/src/modules/passport-photos/passportPhotos.module.ts b/src/modules/passport-photos/passportPhotos.module.ts
+new file mode 100644
+index 0000000..15e258a
+--- /dev/null
++++ b/src/modules/passport-photos/passportPhotos.module.ts
+@@ -0,0 +1,25 @@
++import type { ScopeService } from '../../common/scope/scope.service';
++import type { ImageStore } from '../../integrations/imageStore';
++import type { AuditService } from '../audit/audit.service';
++import type { AuthModule } from '../auth/auth.module';
++import type { NotificationService } from '../notifications/notification.service';
++import { linkRepository } from '../users/link.repository';
++import { studentRepository } from '../users/student.repository';
++import { createPassportPhotoRouter } from './submission.routes';
++import { submissionRepository } from './submission.repository';
++import { createPassportPhotoService } from './submission.service';
++
++/** Students and parents propose a passport photo; an admin approves it. The admin's own direct upload (in the users module) is unchanged. */
++export function createPassportPhotosModule(deps: {
++  audit: AuditService;
++  auth: AuthModule;
++  scope: ScopeService;
++  notifier: NotificationService;
++  images: ImageStore;
++}) {
++  const service = createPassportPhotoService({
++    repo: submissionRepository, students: studentRepository, links: linkRepository,
++    images: deps.images, notifier: deps.notifier, audit: deps.audit,
++  });
++  return { router: createPassportPhotoRouter({ service, authenticate: deps.auth.middleware.authenticate, scope: deps.scope }), service };
++}
+diff --git a/src/modules/passport-photos/submission.model.ts b/src/modules/passport-photos/submission.model.ts
+new file mode 100644
+index 0000000..ab49ade
+--- /dev/null
++++ b/src/modules/passport-photos/submission.model.ts
+@@ -0,0 +1,43 @@
++import mongoose, { type Model, type Types } from 'mongoose';
++
++export const SUBMISSION_STATUS = { PENDING: 'PENDING', APPROVED: 'APPROVED', REJECTED: 'REJECTED' } as const;
++export type SubmissionStatus = (typeof SUBMISSION_STATUS)[keyof typeof SUBMISSION_STATUS];
++export const UPLOADER_ROLES = ['STUDENT', 'PARENT'] as const;
++export type UploaderRole = (typeof UPLOADER_ROLES)[number];
++
++/** One row per student: the latest photo someone proposed, and what the admin decided about it. */
++export interface PassportSubmissionDocument {
++  studentId: Types.ObjectId;
++  uploadedBy: Types.ObjectId;
++  uploaderRole: UploaderRole;
++  /** Cloudinary URL of the proposed photo. Null once it was rejected and removed. */
++  url: string | null;
++  status: SubmissionStatus;
++  reason: string | null;
++  reviewedBy: Types.ObjectId | null;
++  reviewedAt: Date | null;
++  submittedAt: Date;
++  createdAt: Date;
++  updatedAt: Date;
++}
++
++const schema = new mongoose.Schema<PassportSubmissionDocument>(
++  {
++    studentId: { type: mongoose.Schema.Types.ObjectId, required: true },
++    uploadedBy: { type: mongoose.Schema.Types.ObjectId, required: true },
++    uploaderRole: { type: String, enum: UPLOADER_ROLES, required: true },
++    url: { type: String, trim: true, maxlength: 500, default: null },
++    status: { type: String, enum: Object.values(SUBMISSION_STATUS), default: SUBMISSION_STATUS.PENDING },
++    reason: { type: String, trim: true, maxlength: 300, default: null },
++    reviewedBy: { type: mongoose.Schema.Types.ObjectId, default: null },
++    reviewedAt: { type: Date, default: null },
++    submittedAt: { type: Date, required: true },
++  },
++  { timestamps: true, versionKey: false },
++);
++schema.index({ studentId: 1 }, { unique: true });
++schema.index({ status: 1, submittedAt: 1 });
++
++export const PassportSubmissionModel: Model<PassportSubmissionDocument> =
++  (mongoose.models.PassportSubmission as Model<PassportSubmissionDocument> | undefined) ??
++  mongoose.model<PassportSubmissionDocument>('PassportSubmission', schema);
+diff --git a/src/modules/passport-photos/submission.repository.ts b/src/modules/passport-photos/submission.repository.ts
+new file mode 100644
+index 0000000..5192a87
+--- /dev/null
++++ b/src/modules/passport-photos/submission.repository.ts
+@@ -0,0 +1,92 @@
++import type { Types } from 'mongoose';
++import { skipOf } from '../../common/utils/pagination';
++import {
++  PassportSubmissionModel, SUBMISSION_STATUS, type PassportSubmissionDocument, type SubmissionStatus, type UploaderRole,
++} from './submission.model';
++
++type Row = PassportSubmissionDocument & { _id: Types.ObjectId };
++
++export interface SubmissionRecord {
++  studentId: string;
++  uploadedBy: string;
++  uploaderRole: UploaderRole;
++  url: string | null;
++  status: SubmissionStatus;
++  reason: string | null;
++  reviewedBy: string | null;
++  reviewedAt: Date | null;
++  submittedAt: Date;
++}
++
++const toRecord = (r: Row): SubmissionRecord => ({
++  studentId: r.studentId.toString(),
++  uploadedBy: r.uploadedBy.toString(),
++  uploaderRole: r.uploaderRole,
++  url: r.url ?? null,
++  status: r.status,
++  reason: r.reason ?? null,
++  reviewedBy: r.reviewedBy ? r.reviewedBy.toString() : null,
++  reviewedAt: r.reviewedAt ?? null,
++  submittedAt: r.submittedAt,
++});
++
++const OBJECT_ID = /^[a-f0-9]{24}$/;
++
++async function find(studentId: string): Promise<SubmissionRecord | null> {
++  if (!OBJECT_ID.test(studentId)) return null;
++  const row = await PassportSubmissionModel.findOne({ studentId }).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++/** A new photo replaces whatever was there before and goes back to PENDING. */
++async function savePending(input: { studentId: string; uploadedBy: string; uploaderRole: UploaderRole; url: string; now: Date }): Promise<SubmissionRecord> {
++  const row = await PassportSubmissionModel.findOneAndUpdate(
++    { studentId: input.studentId },
++    {
++      $set: {
++        uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, url: input.url, status: SUBMISSION_STATUS.PENDING,
++        reason: null, reviewedBy: null, reviewedAt: null, submittedAt: input.now,
++      },
++    },
++    { upsert: true, new: true, runValidators: true },
++  ).lean<Row>();
++  return toRecord(row);
++}
++
++/** Moves PENDING to a decision in one atomic step. Returns null if it was not pending, so two admins cannot both decide. */
++async function decide(
++  studentId: string,
++  to: 'APPROVED' | 'REJECTED',
++  by: string,
++  extra: { reason?: string | null; url?: string | null; now: Date },
++): Promise<SubmissionRecord | null> {
++  if (!OBJECT_ID.test(studentId)) return null;
++  const set: Record<string, unknown> = { status: to, reviewedBy: by, reviewedAt: extra.now, reason: extra.reason ?? null };
++  if (extra.url !== undefined) set.url = extra.url;
++  const row = await PassportSubmissionModel.findOneAndUpdate(
++    { studentId, status: SUBMISSION_STATUS.PENDING }, { $set: set }, { new: true },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++/** Undo for a decision whose follow-up step failed. */
++async function reopen(studentId: string, url: string): Promise<void> {
++  await PassportSubmissionModel.updateOne(
++    { studentId },
++    { $set: { status: SUBMISSION_STATUS.PENDING, reviewedBy: null, reviewedAt: null, reason: null, url } },
++  );
++}
++
++async function setUrl(studentId: string, url: string): Promise<void> {
++  await PassportSubmissionModel.updateOne({ studentId }, { $set: { url } });
++}
++
++async function list(status: SubmissionStatus, o: { page: number; limit: number }): Promise<{ items: SubmissionRecord[]; total: number }> {
++  const [rows, total] = await Promise.all([
++    PassportSubmissionModel.find({ status }).sort({ submittedAt: 1, _id: 1 }).skip(skipOf(o.page, o.limit)).limit(o.limit).lean<Row[]>(),
++    PassportSubmissionModel.countDocuments({ status }),
++  ]);
++  return { items: rows.map(toRecord), total };
++}
++
++export const submissionRepository = { find, savePending, decide, reopen, setUrl, list };
+diff --git a/src/modules/passport-photos/submission.routes.ts b/src/modules/passport-photos/submission.routes.ts
+new file mode 100644
+index 0000000..a24f249
+--- /dev/null
++++ b/src/modules/passport-photos/submission.routes.ts
+@@ -0,0 +1,62 @@
++import { Router, type RequestHandler } from 'express';
++import multer from 'multer';
++import { AppError } from '../../common/errors/AppError';
++import { authorize } from '../../common/middleware/authorize';
++import { validate, type Validated } from '../../common/middleware/validate';
++import type { ScopeService } from '../../common/scope/scope.service';
++import { buildPageMeta, sendSuccess } from '../../common/utils/apiResponse';
++import { detectImageType } from '../../common/utils/image';
++import { contextOf, requireUser } from '../../common/utils/request';
++import { bulkApproveSchemas, decisionSchemas, listQueueSchemas, rejectSchemas, studentPhotoSchemas } from './submission.schema';
++import type { PassportPhotoService } from './submission.service';
++import type { SubmissionStatus } from './submission.model';
++
++const uploadImage = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
++
++export function createPassportPhotoRouter(deps: { service: PassportPhotoService; authenticate: RequestHandler; scope: ScopeService }): Router {
++  const { service, authenticate: auth, scope } = deps;
++  const router = Router();
++
++  router.put(
++    '/students/:id/passport-photo', auth, authorize('passport-photos:submit'), uploadImage.single('file'), validate(studentPhotoSchemas),
++    async (req, res) => {
++      const user = requireUser(req);
++      const { params } = req.validated as Validated<typeof studentPhotoSchemas>;
++      await scope.assertCanAccessStudent(user, params.id); // a student only for themselves, a parent only for a linked child
++      const file = req.file;
++      if (!file || !detectImageType(file.buffer)) {
++        throw new AppError('VALIDATION_ERROR', { details: [{ field: 'file', issue: 'Attach a JPEG, PNG or WebP image in the "file" field' }] });
++      }
++      sendSuccess(res, await service.submit(user, params.id, file.buffer, contextOf(req)));
++    },
++  );
++
++  router.get('/students/:id/passport-photo', auth, authorize('passport-photos:read'), validate(studentPhotoSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof studentPhotoSchemas>;
++    await scope.assertCanAccessStudent(requireUser(req), params.id);
++    sendSuccess(res, await service.get(params.id));
++  });
++
++  router.get('/passport-photos', auth, authorize('passport-photos:review'), validate(listQueueSchemas), async (req, res) => {
++    const { query } = req.validated as Validated<typeof listQueueSchemas>;
++    const { items, total } = await service.list(query.status as SubmissionStatus, query.page, query.limit);
++    sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
++  });
++
++  router.post('/passport-photos/approve-bulk', auth, authorize('passport-photos:review'), validate(bulkApproveSchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof bulkApproveSchemas>;
++    sendSuccess(res, await service.approveMany(body.studentIds, requireUser(req), contextOf(req)));
++  });
++
++  router.post('/passport-photos/:studentId/approve', auth, authorize('passport-photos:review'), validate(decisionSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof decisionSchemas>;
++    sendSuccess(res, await service.approve(params.studentId, requireUser(req), contextOf(req)));
++  });
++
++  router.post('/passport-photos/:studentId/reject', auth, authorize('passport-photos:review'), validate(rejectSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof rejectSchemas>;
++    sendSuccess(res, await service.reject(params.studentId, body.reason, requireUser(req), contextOf(req)));
++  });
++
++  return router;
++}
+diff --git a/src/modules/passport-photos/submission.schema.ts b/src/modules/passport-photos/submission.schema.ts
+new file mode 100644
+index 0000000..a083e9c
+--- /dev/null
++++ b/src/modules/passport-photos/submission.schema.ts
+@@ -0,0 +1,44 @@
++import { z } from 'zod';
++import { paginationShape } from '../../common/utils/pagination';
++import { PERMISSIONS } from '../../config/constants';
++import type { OpenApiRegistry } from '../../openapi/registry';
++import { SUBMISSION_STATUS, UPLOADER_ROLES } from './submission.model';
++
++const objectId = z.string().regex(/^[a-f0-9]{24}$/);
++const statusValues = Object.values(SUBMISSION_STATUS) as [string, ...string[]];
++
++const studentParams = z.object({ id: objectId });
++const decisionParams = z.object({ studentId: objectId });
++
++export const studentPhotoSchemas = { params: studentParams };
++export const decisionSchemas = { params: decisionParams };
++export const rejectSchemas = { params: decisionParams, body: z.object({ reason: z.string().trim().min(3).max(300) }).strict() };
++export const bulkApproveSchemas = { body: z.object({ studentIds: z.array(objectId).min(1).max(50) }).strict() };
++export const listQueueSchemas = {
++  query: z.object({ status: z.enum(statusValues).default(SUBMISSION_STATUS.PENDING), ...paginationShape }),
++};
++
++const submissionView = z.object({
++  studentId: z.string(),
++  status: z.enum(['NONE', ...statusValues] as [string, ...string[]]),
++  photoUrl: z.url().nullable(),
++  reason: z.string().nullable(),
++  uploaderRole: z.enum(UPLOADER_ROLES).nullable(),
++  submittedAt: z.string().nullable(),
++  reviewedAt: z.string().nullable(),
++  passportUrl: z.url().nullable(),
++});
++const queueItem = submissionView.extend({ name: z.string(), admissionNo: z.string() });
++const bulkResult = z.object({ studentId: z.string(), ok: z.boolean(), code: z.string().optional() });
++
++export function registerPassportPhotoOperations(registry: OpenApiRegistry): void {
++  const tags = ['passport photos'];
++  const review = PERMISSIONS['passport-photos:review'];
++
++  registry.register({ method: 'put', path: '/students/{id}/passport-photo', operationId: 'submitPassportPhoto', summary: 'A student (for themselves) or a linked parent proposes a passport photo (field "file", JPEG, PNG or WebP, max 2 MB). It waits for admin approval and replaces any earlier proposal. The current passport stays until it is approved', tags, roles: PERMISSIONS['passport-photos:submit'], request: { params: studentParams }, upload: true, success: { status: 200, description: 'Waiting for approval', data: submissionView }, errors: ['NOT_FOUND', 'SERVICE_UNAVAILABLE'] });
++  registry.register({ method: 'get', path: '/students/{id}/passport-photo', operationId: 'getPassportPhoto', summary: 'Status of the proposed photo (status NONE when nothing was proposed) and the current approved passport', tags, roles: PERMISSIONS['passport-photos:read'], request: { params: studentParams }, success: { status: 200, description: 'Found', data: submissionView }, errors: ['NOT_FOUND'] });
++  registry.register({ method: 'get', path: '/passport-photos', operationId: 'listPassportPhotos', summary: 'Admin queue of proposed photos, oldest first. Default status PENDING', tags, roles: review, request: { query: listQueueSchemas.query }, success: { status: 200, description: 'A page', data: z.array(queueItem), paginated: true } });
++  registry.register({ method: 'post', path: '/passport-photos/approve-bulk', operationId: 'approvePassportPhotosBulk', summary: 'Approve up to 50 photos at once. One failure does not stop the others', tags, roles: review, request: { body: bulkApproveSchemas.body }, success: { status: 200, description: 'One result per student', data: z.array(bulkResult) } });
++  registry.register({ method: 'post', path: '/passport-photos/{studentId}/approve', operationId: 'approvePassportPhoto', summary: 'Approve: the proposed photo becomes the student passport and the student and parents are notified', tags, roles: review, request: { params: decisionParams }, success: { status: 200, description: 'Approved', data: submissionView }, errors: ['NOT_FOUND', 'CONFLICT', 'SERVICE_UNAVAILABLE'] });
++  registry.register({ method: 'post', path: '/passport-photos/{studentId}/reject', operationId: 'rejectPassportPhoto', summary: 'Reject with a reason (3 to 300 characters). The photo is deleted and the family can upload another', tags, roles: review, request: { params: decisionParams, body: rejectSchemas.body }, success: { status: 200, description: 'Rejected', data: submissionView }, errors: ['NOT_FOUND', 'CONFLICT'] });
++}
+diff --git a/src/modules/passport-photos/submission.service.ts b/src/modules/passport-photos/submission.service.ts
+new file mode 100644
+index 0000000..1f90d1d
+--- /dev/null
++++ b/src/modules/passport-photos/submission.service.ts
+@@ -0,0 +1,171 @@
++import { AppError } from '../../common/errors/AppError';
++import { logger } from '../../common/utils/logger';
++import { ROLES } from '../../config/constants';
++import type { ImageStore } from '../../integrations/imageStore';
++import { recordSafely, type AuditPort } from '../audit/audit.port';
++import type { NotificationService } from '../notifications/notification.service';
++import type { linkRepository } from '../users/link.repository';
++import { STUDENT_STATUS } from '../users/student.model';
++import type { studentRepository } from '../users/student.repository';
++import type { SubmissionStatus, UploaderRole } from './submission.model';
++import type { SubmissionRecord, submissionRepository } from './submission.repository';
++
++interface Actor { id: string; role: string }
++interface Context { ip: string; requestId: string }
++
++/** Where a proposed photo waits. One fixed id per student, so a new upload replaces the old proposal. */
++const pendingPublicId = (studentId: string): string => `peacock/students-pending/${studentId}`;
++/** The approved passport. Must match the id the admin upload uses (student.service.ts). */
++const passportPublicId = (studentId: string): string => `peacock/students/${studentId}`;
++
++export interface SubmissionView {
++  studentId: string;
++  status: SubmissionStatus | 'NONE';
++  /** The proposed photo. Null when nothing was proposed, or it was rejected and removed. */
++  photoUrl: string | null;
++  reason: string | null;
++  uploaderRole: UploaderRole | null;
++  submittedAt: string | null;
++  reviewedAt: string | null;
++  /** The approved passport that report cards use right now. */
++  passportUrl: string | null;
++}
++
++export interface QueueItem extends SubmissionView {
++  name: string;
++  admissionNo: string;
++}
++
++export type BulkResult = { studentId: string; ok: true } | { studentId: string; ok: false; code: string };
++
++export function createPassportPhotoService(deps: {
++  repo: typeof submissionRepository;
++  students: Pick<typeof studentRepository, 'findByUserId' | 'findManyByUserIds' | 'update' | 'profileMap'>;
++  links: Pick<typeof linkRepository, 'activeParentIdsOf'>;
++  images: ImageStore;
++  notifier: Pick<NotificationService, 'notify'>;
++  audit: AuditPort;
++}) {
++  const { repo, students, links, images, notifier, audit } = deps;
++
++  const toView = (studentId: string, rec: SubmissionRecord | null, passportUrl: string | null): SubmissionView => ({
++    studentId,
++    status: rec?.status ?? 'NONE',
++    photoUrl: rec?.url ?? null,
++    reason: rec?.reason ?? null,
++    uploaderRole: rec?.uploaderRole ?? null,
++    submittedAt: rec?.submittedAt.toISOString() ?? null,
++    reviewedAt: rec?.reviewedAt?.toISOString() ?? null,
++    passportUrl,
++  });
++
++  const log = (event: string, actor: Actor, ctx: Context, studentId: string, after: Record<string, unknown>) =>
++    recordSafely(audit, { action: `PASSPORT_PHOTO_${event}`, actorId: actor.id, entityType: 'user', entityId: studentId, ip: ctx.ip, requestId: ctx.requestId, after });
++
++  async function mustFindStudent(studentId: string) {
++    const student = await students.findByUserId(studentId);
++    if (!student) throw new AppError('NOT_FOUND');
++    return student;
++  }
++
++  async function tell(studentId: string, type: string, title: string, body: string): Promise<void> {
++    const parents = await links.activeParentIdsOf([studentId]);
++    await notifier.notify({ userIds: [studentId, ...parents], type, title, body, data: { studentId } });
++  }
++
++  return {
++    /** A student for themselves, or a parent for a linked child. The caller has already checked who may reach this student. */
++    async submit(actor: Actor, studentId: string, image: Buffer, ctx: Context): Promise<SubmissionView> {
++      const student = await mustFindStudent(studentId);
++      if (student.status !== STUDENT_STATUS.ACTIVE) throw new AppError('NOT_FOUND');
++      const uploaderRole: UploaderRole = actor.role === ROLES.PARENT ? 'PARENT' : 'STUDENT';
++
++      const stored = await images.upload(image, pendingPublicId(studentId));
++      const rec = await repo.savePending({ studentId, uploadedBy: actor.id, uploaderRole, url: stored.url, now: new Date() });
++      await log('SUBMITTED', actor, ctx, studentId, { uploaderRole });
++      return toView(studentId, rec, student.passportUrl);
++    },
++
++    async get(studentId: string): Promise<SubmissionView> {
++      const student = await mustFindStudent(studentId);
++      return toView(studentId, await repo.find(studentId), student.passportUrl);
++    },
++
++    /** The admin's queue, oldest first. */
++    async list(status: SubmissionStatus, page: number, limit: number): Promise<{ items: QueueItem[]; total: number }> {
++      const { items, total } = await repo.list(status, { page, limit });
++      const ids = items.map((i) => i.studentId);
++      const [profiles, records] = await Promise.all([students.profileMap(ids), students.findManyByUserIds(ids)]);
++      const passports = new Map(records.map((r) => [r.userId, r.passportUrl]));
++      return {
++        items: items.map((rec) => ({
++          ...toView(rec.studentId, rec, passports.get(rec.studentId) ?? null),
++          name: profiles.get(rec.studentId)?.name ?? '',
++          admissionNo: profiles.get(rec.studentId)?.admissionNo ?? '',
++        })),
++        total,
++      };
++    },
++
++    async approve(studentId: string, admin: Actor, ctx: Context): Promise<SubmissionView> {
++      await mustFindStudent(studentId);
++      const claimed = await repo.decide(studentId, 'APPROVED', admin.id, { now: new Date() });
++      if (!claimed) {
++        throw (await repo.find(studentId))
++          ? new AppError('CONFLICT', { message: 'This photo is not waiting for approval' })
++          : new AppError('NOT_FOUND');
++      }
++
++      let passportUrl: string;
++      try {
++        // The approved photo gets its own id, so a later upload by the family can never change what report cards show.
++        passportUrl = (await images.promote(pendingPublicId(studentId), passportPublicId(studentId))).url;
++      } catch (err) {
++        await repo.reopen(studentId, claimed.url ?? '');
++        throw err;
++      }
++      try {
++        await students.update(studentId, { passportUrl });
++      } catch {
++        await students.update(studentId, { passportUrl }); // one retry: the image is already live, so finish the job
++      }
++      await repo.setUrl(studentId, passportUrl);
++
++      await log('APPROVED', admin, ctx, studentId, { passportUrl, uploaderRole: claimed.uploaderRole });
++      await tell(studentId, 'PASSPORT_APPROVED', 'Passport photo approved', 'The school approved the passport photo. It now appears on the student record.');
++      return toView(studentId, { ...claimed, url: passportUrl }, passportUrl);
++    },
++
++    async reject(studentId: string, reason: string, admin: Actor, ctx: Context): Promise<SubmissionView> {
++      const student = await mustFindStudent(studentId);
++      const claimed = await repo.decide(studentId, 'REJECTED', admin.id, { reason, url: null, now: new Date() });
++      if (!claimed) {
++        throw (await repo.find(studentId))
++          ? new AppError('CONFLICT', { message: 'This photo is not waiting for approval' })
++          : new AppError('NOT_FOUND');
++      }
++      // The rejected picture is not needed any more. A failure here only leaves a stray file, so it must not fail the rejection.
++      await images.remove(pendingPublicId(studentId)).catch((err: unknown) => logger.warn({ err }, 'could not remove a rejected passport photo'));
++
++      await log('REJECTED', admin, ctx, studentId, { reason });
++      await tell(studentId, 'PASSPORT_REJECTED', 'Passport photo not accepted', `Please upload another photo. Reason: ${reason}`);
++      return toView(studentId, claimed, student.passportUrl);
++    },
++
++    /** Approves many in one request. One failure does not stop the others. */
++    async approveMany(studentIds: string[], admin: Actor, ctx: Context): Promise<BulkResult[]> {
++      const results: BulkResult[] = [];
++      for (const studentId of [...new Set(studentIds)]) {
++        try {
++          await this.approve(studentId, admin, ctx);
++          results.push({ studentId, ok: true });
++        } catch (err) {
++          results.push({ studentId, ok: false, code: err instanceof AppError ? err.code : 'INTERNAL_ERROR' });
++        }
++      }
++      return results;
++    },
++  };
++}
++
++export type PassportPhotoService = ReturnType<typeof createPassportPhotoService>;
+diff --git a/src/openapi/index.ts b/src/openapi/index.ts
+index 47d48a7..e798e79 100644
+--- a/src/openapi/index.ts
++++ b/src/openapi/index.ts
+@@ -12,2 +12,3 @@ import { registerParentOperations } from '../modules/users/parent.schema';
+ import { TEACHER_STAFF_CONFIG } from '../modules/users/staff.schema';
++import { registerPassportPhotoOperations } from '../modules/passport-photos/submission.schema';
+ import { registerStudentOperations } from '../modules/users/student.schema';
+@@ -39,2 +40,3 @@ export function createOperationRegistry(): OpenApiRegistry {
+   registerStudentOperations(registry);
++  registerPassportPhotoOperations(registry);
+   registerParentOperations(registry);
+diff --git a/src/routes.ts b/src/routes.ts
+index 3e7f69f..018257c 100644
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -15,2 +15,3 @@ import { createCommunicationModule } from './modules/communication/communication
+ import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
++import { createPassportPhotosModule } from './modules/passport-photos/passportPhotos.module';
+ import { createPortalModule } from './modules/portal/portal.module';
+@@ -62,2 +63,5 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
+ 
++  // Students and parents propose a passport photo, an admin approves it.
++  router.use(createPassportPhotosModule({ audit, auth, scope: users.scope, notifier: communication.notifier, images }).router);
++
+   const tasks = createTasksModule({ audit, auth, scope: users.scope, notifier: communication.notifier });

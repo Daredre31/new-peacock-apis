@@ -15,6 +15,8 @@ export interface ImageStore {
    */
   upload(buffer: Buffer, publicId: string): Promise<StoredImage>;
   remove(publicId: string): Promise<void>;
+  /** Renames an image, replacing anything already stored under the new id. Returns the new delivery URL. */
+  promote(fromId: string, toId: string): Promise<StoredImage>;
 }
 
 /** Passport framing: 600x800 (3:4), cropped around the face, and capped in size. */
@@ -40,6 +42,16 @@ export function createCloudinaryImageStore(config: { cloudName: string; apiKey: 
         stream.end(buffer);
       }),
 
+    async promote(fromId, toId) {
+      try {
+        const result = await cloudinary.uploader.rename(fromId, toId, { overwrite: true, invalidate: true, resource_type: 'image' });
+        return { url: result.secure_url };
+      } catch (err) {
+        logger.error({ err }, 'cloudinary rename failed');
+        throw new AppError('SERVICE_UNAVAILABLE');
+      }
+    },
+
     async remove(publicId) {
       try {
         await cloudinary.uploader.destroy(publicId, { invalidate: true, resource_type: 'image' });
@@ -57,7 +69,7 @@ export function createDisabledImageStore(): ImageStore {
     logger.error('image not stored: Cloudinary is not configured');
     throw new AppError('SERVICE_UNAVAILABLE');
   };
-  return { upload: unavailable, remove: unavailable };
+  return { upload: unavailable, remove: unavailable, promote: unavailable };
 }
 
 export function createImageStore(): ImageStore {

@@ -1,0 +1,42 @@
+diff --git a/src/modules/cbt/grading.ts b/src/modules/cbt/grading.ts
+index 53f59ee..2133b33 100644
+--- a/src/modules/cbt/grading.ts
++++ b/src/modules/cbt/grading.ts
+@@ -8,3 +8,2 @@ export interface StoredQuestion extends KeyedQuestion { order: number; topic: st
+ const round1 = (n: number): number => Math.round(n * 10) / 10;
+-// eslint-disable-next-line no-control-regex
+ const CONTROL = /[\u0000-\u001f\u007f]/g;
+diff --git a/src/modules/cbt/question.import.ts b/src/modules/cbt/question.import.ts
+index 98070dd..650992c 100644
+--- a/src/modules/cbt/question.import.ts
++++ b/src/modules/cbt/question.import.ts
+@@ -18,3 +18,2 @@ const MARKS = /^\d{1,3}(\.\d)?$/;
+ const FORMULA_START = /^[=@]/;
+-// eslint-disable-next-line no-control-regex
+ const CONTROL = /[\u0000-\u001f\u007f]/g;
+diff --git a/src/modules/fees/collections.service.ts b/src/modules/fees/collections.service.ts
+index fda4a2a..99bf53b 100644
+--- a/src/modules/fees/collections.service.ts
++++ b/src/modules/fees/collections.service.ts
+@@ -2,3 +2,2 @@ import { schoolToday } from '../../common/utils/dates';
+ import { formatNaira } from '../../common/utils/money';
+-import type { enrolmentRepository } from '../academics/enrolment.repository';
+ import type { structureRepository } from '../academics/structure.repository';
+diff --git a/src/modules/fees/invoice.service.ts b/src/modules/fees/invoice.service.ts
+index 6eac8bb..1384761 100644
+--- a/src/modules/fees/invoice.service.ts
++++ b/src/modules/fees/invoice.service.ts
+@@ -15,3 +15,3 @@ import type { studentRepository } from '../users/student.repository';
+ import type { feeStructureRepository } from './feeStructure.repository';
+-import { INVOICE_STATUS, type InvoiceFilter, type InvoiceRecord, type InvoiceSort, type InvoiceStatus, type invoiceRepository } from './invoice.repository';
++import { type InvoiceFilter, type InvoiceRecord, type InvoiceSort, type InvoiceStatus, type invoiceRepository } from './invoice.repository';
+ import type { ledgerRepository } from './ledger.repository';
+diff --git a/src/modules/fees/payment.service.ts b/src/modules/fees/payment.service.ts
+index 21877e3..9a5a31e 100644
+--- a/src/modules/fees/payment.service.ts
++++ b/src/modules/fees/payment.service.ts
+@@ -3,3 +3,3 @@ import { AppError } from '../../common/errors/AppError';
+ import type { ScopeService } from '../../common/scope/scope.service';
+-import { addDays, daysBetween, isIsoDate, schoolToday } from '../../common/utils/dates';
++import { daysBetween, isIsoDate, schoolToday } from '../../common/utils/dates';
+ import { formatNaira, isKobo } from '../../common/utils/money';

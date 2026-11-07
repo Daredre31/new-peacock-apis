@@ -34,6 +34,9 @@ export const PERMISSIONS = {
   'students:read': [SA, AD, TE, PA, ST], // service: assigned classes / own children / self
   'students:write': [SA, AD],
   'students:import': [SA, AD],
+  'passport-photos:submit': [PA, ST], // service: a student for themselves, a parent for a linked child
+  'passport-photos:read': [SA, AD, PA, ST], // service: same scope as above, admins see all
+  'passport-photos:review': [AD], // approve and reject
   'parents:read': [SA, AD, PA], // service: parent sees own profile only
   'parents:write': [SA, AD],
   'parent-links:manage': [SA, AD],

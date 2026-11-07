@@ -13,6 +13,7 @@ import type { KeyValueStore } from './modules/auth/keyValueStore';
 import { createCbtModule } from './modules/cbt/cbt.module';
 import { createCommunicationModule } from './modules/communication/communication.module';
 import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
+import { createPassportPhotosModule } from './modules/passport-photos/passportPhotos.module';
 import { createPortalModule } from './modules/portal/portal.module';
 import { createResultsModule } from './modules/results/results.module';
 import { scoreRepository } from './modules/results/score.repository';
@@ -66,6 +67,9 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
     requestChecks: communication.requestChecks, settings: settings.service,
   });
   router.use(fees.router);
+
+  // Students and parents propose a passport photo, an admin approves it.
+  router.use(createPassportPhotosModule({ audit, auth, scope: users.scope, notifier: communication.notifier, images }).router);
 
   const tasks = createTasksModule({ audit, auth, scope: users.scope, notifier: communication.notifier });
   router.use(tasks.router);

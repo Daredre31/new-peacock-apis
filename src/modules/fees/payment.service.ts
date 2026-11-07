@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { AppError } from '../../common/errors/AppError';
 import type { ScopeService } from '../../common/scope/scope.service';
-import { addDays, daysBetween, isIsoDate, schoolToday } from '../../common/utils/dates';
+import { daysBetween, isIsoDate, schoolToday } from '../../common/utils/dates';
 import { formatNaira, isKobo } from '../../common/utils/money';
 import { sanitizeText } from '../../common/utils/text';
 import { ROLES, type Role } from '../../config/constants';

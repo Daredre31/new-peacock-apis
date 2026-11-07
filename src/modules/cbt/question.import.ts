@@ -16,7 +16,6 @@ const TOKEN_TTL_SECONDS = 15 * 60;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const MARKS = /^\d{1,3}(\.\d)?$/;
 const FORMULA_START = /^[=@]/;
-// eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/g;
 
 export const QUESTION_TEMPLATE_CSV = [

@@ -1,6 +1,5 @@
 import { schoolToday } from '../../common/utils/dates';
 import { formatNaira } from '../../common/utils/money';
-import type { enrolmentRepository } from '../academics/enrolment.repository';
 import type { structureRepository } from '../academics/structure.repository';
 import { recordSafely, type AuditPort } from '../audit/audit.port';
 import type { NotificationService } from '../notifications/notification.service';

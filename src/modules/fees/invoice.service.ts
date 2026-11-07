@@ -13,7 +13,7 @@ import type { NotificationService } from '../notifications/notification.service'
 import type { linkRepository } from '../users/link.repository';
 import type { studentRepository } from '../users/student.repository';
 import type { feeStructureRepository } from './feeStructure.repository';
-import { INVOICE_STATUS, type InvoiceFilter, type InvoiceRecord, type InvoiceSort, type InvoiceStatus, type invoiceRepository } from './invoice.repository';
+import { type InvoiceFilter, type InvoiceRecord, type InvoiceSort, type InvoiceStatus, type invoiceRepository } from './invoice.repository';
 import type { ledgerRepository } from './ledger.repository';
 import type { paymentRepository } from './payment.repository';
 

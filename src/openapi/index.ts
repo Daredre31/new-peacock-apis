@@ -10,6 +10,7 @@ import { registerSecurityOperations } from '../modules/users/security.schema';
 import { registerAssignmentOperations } from '../modules/academics/assignment.schema';
 import { registerParentOperations } from '../modules/users/parent.schema';
 import { TEACHER_STAFF_CONFIG } from '../modules/users/staff.schema';
+import { registerPassportPhotoOperations } from '../modules/passport-photos/submission.schema';
 import { registerStudentOperations } from '../modules/users/student.schema';
 import { registerAnnouncementOperations } from '../modules/announcements/announcement.schema';
 import { registerAttendanceOperations } from '../modules/attendance/attendance.schema';
@@ -38,6 +39,7 @@ export function createOperationRegistry(): OpenApiRegistry {
   registerSecurityOperations(registry);
     registerStaffOperations(registry, TEACHER_STAFF_CONFIG);
   registerStudentOperations(registry);
+  registerPassportPhotoOperations(registry);
   registerParentOperations(registry);
   registerAssignmentOperations(registry);
     registerNotificationOperations(registry);
