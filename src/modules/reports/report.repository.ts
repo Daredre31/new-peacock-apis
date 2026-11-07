@@ -1,6 +1,6 @@
 import mongoose, { type Model, type Types } from 'mongoose';
 
-export const REPORT_TYPES = ['ENROLMENT', 'ATTENDANCE', 'TERM_RESULTS'] as const;
+export const REPORT_TYPES = ['ENROLMENT', 'ATTENDANCE', 'TERM_RESULTS', 'FINANCIAL_SUMMARY', 'DEFAULTERS'] as const;
 export type ReportType = (typeof REPORT_TYPES)[number];
 export const REPORT_FORMATS = ['CSV', 'PDF'] as const;
 export type ReportFormat = (typeof REPORT_FORMATS)[number];

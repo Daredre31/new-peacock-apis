@@ -54,6 +54,11 @@ const schema = z
       .transform((value) => value === 'true')
       .optional(),
 
+          PAYSTACK_SECRET_KEY: z.string().regex(/^sk_(test|live)_[A-Za-z0-9]{10,}$/, 'must look like sk_test_... or sk_live_...').optional(),
+    PAYSTACK_BASE_URL: z.url().default('https://api.paystack.co'),
+    // Where Paystack sends the parent after paying. Defaults to CORS_ORIGIN + /parent/payments/return.
+    PAYMENT_RETURN_URL: z.url().optional(),
+
     // Cloudinary stores the student passport photos. All three are needed for uploads to work;
     // without them the API still starts and the photo routes answer 503.
     CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
@@ -105,12 +110,18 @@ const schema = z
           });
         }
       }
+            if (cfg.PAYSTACK_BASE_URL !== 'https://api.paystack.co') {
+        ctx.addIssue({ code: 'custom', path: ['PAYSTACK_BASE_URL'], message: 'must be https://api.paystack.co in production' });
+      }
     }
+
+    
   })
-      .transform((cfg) => ({
+        .transform((cfg) => ({
     ...cfg,
     DOCS_ENABLED: cfg.DOCS_ENABLED ?? cfg.NODE_ENV !== 'production',
     WORKERS_ENABLED: cfg.WORKERS_ENABLED ?? true,
+    PAYMENT_RETURN_URL: cfg.PAYMENT_RETURN_URL ?? `${cfg.CORS_ORIGIN}/parent/payments/return`,
   }));
 
 export type Env = z.infer<typeof schema>;

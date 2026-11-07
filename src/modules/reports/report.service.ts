@@ -68,6 +68,7 @@ export function createReportService(deps: {
 
     /** Checks the request, queues the job and returns at once. The client polls GET /reports/{id}. */
     async create(actor: Actor, type: ReportType, input: ReportInput & { format: ReportFormat }, ctx: Context) {
+     if (type === 'FINANCIAL_SUMMARY' && actor.role !== ROLES.SUPER_ADMIN) throw new AppError('FORBIDDEN'); // revenue totals are for the proprietor
       if ((await repo.countInFlight(actor.id)) >= MAX_IN_FLIGHT) {
         throw new AppError('CONFLICT', { message: 'You already have reports being prepared. Wait for them to finish.' });
       }

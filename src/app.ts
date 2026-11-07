@@ -20,6 +20,7 @@ import { createMailer, type Mailer } from './integrations/mailer';
 import { createExamJobs } from './jobs/exam.jobs'; 
 import type { ExamJobs } from './jobs/exam.jobs';
 import { createReportJobs , type ReportJobs } from './jobs/report.jobs';
+import { createPaymentJobs, type PaymentJobs } from './jobs/payment.jobs';
 
 
 
@@ -34,6 +35,7 @@ export interface AppDependencies extends HealthDependencies {
   images?: ImageStore;
   examJobs?: ExamJobs;
   reportJobs?: ReportJobs;
+  paymentJobs?: PaymentJobs;
 }
 
 // Responses carry personal and financial data, so nothing may be cached anywhere.
@@ -48,6 +50,13 @@ export function createApp(deps: AppDependencies): Express {
   const mailer = deps.mailer ?? createMailer();
   const auth = createAuthModule({ sessionStore: deps.sessionStore, rateLimitRedis: 
                deps.rateLimitRedis, audit , mailer});
+
+  const api = createRoutes({
+    health: deps, auth, audit, store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis, mailer,
+    images: deps.images ?? createImageStore(),
+    examJobs: deps.examJobs ?? createExamJobs(null), reportJobs: deps.reportJobs ?? createReportJobs(null),
+    paymentJobs: deps.paymentJobs ?? createPaymentJobs(null),
+  });
     
 
   app.disable('x-powered-by');
@@ -93,16 +102,16 @@ export function createApp(deps: AppDependencies): Express {
 
   app.use(createIpRateLimiter(deps.rateLimitRedis));
 
-  // Phase 4: the Paystack webhook mounts HERE, before the JSON parser, so it can read the raw body.
+  // Paystack calls this. It needs the raw bytes for the signature, so it comes BEFORE the JSON parser.
+  // It has no cookies, so CSRF never applies. The signature is the only authentication.
+  app.post('/api/v1/payments/webhook/paystack', express.raw({ type: '*/*', limit: '100kb' }), api.paystackWebhook);
 
   app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
 
     app.use(createCsrfMiddleware(auth.csrf));
 
-      app.use('/api/v1', createRoutes({ health: deps, auth, audit,
-         store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis,
-          mailer, images: deps.images ?? createImageStore(), examJobs: deps.examJobs ?? createExamJobs(null),reportJobs: deps.reportJobs ?? createReportJobs(null), }));
+  app.use('/api/v1', api.router);
 
   app.use(notFound);
   app.use(errorHandler);

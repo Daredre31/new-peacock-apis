@@ -24,7 +24,10 @@ interface PaymentDocument {
   externalReference?: string; idemScope?: string; idemKey?: string; idemHash?: string; receiptNo?: string;
   paidAt: Date | null; balanceAfterKobo: number | null; refundedKobo: number;
   reversedAt: Date | null; reversedBy: Types.ObjectId | null; reverseReason: string | null; note: string | null;
-  providerStatus: string | null; providerTransactionId: string | null; checkoutUrl: string | null; failureReason: string | null; verifiedAt: Date | null;
+  providerStatus: string | null; providerTransactionId: string | null; checkoutUrl: string | null; failureReason: string | null;
+  lastVerifyAt: Date | null;
+  verifiedAt: Date | null;
+  accessCode: string | null;
   createdAt: Date; updatedAt: Date;
 }
 type Row = PaymentDocument & { _id: Types.ObjectId };
@@ -45,7 +48,9 @@ const schema = new mongoose.Schema<PaymentDocument>(
     reversedAt: { type: Date, default: null }, reversedBy: { type: mongoose.Schema.Types.ObjectId, default: null },
     reverseReason: { type: String, default: null }, note: { type: String, default: null, maxlength: 300 },
     providerStatus: { type: String, default: null }, providerTransactionId: { type: String, default: null },
-    checkoutUrl: { type: String, default: null }, failureReason: { type: String, default: null }, verifiedAt: { type: Date, default: null },
+    checkoutUrl: { type: String, default: null }, failureReason: { type: String, default: null }, 
+    accessCode: { type: String, default: null }, lastVerifyAt: { type: Date, default: null },
+    verifiedAt: { type: Date, default: null },
   },
   { timestamps: true, versionKey: false },
 );
@@ -65,7 +70,8 @@ export interface PaymentRecord {
   id: string; reference: string; invoiceId: string; studentId: string; payerId: string | null; recordedBy: string | null;
   method: PaymentMethod; status: PaymentStatus; amountKobo: number; feeKobo: number; totalChargeKobo: number;
   externalReference: string | null; receiptNo: string | null; paidAt: Date | null; balanceAfterKobo: number | null;
-  refundedKobo: number; reverseReason: string | null; note: string | null; idemHash: string | null; checkoutUrl: string | null; createdAt: Date;
+  refundedKobo: number; reverseReason: string | null; note: string | null; idemHash: string | null; checkoutUrl: string | null;
+  providerStatus: string | null; failureReason: string | null; lastVerifyAt: Date | null; createdAt: Date;
 }
 
 const OBJECT_ID = /^[a-f0-9]{24}$/;
@@ -75,11 +81,14 @@ const toRecord = (r: Row): PaymentRecord => ({
   method: r.method, status: r.status, amountKobo: r.amountKobo, feeKobo: r.feeKobo, totalChargeKobo: r.totalChargeKobo,
   externalReference: r.externalReference ?? null, receiptNo: r.receiptNo ?? null, paidAt: r.paidAt ?? null,
   balanceAfterKobo: r.balanceAfterKobo ?? null, refundedKobo: r.refundedKobo ?? 0, reverseReason: r.reverseReason ?? null,
-  note: r.note ?? null, idemHash: r.idemHash ?? null, checkoutUrl: r.checkoutUrl ?? null, createdAt: r.createdAt,
+  note: r.note ?? null, idemHash: r.idemHash ?? null, checkoutUrl: r.checkoutUrl ?? null,
+  providerStatus: r.providerStatus ?? null, failureReason: r.failureReason ?? null, lastVerifyAt: r.lastVerifyAt ?? null, createdAt: r.createdAt,
 });
 
 /** The id is made first, because the ledger entry needs it before the payment document exists. */
 const newId = (): string => new mongoose.Types.ObjectId().toString();
+export const ONLINE_REFERENCE_PREFIX = 'PCK-';
+const newOnlineReference = (): string => `${ONLINE_REFERENCE_PREFIX}${randomBytes(10).toString('hex').toUpperCase()}`;
 const newReference = (prefix: string): string => `${prefix}-${randomBytes(10).toString('hex').toUpperCase()}`;
 
 export async function nextReceiptNo(session: ClientSession): Promise<string> {
@@ -166,6 +175,117 @@ async function addRefund(id: string, expectedRefunded: number, amount: number, s
   return row ? toRecord(row) : null;
 }
 
+const ONLINE_OPEN: PaymentStatus[] = [PAYMENT_STATUS.PENDING, PAYMENT_STATUS.ABANDONED, PAYMENT_STATUS.FAILED];
+
+/** Written BEFORE Paystack is called, so a crash or timeout can never lose track of a payment. */
+async function createPending(data: { id: string; reference: string; invoiceId: string; studentId: string; payerId: string; amountKobo: number; feeKobo: number; idemScope: string; idemKey: string; idemHash: string }): Promise<PaymentRecord> {
+  const { id, ...rest } = data;
+  const doc = await PaymentModel.create({ ...rest, _id: id, method: 'ONLINE', status: PAYMENT_STATUS.PENDING, totalChargeKobo: data.amountKobo + data.feeKobo });
+  return toRecord(doc.toObject() as Row);
+}
+
+async function setCheckout(id: string, checkoutUrl: string, accessCode: string): Promise<void> {
+  await PaymentModel.updateOne({ _id: id, status: PAYMENT_STATUS.PENDING }, { $set: { checkoutUrl, accessCode } });
+}
+
+async function markFailed(id: string, reason: string, providerStatus: string | null): Promise<PaymentRecord | null> {
+  const row = await PaymentModel.findOneAndUpdate(
+    { _id: id, status: { $in: [PAYMENT_STATUS.PENDING, PAYMENT_STATUS.ABANDONED] } },
+    { $set: { status: PAYMENT_STATUS.FAILED, failureReason: reason.slice(0, 200), providerStatus } }, { new: true },
+  ).lean<Row>();
+  return row ? toRecord(row) : null;
+}
+
+async function markAbandoned(id: string): Promise<boolean> {
+  return (await PaymentModel.updateOne({ _id: id, status: PAYMENT_STATUS.PENDING }, { $set: { status: PAYMENT_STATUS.ABANDONED } })).matchedCount > 0;
+}
+
+async function markNeedsReview(id: string, reason: string, providerStatus: string | null): Promise<PaymentRecord | null> {
+  const row = await PaymentModel.findOneAndUpdate(
+    { _id: id, status: { $in: ONLINE_OPEN } },
+    { $set: { status: PAYMENT_STATUS.NEEDS_REVIEW, failureReason: reason.slice(0, 200), providerStatus } }, { new: true },
+  ).lean<Row>();
+  return row ? toRecord(row) : null;
+}
+
+/** Only one caller per interval gets to ask Paystack, so polling can never hammer it. */
+async function claimVerify(id: string, minGapMs: number, now: Date): Promise<boolean> {
+  const cutoff = new Date(now.getTime() - minGapMs);
+  const row = await PaymentModel.findOneAndUpdate(
+    { _id: id, status: { $in: ONLINE_OPEN }, $or: [{ lastVerifyAt: null }, { lastVerifyAt: { $lt: cutoff } }] },
+    { $set: { lastVerifyAt: now } },
+  ).lean<Row>();
+  return row !== null;
+}
+
+/**
+ * Moves a payment to SUCCESS. Only a payment that is still pending, abandoned or failed can move,
+ * so a late success is still credited and a payment can never be credited twice. Runs in the caller's transaction.
+ */
+async function claimSuccess(id: string, data: { transactionId: string; paidAt: Date }, session: ClientSession): Promise<PaymentRecord | null> {
+  const row = await PaymentModel.findOneAndUpdate(
+    { _id: id, method: 'ONLINE', status: { $in: ONLINE_OPEN } },
+    { $set: { status: PAYMENT_STATUS.SUCCESS, paidAt: data.paidAt, providerStatus: 'success', providerTransactionId: data.transactionId, verifiedAt: new Date(), failureReason: null } },
+    { new: true, session },
+  ).lean<Row>();
+  if (!row) return null;
+  const receiptNo = await nextReceiptNo(session); // taken only after the claim won, so there are no gaps
+  await PaymentModel.updateOne({ _id: id }, { $set: { receiptNo } }, { session });
+  return toRecord({ ...row, receiptNo });
+}
+
+async function setBalanceAfter(id: string, balanceKobo: number, session: ClientSession): Promise<void> {
+  await PaymentModel.updateOne({ _id: id }, { $set: { balanceAfterKobo: balanceKobo } }, { session });
+}
+
+async function listPendingForSweep(olderThan: Date, verifiedBefore: Date, limit: number): Promise<PaymentRecord[]> {
+  const rows = await PaymentModel.find({
+    method: 'ONLINE', status: PAYMENT_STATUS.PENDING, createdAt: { $lt: olderThan },
+    $or: [{ lastVerifyAt: null }, { lastVerifyAt: { $lt: verifiedBefore } }],
+  }).sort({ createdAt: 1 }).limit(limit).lean<Row[]>();
+  return rows.map(toRecord);
+}
+
+async function listOpenForInvoice(invoiceId: string): Promise<PaymentRecord[]> {
+  if (!OBJECT_ID.test(invoiceId)) return [];
+  return (await PaymentModel.find({ invoiceId, method: 'ONLINE', status: PAYMENT_STATUS.PENDING }).sort({ createdAt: -1 }).lean<Row[]>()).map(toRecord);
+}
+
+async function listSuccessfulOnlineBetween(from: Date, to: Date): Promise<PaymentRecord[]> {
+  const rows = await PaymentModel.find({ method: 'ONLINE', status: { $in: [PAYMENT_STATUS.SUCCESS, PAYMENT_STATUS.REVERSED] }, paidAt: { $gte: from, $lte: to } }).limit(5000).lean<Row[]>();
+  return rows.map(toRecord);
+}
+
+async function sumByMethod(invoiceIds: string[]): Promise<{ method: PaymentMethod; totalKobo: number; count: number }[]> {
+  const ids = invoiceIds.filter((id) => OBJECT_ID.test(id)).map((id) => new mongoose.Types.ObjectId(id));
+  if (ids.length === 0) return [];
+  const rows = await PaymentModel.aggregate<{ _id: PaymentMethod; totalKobo: number; count: number }>([
+    { $match: { invoiceId: { $in: ids }, status: PAYMENT_STATUS.SUCCESS } },
+    { $group: { _id: '$method', totalKobo: { $sum: { $subtract: ['$amountKobo', '$refundedKobo'] } }, count: { $sum: 1 } } },
+  ]);
+  return rows.map((r) => ({ method: r._id, totalKobo: r.totalKobo, count: r.count }));
+}
+
+async function collectedBetween(from: Date, to: Date): Promise<number> {
+  const [row] = await PaymentModel.aggregate<{ _id: null; total: number }>([
+    { $match: { status: PAYMENT_STATUS.SUCCESS, paidAt: { $gte: from, $lte: to } } },
+    { $group: { _id: null, total: { $sum: { $subtract: ['$amountKobo', '$refundedKobo'] } } } },
+  ]);
+  return row?.total ?? 0;
+}
+
+async function monthlyRevenue(from: Date, to: Date): Promise<{ month: string; method: PaymentMethod; totalKobo: number; count: number }[]> {
+  const rows = await PaymentModel.aggregate<{ _id: { month: string; method: PaymentMethod }; totalKobo: number; count: number }>([
+    { $match: { status: PAYMENT_STATUS.SUCCESS, paidAt: { $gte: from, $lte: to } } },
+    { $group: { _id: { month: { $dateToString: { format: '%Y-%m', date: '$paidAt', timezone: 'Africa/Lagos' } }, method: '$method' }, totalKobo: { $sum: { $subtract: ['$amountKobo', '$refundedKobo'] } }, count: { $sum: 1 } } },
+    { $sort: { '_id.month': 1 } },
+  ]);
+  return rows.map((r) => ({ month: r._id.month, method: r._id.method, totalKobo: r.totalKobo, count: r.count }));
+}
+
 export const paymentRepository = {
   newId, createOffline, findById, findByReference, findByIdempotency, list, listForInvoices, markReversed, addRefund,
+  newOnlineReference, createPending, setCheckout, markFailed, markAbandoned, 
+  markNeedsReview, claimVerify, claimSuccess, setBalanceAfter, listPendingForSweep, listOpenForInvoice, listSuccessfulOnlineBetween,
+   sumByMethod, collectedBetween, monthlyRevenue
 };

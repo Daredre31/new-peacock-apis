@@ -47,6 +47,7 @@ import { parentRepository } from '../users/parent.repository';
 import { staffRepository } from '../users/staff.repository';
 import { studentRepository } from '../users/student.repository';
 import { userRepository } from '../users/user.repository';
+import type { FinanceReports } from '../fees/finance.reports';
 
 export function createPortalModule(deps: {
   audit: AuditService; auth: AuthModule; store: KeyValueStore; rateLimitRedis: RedisLike | null;
@@ -54,6 +55,7 @@ export function createPortalModule(deps: {
   notifier: NotificationService; announcements: AnnouncementService; taskService: TaskService;
   attempts: AttemptService; examService: ExamService; resultsCtx: ResultsContext; settings: SettingsService;
   reportJobs: ReportJobs; finance?: FinanceWidgets;
+  financeReports?: FinanceReports;
 }) {
   const { audit, store, scope, armIdsOfUser, teacherArms, notifier, settings } = deps;
   const authenticate = deps.auth.middleware.authenticate;
@@ -82,6 +84,7 @@ export function createPortalModule(deps: {
       attendance: attendanceRepository, structure: structureRepository, results: deps.resultsCtx,
     }),
     scheduler: deps.reportJobs.scheduler, notifier, audit,
+    ...(deps.financeReports ? { finance: deps.financeReports } : {}),
   });
   // What the background report jobs actually do.
   deps.reportJobs.register({ generate: (id) => reports.generate(id), sweep: () => reports.sweep() });

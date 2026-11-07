@@ -196,6 +196,28 @@ async function markReminded(ids: string[], at: Date): Promise<void> {
   if (valid.length > 0) await InvoiceModel.updateMany({ _id: { $in: valid } }, { $set: { lastReminderAt: at } });
 }
 
+async function idsForScope(filter: { termId?: string | undefined; sessionId?: string | undefined }, limit: number): Promise<string[]> {
+  const query: Record<string, unknown> = {};
+  if (filter.termId) query.termId = filter.termId;
+  if (filter.sessionId) query.sessionId = filter.sessionId;
+  return (await InvoiceModel.find(query, { _id: 1 }).limit(limit).lean<Row[]>()).map((r) => r._id.toString());
+}
+
+async function totalsByClassArm(filter: { termId: string }): Promise<{ classArmId: string; invoices: number; invoicedKobo: number; outstandingKobo: number; defaulters: number }[]> {
+  if (!OBJECT_ID.test(filter.termId)) return [];
+  const rows = await InvoiceModel.aggregate<{ _id: Types.ObjectId; invoices: number; invoicedKobo: number; outstandingKobo: number; defaulters: number }>([
+    { $match: { termId: new mongoose.Types.ObjectId(filter.termId) } },
+    {
+      $group: {
+        _id: '$classArmId', invoices: { $sum: 1 }, invoicedKobo: { $sum: '$totalKobo' },
+        outstandingKobo: { $sum: { $max: [0, '$balanceKobo'] } }, defaulters: { $sum: { $cond: [{ $gt: ['$balanceKobo', 0] }, 1, 0] } },
+      },
+    },
+  ]);
+  return rows.map((r) => ({ classArmId: r._id.toString(), invoices: r.invoices, invoicedKobo: r.invoicedKobo, outstandingKobo: r.outstandingKobo, defaulters: r.defaulters }));
+}
+
 export const invoiceRepository = {
-  create, findById, findManyByIds, list, adjustBalance, existsForStructure, outstandingForStudent, defaulters, dueForReminder, markReminded,
+  create, findById, findManyByIds, list, adjustBalance, existsForStructure,
+   outstandingForStudent, defaulters, dueForReminder, markReminded, idsForScope , totalsByClassArm
 };

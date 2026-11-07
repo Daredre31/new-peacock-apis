@@ -42,6 +42,7 @@ export const PERMISSIONS = {
   'parent-links:manage': [SA, AD],
   'parent-links:claim': [PA],
   'children:read': [PA],
+  'payments:reconcile': [SA], // view and run the Paystack reconciliation
 
   // ---- academics
   'sessions:read': ALL_ROLES,

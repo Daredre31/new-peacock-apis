@@ -1,0 +1,105 @@
+diff --git a/src/app.ts b/src/app.ts
+index df91aef..0bb37db 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -21,4 +21,5 @@ import { createExamJobs } from './jobs/exam.jobs';
+ import type { ExamJobs } from './jobs/exam.jobs';
+ import { createReportJobs , type ReportJobs } from './jobs/report.jobs';
++import { createPaymentJobs, type PaymentJobs } from './jobs/payment.jobs';
+ 
+ 
+@@ -35,4 +36,5 @@ export interface AppDependencies extends HealthDependencies {
+   examJobs?: ExamJobs;
+   reportJobs?: ReportJobs;
++  paymentJobs?: PaymentJobs;
+ }
+ 
+@@ -49,4 +51,11 @@ export function createApp(deps: AppDependencies): Express {
+   const auth = createAuthModule({ sessionStore: deps.sessionStore, rateLimitRedis: 
+                deps.rateLimitRedis, audit , mailer});
++
++  const api = createRoutes({
++    health: deps, auth, audit, store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis, mailer,
++    images: deps.images ?? createImageStore(),
++    examJobs: deps.examJobs ?? createExamJobs(null), reportJobs: deps.reportJobs ?? createReportJobs(null),
++    paymentJobs: deps.paymentJobs ?? createPaymentJobs(null),
++  });
+     
+ 
+@@ -94,5 +103,7 @@ export function createApp(deps: AppDependencies): Express {
+   app.use(createIpRateLimiter(deps.rateLimitRedis));
+ 
+-  // Phase 4: the Paystack webhook mounts HERE, before the JSON parser, so it can read the raw body.
++  // Paystack calls this. It needs the raw bytes for the signature, so it comes BEFORE the JSON parser.
++  // It has no cookies, so CSRF never applies. The signature is the only authentication.
++  app.post('/api/v1/payments/webhook/paystack', express.raw({ type: '*/*', limit: '100kb' }), api.paystackWebhook);
+ 
+   app.use(express.json({ limit: '100kb' }));
+@@ -101,7 +112,5 @@ export function createApp(deps: AppDependencies): Express {
+     app.use(createCsrfMiddleware(auth.csrf));
+ 
+-      app.use('/api/v1', createRoutes({ health: deps, auth, audit,
+-         store: deps.sessionStore, rateLimitRedis: deps.rateLimitRedis,
+-          mailer, images: deps.images ?? createImageStore(), examJobs: deps.examJobs ?? createExamJobs(null),reportJobs: deps.reportJobs ?? createReportJobs(null), }));
++  app.use('/api/v1', api.router);
+ 
+   app.use(notFound);
+diff --git a/src/openapi/index.ts b/src/openapi/index.ts
+index 4dcef96..ac73dea 100644
+--- a/src/openapi/index.ts
++++ b/src/openapi/index.ts
+@@ -27,4 +27,5 @@ import { registerReportOperations } from '../modules/reports/report.schema';
+ import { registerDashboardOperations } from '../modules/dashboards/dashboard.schema';
+ import { registerFeeOperations } from '../modules/fees/fees.schema';
++import { registerOnlineOperations } from '../modules/fees/online.schema';
+ 
+ /** Each phase adds its module's register function here. */
+@@ -57,4 +58,5 @@ export function createOperationRegistry(): OpenApiRegistry {
+   registerDashboardOperations(registry);
+   registerFeeOperations(registry);
++  registerOnlineOperations(registry);
+   
+   return registry;
+diff --git a/src/server.ts b/src/server.ts
+index f4e9be0..33e5ce7 100644
+--- a/src/server.ts
++++ b/src/server.ts
+@@ -10,4 +10,5 @@ import type Redis from 'ioredis';
+ import { createExamJobs, type ExamJobs } from './jobs/exam.jobs';
+ import { createReportJobs, type ReportJobs } from './jobs/report.jobs';
++import { createPaymentJobs, type PaymentJobs } from './jobs/payment.jobs';
+ 
+ const SHUTDOWN_TIMEOUT_MS = 15_000;
+@@ -19,4 +20,5 @@ let jobs: ExamJobs | undefined;
+ let bullmq: Redis | undefined;
+ let reportJobs: ReportJobs | undefined;
++let paymentJobs: PaymentJobs | undefined;
+ // Order matters: stop taking requests first, then close what they were using.
+ // Later phases add the BullMQ workers here, between http and redis.
+@@ -34,5 +36,5 @@ const shutdown = createShutdown({
+     { name: 'redis', run: disconnectRedis },
+     { name: 'mongodb', run: disconnectMongo },
+-   { name: 'jobs', run: async () => { await jobs?.close(); await reportJobs?.close(); } },
++   { name: 'jobs', run: async () => { await jobs?.close(); await reportJobs?.close(); await paymentJobs?.close(); } },
+     { name: 'bullmq-redis', run: async () => { if (bullmq) await disconnectRedisClient(bullmq); } },
+   ],
+@@ -56,4 +58,5 @@ async function main(): Promise<void> {
+   
+   reportJobs = createReportJobs(bullmq);
++  paymentJobs = createPaymentJobs(bullmq);
+ 
+   const app = createApp({
+@@ -64,5 +67,6 @@ async function main(): Promise<void> {
+     checkMongo: () => (shuttingDown ? unavailable() : pingMongo()),
+     checkRedis: () => (shuttingDown ? unavailable() : pingRedis()),
+-    reportJobs
++    reportJobs,
++    paymentJobs,
+   });
+ 
+@@ -86,4 +90,5 @@ async function main(): Promise<void> {
+     await jobs.startWorker();
+     await reportJobs.startWorker();
++    await paymentJobs.startWorker();
+   }
+   logger.info({ port: env.PORT, env: env.NODE_ENV }, 'server listening');

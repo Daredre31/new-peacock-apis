@@ -1,7 +1,8 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { assertAllRoutesGuarded } from './common/middleware/routeGuards';
 import type { RedisLike } from './common/middleware/rateLimiter';
 import type { ExamJobs } from './jobs/exam.jobs';
+import type { PaymentJobs } from './jobs/payment.jobs';
 import type { ReportJobs } from './jobs/report.jobs';
 import type { ImageStore } from './integrations/imageStore';
 import type { Mailer } from './integrations/mailer';
@@ -34,9 +35,14 @@ export interface RouteDeps {
   images: ImageStore;
   examJobs: ExamJobs;
   reportJobs: ReportJobs;
+  paymentJobs: PaymentJobs;
 }
 
-export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer, images, examJobs, reportJobs }: RouteDeps): Router {
+export function createRoutes({ health, auth, audit, store, rateLimitRedis, mailer, images, examJobs, reportJobs, paymentJobs }: RouteDeps): {
+  router: Router;
+  /** Mounted by app.ts before the JSON parser, because the signature is made over the raw bytes. */
+  paystackWebhook: RequestHandler;
+} {
   const router = Router();
 
   router.use(createHealthRouter(health));
@@ -62,9 +68,9 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
   });
   router.use(communication.router);
 
-    const fees = createFeesModule({
+  const fees = createFeesModule({
     audit, auth, scope: users.scope, notifier: communication.notifier, events: communication.events,
-    requestChecks: communication.requestChecks, settings: settings.service,
+    requestChecks: communication.requestChecks, settings: settings.service, paymentJobs,
   });
   router.use(fees.router);
 
@@ -74,8 +80,9 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
   const tasks = createTasksModule({ audit, auth, scope: users.scope, notifier: communication.notifier });
   router.use(tasks.router);
 
-  const results = createResultsModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store ,
-    reportGate: fees.reportGate
+  const results = createResultsModule({
+    audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store,
+    reportGate: fees.reportGate,
   });
   router.use(results.router);
 
@@ -87,10 +94,11 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
       audit, auth, store, rateLimitRedis, scope: users.scope, armIdsOfUser: users.armIdsOfUser, teacherArms: academics.teacherArms,
       notifier: communication.notifier, announcements: communication.announcements, taskService: tasks.service,
       attempts: cbt.attempts, examService: cbt.exams, resultsCtx: results.ctx, settings: settings.service, reportJobs,
+      finance: fees.financeWidgets, financeReports: fees.financeReports,
     }).router,
   );
 
   // A route without authorize() or publicRoute() stops the app from starting.
   assertAllRoutesGuarded(router);
-  return router;
+  return { router, paystackWebhook: fees.webhook };
 }

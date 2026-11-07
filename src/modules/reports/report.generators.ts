@@ -8,6 +8,7 @@ import { attendanceSummaryOf, type ResultsContext } from '../results/results.con
 import type { studentRepository } from '../users/student.repository';
 import type { TableData } from './report.formats';
 import type { ReportParams, ReportType } from './report.repository';
+import type { FinanceReports } from '../fees/finance.reports';
 
 const MAX_ROWS = 5000;
 const MAX_RANGE_DAYS = 120;
@@ -27,6 +28,7 @@ export function createReportGenerators(deps: {
   attendance: Pick<typeof attendanceRepository, 'summaryForMany'>;
   structure: Pick<typeof structureRepository, 'findArm' | 'armsByIds' | 'classesByIds'>;
   results: Pick<ResultsContext, 'armTerm' | 'compute'>;
+  finance?: FinanceReports;
 }) {
   const { sessions, enrolments, students, attendance, structure, results } = deps;
 
@@ -47,7 +49,10 @@ export function createReportGenerators(deps: {
     if (!session) throw fail('sessionId', sessionId ? 'Session not found' : 'There is no current session');
     return session;
   }
-
+      const requireFinance = (): FinanceReports => {
+    if (!deps.finance) throw new AppError('CONFLICT', { message: 'Financial reports are not available' });
+    return deps.finance;
+  };
   const generators: Record<ReportType, { prepare(input: ReportInput): Promise<ReportParams>; run(params: ReportParams): Promise<TableData> }> = {
     // Everyone enrolled in a session, with their class.
     ENROLMENT: {
@@ -74,6 +79,9 @@ export function createReportGenerators(deps: {
         };
       },
     },
+
+        FINANCIAL_SUMMARY: { prepare: (input) => requireFinance().prepareSummary(input), run: (params) => requireFinance().runSummary(params) },
+    DEFAULTERS: { prepare: (input) => requireFinance().prepareDefaulters(input), run: (params) => requireFinance().runDefaulters(params) },
 
     // Attendance counts and rate per student over a date range, for the current session's classes.
     ATTENDANCE: {

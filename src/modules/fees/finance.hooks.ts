@@ -14,7 +14,7 @@ import type { linkRepository } from '../users/link.repository';
 import type { userRepository } from '../users/user.repository';
 import type { invoiceRepository } from './invoice.repository';
 import type { LedgerService } from './ledger.service';
-import { PAYMENT_STATUS, type paymentRepository } from './payment.repository';
+import { PAYMENT_STATUS, type PaymentRecord, type paymentRepository } from './payment.repository';
 
 const bad = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field: `payload.${field}`, issue }] });
 const naira = (kobo: number): string => `NGN ${formatNaira(kobo)}`;
@@ -29,8 +29,10 @@ export function registerFinanceHooks(deps: {
   users: Pick<typeof userRepository, 'findIdsByRoles'>;
   notifier: Pick<NotificationService, 'notify'>;
   audit: AuditPort;
+  startOnlineRefund: (event: RequestDecidedEvent, payment: PaymentRecord) => Promise<void>;
+  reservedRefunds: (paymentId: string) => Promise<number>;
 }): void {
-  const { events, checks, invoices, payments, ledger, links, users, notifier, audit } = deps;
+  const { events, checks, invoices, payments, ledger, links, users, notifier, audit,startOnlineRefund, reservedRefunds } = deps;
 
   // ---- rules at request time (create, update, submit and just before a decision)
   checks.register('FEE_WAIVER', async ({ payload, studentId }) => {
@@ -46,7 +48,7 @@ export function registerFinanceHooks(deps: {
     if (!payment || payment.studentId !== studentId) throw bad('paymentId', 'This payment does not belong to the student');
     if (payment.status !== PAYMENT_STATUS.SUCCESS) throw bad('paymentId', 'Only a successful payment can be refunded');
     if (!isKobo(payload.amountKobo)) throw bad('amountKobo', 'Must be a whole number of kobo greater than zero');
-    const refundable = payment.amountKobo - payment.refundedKobo;
+    const refundable = payment.amountKobo - payment.refundedKobo - (await reservedRefunds(payment.id));
     if (payload.amountKobo > refundable) throw bad('amountKobo', `More than the refundable amount of ${naira(refundable)}`);
   });
 
@@ -84,9 +86,9 @@ export function registerFinanceHooks(deps: {
 
       const payment = await payments.findById(String(event.payload.paymentId));
       if (!payment || payment.studentId !== event.studentId) return couldNotApply(event, 'The payment no longer matches the student');
-      if (payment.method === 'ONLINE') {
-        // Online refunds go back through Paystack. That is handled in the next release.
-        return couldNotApply(event, 'This is an online payment. It must be refunded through Paystack, which is not switched on yet.');
+            if (payment.method === 'ONLINE') {
+        await startOnlineRefund(event, payment); // asks Paystack. The ledger changes only when Paystack confirms.
+        return;
       }
 
       await withTransaction(async (session) => {

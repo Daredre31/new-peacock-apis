@@ -82,4 +82,20 @@ async function sumForInvoice(invoiceId: string): Promise<number> {
   return row?.sum ?? 0;
 }
 
-export const ledgerRepository = { insert, listForInvoice, sumForInvoice };
+async function existsForPayment(paymentId: string, type: LedgerType): Promise<boolean> {
+  return OBJECT_ID.test(paymentId) && (await LedgerModel.exists({ paymentId, type })) !== null;
+}
+
+async function sumsByType(invoiceIds: string[]): Promise<Record<LedgerType, number>> {
+  const result = Object.fromEntries(LEDGER_TYPES.map((t) => [t, 0])) as Record<LedgerType, number>;
+  const ids = invoiceIds.filter((id) => OBJECT_ID.test(id)).map((id) => new mongoose.Types.ObjectId(id));
+  if (ids.length === 0) return result;
+  const rows = await LedgerModel.aggregate<{ _id: LedgerType; sum: number }>([
+    { $match: { invoiceId: { $in: ids } } },
+    { $group: { _id: '$type', sum: { $sum: '$amountKobo' } } },
+  ]);
+  for (const r of rows) result[r._id] = r.sum;
+  return result;
+}
+
+export const ledgerRepository = { insert, listForInvoice, sumForInvoice ,existsForPayment , sumsByType};
