@@ -220,6 +220,15 @@ async function setPassword(
   return true;
 }
 
+/** Frees every account of this role from the "must change password" screen. Returns how many were freed. */
+async function clearMustChangePasswordForRole(role: Role): Promise<number> {
+  const result = await UserModel.updateMany(
+    { role, mustChangePassword: true, deletedAt: null },
+    { $set: { mustChangePassword: false } },
+  );
+  return result.modifiedCount;
+}
+
 async function markEmailVerified(id: string, now: Date = new Date()): Promise<boolean> {
   if (!OBJECT_ID.test(id)) return false;
   const result = await UserModel.updateOne(
@@ -322,6 +331,7 @@ async function findIdsByRoles(roles: Role[]): Promise<string[]> {
 }
 export const userRepository = {
   create,
+  clearMustChangePasswordForRole,
   findById,
   findAuth,
   recordFailedLogin,

@@ -11,6 +11,15 @@ export interface SchoolPolicy {
   teacherPostsNeedApproval: boolean;
   lowAttendancePercent: number;
   lowScorePercent: number;
+  /** Added to every online payment and paid by the parent, in kobo. 10000 = NGN 100. Offline payments carry no fee. */
+  onlinePaymentFeeKobo: number;
+  /** The smallest part payment, as a percent of the invoice total (or the whole balance if that is smaller). */
+  minPartPaymentPercent: number;
+  /**
+   * true: a student must change the temporary password at first login (new students and admin resets).
+   * false: they can use it straight away. Staff and parents are always forced, whatever this says.
+   */
+  studentsMustChangePassword: boolean;
 }
 
 export const DEFAULT_PROFILE: SchoolProfile = {
@@ -18,6 +27,7 @@ export const DEFAULT_PROFILE: SchoolProfile = {
 };
 export const DEFAULT_POLICY: SchoolPolicy = {
   withholdReportsIfOwing: false, teacherPostsNeedApproval: true, lowAttendancePercent: 75, lowScorePercent: 40,
+  studentsMustChangePassword: true, onlinePaymentFeeKobo: 10_000, minPartPaymentPercent: 2,// today's behaviour until the super admin turns it off
 };
 
 interface SettingsDocument {

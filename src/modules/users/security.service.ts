@@ -1,6 +1,6 @@
 import { assertCanManageRole } from '../../common/scope';
 import { AppError } from '../../common/errors/AppError';
-import { USER_STATUS } from '../../config/constants';
+import { ROLES, USER_STATUS } from '../../config/constants';
 import { recordSafely } from '../audit/audit.port';
 import type { AuditService } from '../audit/audit.service';
 import type { PasswordService } from '../auth/password.service';
@@ -26,6 +26,8 @@ export interface SecurityServiceDeps {
   passwords: Pick<PasswordService, 'generateTemporaryPassword' | 'hashPassword'>;
   tokens: Pick<TokenService, 'revokeAllSessions'>;
   audit: AuditService;
+  /** The school setting for students. Everyone else is always forced to change a temporary password. */
+  forceStudentPasswordChange: () => Promise<boolean>;
 }
 
 export function createSecurityService(deps: SecurityServiceDeps) {
@@ -74,9 +76,10 @@ export function createSecurityService(deps: SecurityServiceDeps) {
 
     /** The new password is returned once and never stored or logged anywhere in readable form. */
     async resetPassword(id: string, actor: Actor, ctx: Context) {
-      await target(actor, id);
+      const user = await target(actor, id);
+      const mustChangePassword = user.role === ROLES.STUDENT ? await deps.forceStudentPasswordChange() : true;
       const temporaryPassword = passwords.generateTemporaryPassword();
-      await users.setPassword(id, await passwords.hashPassword(temporaryPassword), { mustChangePassword: true });
+      await users.setPassword(id, await passwords.hashPassword(temporaryPassword), { mustChangePassword });
       await tokens.revokeAllSessions(id);
       await log('USER_PASSWORD_RESET_BY_ADMIN', actor, ctx, id);
       return { temporaryPassword };

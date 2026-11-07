@@ -26,6 +26,7 @@ import { staffRepository } from '../users/staff.repository';
 import { studentRepository } from '../users/student.repository';
 import { userRepository } from '../users/user.repository';
 import type { SettingsService } from '../settings/settings.service'
+import { createRequestChecks } from '../requests/request.checks';
 
 export function createCommunicationModule(deps: {
   audit: AuditService;
@@ -41,6 +42,7 @@ export function createCommunicationModule(deps: {
 
   const notifications = createNotificationService({ repo: notificationRepository, users: userRepository, mailer: deps.mailer });
   const events = createRequestEvents();
+  const requestChecks = createRequestChecks();
 
   const requestService = createRequestService({
     requests: requestRepository,
@@ -50,6 +52,7 @@ export function createCommunicationModule(deps: {
     notifier: notifications,
     events,
     audit,
+    checks: requestChecks,
   });
 
   const announcementService = createAnnouncementService({
@@ -83,4 +86,4 @@ export function createCommunicationModule(deps: {
   router.use(createAnnouncementRouter({ service: announcementService, authenticate }));
   router.use(createAttendanceRouter({ service: attendanceService, authenticate }));
 
-  return { router, notifier: notifications, events, announcements: announcementService } }
+    return { router, notifier: notifications, events, announcements: announcementService, requestChecks }; }

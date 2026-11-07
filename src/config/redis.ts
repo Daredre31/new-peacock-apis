@@ -40,6 +40,7 @@ export function createRedisClient(url: string = env.REDIS_URL, label = 'api'): R
   const options: RedisOptions = {
     connectionName: `peacock-${label}`,
     connectTimeout: CONNECT_TIMEOUT_MS,
+      keepAlive: 10_000,
     retryStrategy: redisRetryDelay,
     maxRetriesPerRequest: 1,
     enableOfflineQueue: false,

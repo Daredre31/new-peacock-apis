@@ -12,7 +12,6 @@ import { createRoutes } from './routes';
 import { buildOpenApiDocument } from './openapi';
 import { createDocsRouter } from './openapi/docs.routes';
 import { createCsrfMiddleware } from './common/middleware/csrf';
-import { createCsrfService } from './modules/auth/csrf.service';
 import { createAuthModule } from './modules/auth/auth.module';
 import type { KeyValueStore } from './modules/auth/keyValueStore';
 import { createAuditService } from './modules/audit/audit.service';

@@ -24,6 +24,7 @@ import { registerCalendarOperations } from '../modules/calendar/calendar.schema'
 import { registerThreadOperations } from '../modules/threads/thread.schema';
 import { registerReportOperations } from '../modules/reports/report.schema';
 import { registerDashboardOperations } from '../modules/dashboards/dashboard.schema';
+import { registerFeeOperations } from '../modules/fees/fees.schema';
 
 /** Each phase adds its module's register function here. */
 export function createOperationRegistry(): OpenApiRegistry {
@@ -52,6 +53,7 @@ export function createOperationRegistry(): OpenApiRegistry {
   registerThreadOperations(registry);
   registerReportOperations(registry);
   registerDashboardOperations(registry);
+  registerFeeOperations(registry);
   
   return registry;
 }

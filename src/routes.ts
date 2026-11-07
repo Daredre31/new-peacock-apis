@@ -19,6 +19,9 @@ import { scoreRepository } from './modules/results/score.repository';
 import { createSettingsModule } from './modules/settings/settings.module';
 import { createTasksModule } from './modules/tasks/tasks.module';
 import { createUsersModule } from './modules/users/users.module';
+import { userRepository } from './modules/users/user.repository';
+import { ROLES } from './config/constants';
+import { createFeesModule } from './modules/fees/fees.module';
 
 export interface RouteDeps {
   health: HealthDependencies;
@@ -42,22 +45,34 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
   const academics = createAcademicsModule({ audit, auth, store });
   router.use(academics.router);
 
-  const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms, images });
-  router.use(users.router);
-
-  // Settings come before the modules that read them.
-  const settings = createSettingsModule({ audit, auth, assessmentInUse: () => scoreRepository.anyExists() });
+  // Settings come before the modules that read them, and that includes users (the student password rule).
+  const settings = createSettingsModule({
+    audit, auth,
+    assessmentInUse: () => scoreRepository.anyExists(),
+    onStudentPasswordChangeOff: () => userRepository.clearMustChangePasswordForRole(ROLES.STUDENT),
+  });
   router.use(settings.router);
+
+  const users = createUsersModule({ audit, auth, store, rateLimitRedis, teacherArms: academics.teacherArms, images, settings: settings.service });
+  router.use(users.router);
 
   const communication = createCommunicationModule({
     audit, auth, mailer, scope: users.scope, armIdsOfUser: users.armIdsOfUser, teacherArms: academics.teacherArms, settings: settings.service,
   });
   router.use(communication.router);
 
+    const fees = createFeesModule({
+    audit, auth, scope: users.scope, notifier: communication.notifier, events: communication.events,
+    requestChecks: communication.requestChecks, settings: settings.service,
+  });
+  router.use(fees.router);
+
   const tasks = createTasksModule({ audit, auth, scope: users.scope, notifier: communication.notifier });
   router.use(tasks.router);
 
-  const results = createResultsModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store });
+  const results = createResultsModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store ,
+    reportGate: fees.reportGate
+  });
   router.use(results.router);
 
   const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs });

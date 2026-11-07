@@ -17,6 +17,8 @@ import {
   REQUEST_STATUS, allowedActions, canView, mayAttempt, statusAfterSubmit,
   type DecisionOutcome, type RequestAction, type RequestStatus, type StepAction,
 } from './request.rules';
+import type { RequestChecks } from './request.checks';
+
 
 interface Actor { id: string; role: Role }
 interface Context { ip: string; requestId: string }
@@ -33,6 +35,7 @@ export interface RequestServiceDeps {
   notifier: Pick<NotificationService, 'notify'>;
   events: RequestEvents;
   audit: AuditPort;
+  checks?:RequestChecks
 }
 
 const fail = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
@@ -54,6 +57,9 @@ const snippet = (text: string | null): string => (text ? ` "${text.length > 160 
 
 export function createRequestService(deps: RequestServiceDeps) {
   const { requests, users, names, scope, notifier, events, audit } = deps;
+    const runChecks = async (type: RequestType, payload: Record<string, unknown>, studentId: string | null): Promise<void> => {
+    await deps.checks?.run(type, { payload, studentId });
+  };
 
   /** Checks the payload for this type and works out the derived fields. */
   function validatePayload(type: RequestType, raw: Record<string, unknown>) {
@@ -182,6 +188,7 @@ export function createRequestService(deps: RequestServiceDeps) {
       if (!TYPE_RULES[input.type].creators.includes(actor.role)) throw new AppError('FORBIDDEN');
       const checked = validatePayload(input.type, input.payload);
       const studentId = await checkStudent(actor, input.type, input.studentId, checked.hideIdentity);
+      await runChecks(input.type, checked.payload, studentId);
 
       const record = await requests.create({
         type: input.type, payload: checked.payload, studentId, createdBy: actor.id, createdByRole: actor.role,
@@ -200,6 +207,7 @@ export function createRequestService(deps: RequestServiceDeps) {
       assertAllowed(record, actor, 'EDIT');
       const checked = validatePayload(record.type, input.payload);
       const studentId = await checkStudent(actor, record.type, input.studentId, checked.hideIdentity);
+      await runChecks(record.type, checked.payload, studentId);
 
       const updated = await requests.editByCreator(
         id, actor.id,
@@ -218,7 +226,8 @@ export function createRequestService(deps: RequestServiceDeps) {
     async submit(actor: Actor, id: string, ctx: Context) {
       const record = await load(actor, id);
       assertAllowed(record, actor, 'SUBMIT');
-      validatePayload(record.type, record.payload); // nothing leaves the creator unless it is valid
+      validatePayload(record.type, record.payload);
+      await runChecks(record.type, record.payload, record.studentId); // nothing leaves the creator unless it is valid
 
       const to = statusAfterSubmit(record.createdByRole);
       const updated = await step(record, actor, ctx, { action: 'SUBMITTED', to });
@@ -279,6 +288,7 @@ export function createRequestService(deps: RequestServiceDeps) {
       if (input.outcome === 'NOTED' && !TYPE_RULES[record.type].canBeNoted) {
         throw fail('outcome', 'This type of request must be approved or rejected');
       }
+       if (input.outcome === 'APPROVED') await runChecks(record.type, record.payload, record.studentId);
       const text = cleanComment(input.comment, true);
       const updated = await step(record, actor, ctx, { action: 'DECIDED', to: REQUEST_STATUS.DECIDED, comment: text, outcome: input.outcome });
 

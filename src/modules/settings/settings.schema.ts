@@ -31,8 +31,9 @@ const policyBody = z.object({
   teacherPostsNeedApproval: z.boolean().optional(),
   lowAttendancePercent: z.number().int().min(1).max(100).optional(),
   lowScorePercent: z.number().int().min(1).max(100).optional(),
-    onlinePaymentFeeKobo: z.number().int().min(0).max(1_000_000).optional(),
+     onlinePaymentFeeKobo: z.number().int().min(0).max(1_000_000).optional(),
   minPartPaymentPercent: z.number().int().min(1).max(100).optional(),
+  studentsMustChangePassword: z.boolean().optional(),
 }).strict();
 export const updateSettingsBody = z.object({ profile: profileBody.optional(), policy: policyBody.optional() });
 export const updateSettingsSchemas = { body: updateSettingsBody };
@@ -45,6 +46,8 @@ const profileView = z.object({
 const policyView = z.object({
   withholdReportsIfOwing: z.boolean(), teacherPostsNeedApproval: z.boolean(),
   lowAttendancePercent: z.number().int(), lowScorePercent: z.number().int(),
+  studentsMustChangePassword: z.boolean(),
+    onlinePaymentFeeKobo: z.number().int(), minPartPaymentPercent: z.number().int(),
 });
 
 export function registerSettingsOperations(registry: OpenApiRegistry): void {
@@ -52,5 +55,5 @@ export function registerSettingsOperations(registry: OpenApiRegistry): void {
   registry.register({ method: 'get', path: '/settings/grading-scale', operationId: 'getGradingScale', summary: 'Score components (for example CA1, CA2, EXAM) and grade bands', tags, roles: PERMISSIONS['grading-scale:read'], success: { status: 200, description: 'The scale', data: assessmentBody } });
   registry.register({ method: 'put', path: '/settings/grading-scale', operationId: 'setGradingScale', summary: 'Replace the scale. Component maximums must add up to 100. Components cannot change once scores exist', tags, roles: PERMISSIONS['grading-scale:write'], request: { body: assessmentBody }, success: { status: 200, description: 'Saved', data: assessmentBody }, errors: ['CONFLICT'] });
   registry.register({ method: 'get', path: '/settings', operationId: 'getSettings', summary: 'The school profile (everyone). The policy flags are returned to the super admin only, and are null for everyone else', tags, roles: PERMISSIONS['session:self'], success: { status: 200, description: 'Settings', data: z.object({ profile: profileView, policy: policyView.nullable() }) } });
-  registry.register({ method: 'put', path: '/settings', operationId: 'updateSettings', summary: 'Change the school profile and/or the policy flags. Only the fields you send change; send null to clear an optional profile field', tags, roles: [ROLES.SUPER_ADMIN], request: { body: updateSettingsBody }, success: { status: 200, description: 'Saved', data: z.object({ profile: profileView, policy: policyView }) } });
+  registry.register({ method: 'put', path: '/settings', operationId: 'updateSettings', summary: 'Change the school profile and/or the policy flags. Only the fields you send change; send null to clear an optional profile field. Sending policy.studentsMustChangePassword = false also clears the "must change password" flag on every existing student at once', tags, roles: [ROLES.SUPER_ADMIN], request: { body: updateSettingsBody }, success: { status: 200, description: 'Saved', data: z.object({ profile: profileView, policy: policyView }) } });
 }

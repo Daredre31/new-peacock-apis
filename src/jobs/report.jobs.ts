@@ -56,7 +56,14 @@ export function createReportJobs(connection: Redis | null) {
         },
         { ...options, concurrency: 2 },
       );
-      worker.on('error', (err) => logger.error({ err }, 'report worker error'));
+            let lastErrorLog = 0;
+      worker.on('error', (err) => {
+        const now = Date.now();
+        if (now - lastErrorLog >= 30_000) {
+          lastErrorLog = now;
+          logger.error({ err }, 'exam worker error');
+        }
+      });
       worker.on('failed', (job, err) => logger.error({ err, jobName: job?.name }, 'report job failed'));
       await queue.upsertJobScheduler('report-sweep', { every: 5 * 60_000 }, { name: 'sweep', opts: { removeOnComplete: true, removeOnFail: 100 } });
       logger.info('report workers started');

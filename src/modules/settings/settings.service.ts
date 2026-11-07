@@ -59,6 +59,8 @@ export function createSettingsService(deps: {
   audit: AuditPort;
   /** True once any score exists, because changing the score components would corrupt totals. */
   assessmentInUse?: () => Promise<boolean>;
+  /** Called when the super admin switches the student password-change rule off. Returns how many students were freed. */
+  onStudentPasswordChangeOff?: () => Promise<number>;
 }) {
   const { repo, audit } = deps;
   const getAssessment = async (): Promise<AssessmentConfig> => (await repo.getAssessment()) ?? DEFAULT_ASSESSMENT;
@@ -104,9 +106,17 @@ export function createSettingsService(deps: {
       if (input.profile) await repo.saveProfile(profile, actor.id);
       if (input.policy) await repo.savePolicy(policy, actor.id);
 
+      // Switching the rule off must also free students who are already stuck on the change-password screen.
+      // It is safe to send "false" again: clearing twice changes nothing.
+      const studentsFreed =
+        input.policy?.studentsMustChangePassword === false && deps.onStudentPasswordChangeOff
+          ? await deps.onStudentPasswordChangeOff()
+          : null;
+
       await recordSafely(audit, {
         action: 'SETTINGS_CHANGED', actorId: actor.id, entityType: 'settings', entityId: 'school', ip: ctx.ip, requestId: ctx.requestId,
-        before: { profile: beforeProfile, policy: beforePolicy }, after: { profile, policy },
+        before: { profile: beforeProfile, policy: beforePolicy },
+        after: { profile, policy, ...(studentsFreed !== null ? { studentsFreedFromPasswordChange: studentsFreed } : {}) },
       });
       return { profile, policy };
     },

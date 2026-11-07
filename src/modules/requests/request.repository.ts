@@ -3,6 +3,7 @@ import { skipOf } from '../../common/utils/pagination';
 import { ALL_ROLES, type Role } from '../../config/constants';
 import { nextSequence } from '../users/counter.model';
 import { REQUEST_TYPES, type RequestType } from './request.payloads';
+// import type { RequestCheck } from './request.checks';
 import {
   DECISION_OUTCOMES, REQUEST_STATUS, STEP_ACTIONS,
   type DecisionOutcome, type RequestStatus, type StepAction,
@@ -26,6 +27,7 @@ interface RequestDocument {
   decision: { outcome: DecisionOutcome; decidedBy: Types.ObjectId; at: Date } | null;
   createdAt: Date;
   updatedAt: Date;
+  
 }
 type Row = RequestDocument & { _id: Types.ObjectId };
 

@@ -3,6 +3,7 @@ import { createClaimRateLimiter, type RedisLike } from '../../common/middleware/
 import { createScopeService } from '../../common/scope';
 import { env } from '../../config/env';
 import type { ImageStore } from '../../integrations/imageStore';
+import type { SettingsService } from '../settings/settings.service';
 import { enrolmentRepository } from '../academics/enrolment.repository';
 import { sessionRepository } from '../academics/session.repository';
 import { structureRepository } from '../academics/structure.repository';
@@ -37,8 +38,10 @@ export function createUsersModule(deps: {
   rateLimitRedis: RedisLike | null;
   teacherArms: TeacherArmsCache;
   images: ImageStore;
+  settings: Pick<SettingsService, 'getPolicy'>;
 }) {
   const { audit, auth, store, teacherArms, images } = deps;
+  const forceStudentPasswordChange = async (): Promise<boolean> => (await deps.settings.getPolicy()).studentsMustChangePassword;
   const authenticate = auth.middleware.authenticate;
   const common = { passwords: passwordService, credentials: auth.credentials, tokens: auth.tokens, audit };
 
@@ -82,6 +85,7 @@ export function createUsersModule(deps: {
     sessions: sessionRepository,
     structure: structureRepository,
     images,
+    forcePasswordChange: forceStudentPasswordChange,
     teacherArmIds: (teacherUserId) => teacherArms.armIdsOf(teacherUserId),
     ...common,
   });
@@ -108,6 +112,7 @@ export function createUsersModule(deps: {
     passwords: passwordService,
     tokens: auth.tokens,
     audit,
+    forceStudentPasswordChange,
   });
 
   const router = Router();

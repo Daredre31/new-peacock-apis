@@ -9,9 +9,9 @@ import { settingsRepository } from './settings.repository';
 import { setGradingScaleSchemas, updateSettingsSchemas } from './settings.schema';
 import { createSettingsService } from './settings.service';
 
-export function createSettingsModule(deps: { audit: AuditService; auth: AuthModule; assessmentInUse?: () => Promise<boolean> }) {
+export function createSettingsModule(deps: { audit: AuditService; auth: AuthModule; assessmentInUse?: () => Promise<boolean>; onStudentPasswordChangeOff?: () => Promise<number> }) {
   const auth = deps.auth.middleware.authenticate;
-  const service = createSettingsService({ repo: settingsRepository, audit: deps.audit, assessmentInUse: deps.assessmentInUse });
+  const service = createSettingsService({ repo: settingsRepository, audit: deps.audit, assessmentInUse: deps.assessmentInUse, onStudentPasswordChangeOff: deps.onStudentPasswordChangeOff });
 
   const router = Router();
   router.get('/settings/grading-scale', auth, authorize('grading-scale:read'), validate({}), async (_req, res) => {

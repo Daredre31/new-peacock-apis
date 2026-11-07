@@ -48,6 +48,8 @@ export interface StudentServiceDeps {
   tokens: Pick<TokenService, 'revokeAllSessions'>;
   audit: AuditPort;
   images: ImageStore;
+  /** The school setting: must a new student change the temporary password at first login? */
+  forcePasswordChange: () => Promise<boolean>;
   /** Class arms this teacher teaches or is class teacher of, this session. */
   teacherArmIds: (teacherUserId: string) => Promise<string[]>;
 }
@@ -178,6 +180,7 @@ export function createStudentService(deps: StudentServiceDeps) {
       if (input.classArmId && !arm) throw fail('classArmId', 'Class arm not found');
 
       const useTemporary = input.delivery === 'TEMPORARY_PASSWORD';
+      const mustChangePassword = useTemporary && (await deps.forcePasswordChange());
       const temporaryPassword = useTemporary ? passwords.generateTemporaryPassword() : null;
       const passwordHash = temporaryPassword ? await passwords.hashPassword(temporaryPassword) : undefined;
       const profile = {
@@ -198,7 +201,7 @@ export function createStudentService(deps: StudentServiceDeps) {
             ...(passwordHash ? { passwordHash } : {}),
             role: ROLES.STUDENT,
             status: useTemporary ? USER_STATUS.ACTIVE : USER_STATUS.INVITED,
-            mustChangePassword: useTemporary,
+            mustChangePassword,
           },
           new Date(),
           tx,
