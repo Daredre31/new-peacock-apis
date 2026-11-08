@@ -1,6 +1,6 @@
 import { AppError } from '../../common/errors/AppError';
 import type { ScopeService } from '../../common/scope/scope.service';
-import { ROLES, type Role } from '../../config/constants';
+import { ROLES, SCHOOL_NAME, type Role } from '../../config/constants';
 import type { sessionRepository } from '../academics/session.repository';
 import type { attendanceRepository } from '../attendance/attendance.repository';
 import type { staffRepository } from '../users/staff.repository';
@@ -14,8 +14,6 @@ interface Actor { id: string; role: Role }
 /** Hook for Phase 4: parents see "withheld" instead of the card while fees are owed and the school has turned that on. */
 export interface ReportGate { isWithheld(studentId: string, termId: string): Promise<boolean> }
 export const openReportGate: ReportGate = { isWithheld: async () => false };
-
-const SCHOOL_NAME = 'Peacock Academy';
 
 export function createStudentResultsService(deps: {
   ctx: ResultsContext;

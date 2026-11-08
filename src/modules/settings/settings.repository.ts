@@ -1,4 +1,5 @@
 import mongoose, { type Model } from 'mongoose';
+import { SCHOOL_NAME } from '../../config/constants';
 import type { AssessmentConfig } from './assessment';
 
 export interface SchoolProfile {
@@ -23,7 +24,7 @@ export interface SchoolPolicy {
 }
 
 export const DEFAULT_PROFILE: SchoolProfile = {
-  name: 'Peacock Academy', shortName: null, motto: null, address: null, phone: null, email: null, website: null,
+  name: SCHOOL_NAME, shortName: null, motto: null, address: null, phone: null, email: null, website: null,
 };
 export const DEFAULT_POLICY: SchoolPolicy = {
   withholdReportsIfOwing: false, teacherPostsNeedApproval: true, lowAttendancePercent: 75, lowScorePercent: 40,

@@ -32,7 +32,7 @@ export function createDisabledMailer(): Mailer {
 
 export interface ResendOptions {
   apiKey: string;
-  /** Verified sender, e.g. "Peacock Academy <no-reply@yourschool.com>". */
+  /** Verified sender, e.g. "Peacock Royal Academy <no-reply@peacockroyalacademyy.com>". */
   from: string;
   /** Overridable for tests. */
   baseUrl?: string;

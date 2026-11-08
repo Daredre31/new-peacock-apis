@@ -57,6 +57,7 @@ export function createInvoiceService(deps: {
         classArmId: r.classArmId, classArmName: arm ? `${classes.get(arm.classId)?.name ?? ''} ${arm.name}`.trim() : '',
         termId: r.termId, termName: terms.get(r.termId) ?? '', items: r.items, totalKobo: r.totalKobo,
         paidKobo: r.totalKobo - r.balanceKobo, balanceKobo: r.balanceKobo, creditKobo: r.balanceKobo < 0 ? -r.balanceKobo : 0,
+        kind: r.title ? ('ADDITIONAL' as const) : ('TERM_FEES' as const), title: r.title,
         status: r.status, dueDate: r.dueDate, overdue: r.balanceKobo > 0 && r.dueDate < today, createdAt: r.createdAt.toISOString(),
       };
     });

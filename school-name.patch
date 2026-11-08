@@ -1,0 +1,155 @@
+diff --git a/src/config/constants.ts b/src/config/constants.ts
+index e743ad0..9582611 100644
+--- a/src/config/constants.ts
++++ b/src/config/constants.ts
+@@ -1,2 +1,5 @@
++/** The school's name as it appears in emails, the API docs and the default settings. */
++export const SCHOOL_NAME = 'Peacock Royal Academy';
++
+ /** The five fixed roles. Values are UPPER_SNAKE, as the API conventions require. */
+ export const ROLES = {
+diff --git a/src/integrations/mailer.ts b/src/integrations/mailer.ts
+index efb4be3..845f0fd 100644
+--- a/src/integrations/mailer.ts
++++ b/src/integrations/mailer.ts
+@@ -33,5 +33,5 @@ export function createDisabledMailer(): Mailer {
+ export interface ResendOptions {
+   apiKey: string;
+-  /** Verified sender, e.g. "Peacock Academy <no-reply@yourschool.com>". */
++  /** Verified sender, e.g. "Peacock Royal Academy <no-reply@peacockroyalacademyy.com>". */
+   from: string;
+   /** Overridable for tests. */
+diff --git a/src/modules/auth/credentials.service.ts b/src/modules/auth/credentials.service.ts
+index 27155f3..edc748f 100644
+--- a/src/modules/auth/credentials.service.ts
++++ b/src/modules/auth/credentials.service.ts
+@@ -4,5 +4,5 @@ import { parseIdentifier } from '../../common/utils/identifier';
+ import { logger } from '../../common/utils/logger';
+ import { assertPasswordPolicy } from '../../common/utils/passwordPolicy';
+-import { AUTH_LOCKOUT, USER_STATUS } from '../../config/constants';
++import { AUTH_LOCKOUT, SCHOOL_NAME, USER_STATUS } from '../../config/constants';
+ import type { Mailer } from '../../integrations/mailer';
+ import type { AuditEntry, AuditPort } from '../audit/audit.port';
+@@ -139,5 +139,5 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
+       await notify(
+         user.email,
+-        'Your Peacock Academy password was changed',
++        `Your ${SCHOOL_NAME} password was changed`,
+         'Your password was just changed. If this was not you, contact the school administrator immediately.',
+       );
+@@ -150,5 +150,5 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
+       return notify(
+         input.email,
+-        'Welcome to Peacock Academy: choose your password',
++        `Welcome to ${SCHOOL_NAME}: choose your password`,
+         `Hello ${input.name},\n\nAn account was created for you. Use this link to choose your password. It works once and expires in ${Math.round(inviteTtl / 86400)} days:\n\n${link}\n\nIf you were not expecting this, ignore this email.`,
+       );
+@@ -172,5 +172,5 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
+       await notify(
+         user.email,
+-        'Reset your Peacock Academy password',
++        `Reset your ${SCHOOL_NAME} password`,
+         `Use this link to choose a new password. It works once and expires in ${Math.round(ttl / 60)} minutes:\n\n${link}\n\nIf you did not ask for this, ignore this email: your password has not changed.`,
+       );
+@@ -208,5 +208,5 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
+       await notify(
+         user.email,
+-        'Your Peacock Academy password was changed',
++        `Your ${SCHOOL_NAME} password was changed`,
+         'Your password was just reset. If this was not you, contact the school administrator immediately.',
+       );
+diff --git a/src/modules/notifications/notification.service.ts b/src/modules/notifications/notification.service.ts
+index 9a3c77b..6a290f2 100644
+--- a/src/modules/notifications/notification.service.ts
++++ b/src/modules/notifications/notification.service.ts
+@@ -1,5 +1,5 @@
+ import { AppError } from '../../common/errors/AppError';
+ import { logger } from '../../common/utils/logger';
+-import { USER_STATUS } from '../../config/constants';
++import { SCHOOL_NAME, USER_STATUS } from '../../config/constants';
+ import type { Mailer } from '../../integrations/mailer';
+ import type { userRepository } from '../users/user.repository';
+@@ -53,5 +53,5 @@ export function createNotificationService(deps: {
+             const results = await Promise.allSettled(
+               targets.slice(i, i + EMAIL_BATCH).map((to) =>
+-                mailer.send({ to, subject: title, text: `${body}\n\nOpen the Peacock Academy portal to see the details.` }),
++                mailer.send({ to, subject: title, text: `${body}\n\nOpen the ${SCHOOL_NAME} portal to see the details.` }),
+               ),
+             );
+diff --git a/src/modules/results/studentResults.service.ts b/src/modules/results/studentResults.service.ts
+index ad6e25a..7979f97 100644
+--- a/src/modules/results/studentResults.service.ts
++++ b/src/modules/results/studentResults.service.ts
+@@ -1,5 +1,5 @@
+ import { AppError } from '../../common/errors/AppError';
+ import type { ScopeService } from '../../common/scope/scope.service';
+-import { ROLES, type Role } from '../../config/constants';
++import { ROLES, SCHOOL_NAME, type Role } from '../../config/constants';
+ import type { sessionRepository } from '../academics/session.repository';
+ import type { attendanceRepository } from '../attendance/attendance.repository';
+@@ -16,6 +16,4 @@ export interface ReportGate { isWithheld(studentId: string, termId: string): Pro
+ export const openReportGate: ReportGate = { isWithheld: async () => false };
+ 
+-const SCHOOL_NAME = 'Peacock Academy';
+-
+ export function createStudentResultsService(deps: {
+   ctx: ResultsContext;
+diff --git a/src/modules/settings/settings.repository.ts b/src/modules/settings/settings.repository.ts
+index 060f5e6..4649b18 100644
+--- a/src/modules/settings/settings.repository.ts
++++ b/src/modules/settings/settings.repository.ts
+@@ -1,3 +1,4 @@
+ import mongoose, { type Model } from 'mongoose';
++import { SCHOOL_NAME } from '../../config/constants';
+ import type { AssessmentConfig } from './assessment';
+ 
+@@ -24,5 +25,5 @@ export interface SchoolPolicy {
+ 
+ export const DEFAULT_PROFILE: SchoolProfile = {
+-  name: 'Peacock Academy', shortName: null, motto: null, address: null, phone: null, email: null, website: null,
++  name: SCHOOL_NAME, shortName: null, motto: null, address: null, phone: null, email: null, website: null,
+ };
+ export const DEFAULT_POLICY: SchoolPolicy = {
+diff --git a/src/openapi/docs.routes.ts b/src/openapi/docs.routes.ts
+index dabfc85..545935c 100644
+--- a/src/openapi/docs.routes.ts
++++ b/src/openapi/docs.routes.ts
+@@ -1,3 +1,4 @@
+ import { Router } from 'express';
++import { SCHOOL_NAME } from '../config/constants';
+ import type { OpenApiDocument } from './builder';
+ 
+@@ -22,5 +23,5 @@ const PAGE = `<!doctype html>
+   <head>
+     <meta charset="utf-8" />
+-    <title>Peacock Academy API</title>
++    <title>${SCHOOL_NAME} API</title>
+     <link rel="stylesheet" href="${CDN}/swagger-ui.css" />
+   </head>
+diff --git a/src/openapi/info.ts b/src/openapi/info.ts
+index 1685807..4e5dd40 100644
+--- a/src/openapi/info.ts
++++ b/src/openapi/info.ts
+@@ -1,8 +1,10 @@
++import { SCHOOL_NAME } from '../config/constants';
++
+ /** Contract version. Additive change = minor bump, breaking change = new /api/v2. */
+ export const OPENAPI_INFO = {
+-  title: 'Peacock Academy API',
++  title: `${SCHOOL_NAME} API`,
+   version: '0.1.0',
+   description:
+-    'Contract for the Peacock Academy school management system. ' +
++    `Contract for the ${SCHOOL_NAME} school management system. ` +
+     'Every response uses the standard envelope; the frontend switches on error.code, never on message.',
+ } as const;
+\ No newline at end of file
+diff --git a/.env.example b/.env.example
+index 200c255..a79f5ee 100644
+--- a/.env.example
++++ b/.env.example
+@@ -26,3 +26,3 @@ CLOUDINARY_API_SECRET=
+ # Emails (password reset links, notifications) go out through Resend. Set both or neither.
+-# MAIL_FROM must use a domain you verified in Resend (Dashboard > Domains), e.g. Peacock Academy <no-reply@yourschool.com>
++# MAIL_FROM must use a domain you verified in Resend (Dashboard > Domains), e.g. Peacock Royal Academy <no-reply@peacockroyalacademyy.com>
+ # Without them: development prints emails to the console, production sends nothing.

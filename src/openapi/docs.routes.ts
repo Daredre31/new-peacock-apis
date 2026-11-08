@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { SCHOOL_NAME } from '../config/constants';
 import type { OpenApiDocument } from './builder';
 
 // Pinned on purpose. Bump it deliberately and check the page still loads.
@@ -21,7 +22,7 @@ const PAGE = `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Peacock Academy API</title>
+    <title>${SCHOOL_NAME} API</title>
     <link rel="stylesheet" href="${CDN}/swagger-ui.css" />
   </head>
   <body>

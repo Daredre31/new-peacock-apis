@@ -1,6 +1,6 @@
 import { AppError } from '../../common/errors/AppError';
 import { logger } from '../../common/utils/logger';
-import { USER_STATUS } from '../../config/constants';
+import { SCHOOL_NAME, USER_STATUS } from '../../config/constants';
 import type { Mailer } from '../../integrations/mailer';
 import type { userRepository } from '../users/user.repository';
 import { decodeCursor, type Preferences, type notificationRepository } from './notification.repository';
@@ -52,7 +52,7 @@ export function createNotificationService(deps: {
           for (let i = 0; i < targets.length; i += EMAIL_BATCH) {
             const results = await Promise.allSettled(
               targets.slice(i, i + EMAIL_BATCH).map((to) =>
-                mailer.send({ to, subject: title, text: `${body}\n\nOpen the Peacock Academy portal to see the details.` }),
+                mailer.send({ to, subject: title, text: `${body}\n\nOpen the ${SCHOOL_NAME} portal to see the details.` }),
               ),
             );
             const failed = results.filter((r) => r.status === 'rejected').length;

@@ -18,6 +18,10 @@ interface InvoiceDocument {
   /** Cached sum of this invoice's ledger entries. The ledger is the truth; this is kept in step inside the same transaction. */
   balanceKobo: number;
   status: InvoiceStatus; dueDate: string; lastReminderAt: Date | null; createdBy: Types.ObjectId; createdAt: Date; updatedAt: Date;
+  /** Set only on invoices that come from an extra charge. feeStructureId then holds the charge's id. */
+  title?: string | null;
+  /** False for extra charges that must not hold back report cards. Missing on older invoices, which means true. */
+  blocksReports?: boolean;
 }
 type Row = InvoiceDocument & { _id: Types.ObjectId };
 
@@ -35,6 +39,8 @@ const schema = new mongoose.Schema<InvoiceDocument>(
     status: { type: String, enum: Object.values(INVOICE_STATUS), required: true },
     dueDate: { type: String, required: true },
     lastReminderAt: { type: Date, default: null },
+    title: { type: String, default: null, maxlength: 100 },
+    blocksReports: { type: Boolean, default: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, required: true },
   },
   { timestamps: true, versionKey: false },
@@ -54,6 +60,8 @@ export interface InvoiceRecord {
   id: string; number: string; studentId: string; classId: string; classArmId: string; sessionId: string; termId: string;
   feeStructureId: string; items: FeeItem[]; totalKobo: number; balanceKobo: number; status: InvoiceStatus;
   dueDate: string; lastReminderAt: Date | null; createdAt: Date;
+  /** The charge title for an extra charge, null for a term fee invoice. */
+  title: string | null;
 }
 export type AdjustResult = { ok: true; invoice: InvoiceRecord } | { ok: false; reason: 'MISSING' | 'GUARD' };
 
@@ -63,7 +71,7 @@ const toRecord = (r: Row): InvoiceRecord => ({
   classArmId: r.classArmId.toString(), sessionId: r.sessionId.toString(), termId: r.termId.toString(),
   feeStructureId: r.feeStructureId.toString(), items: r.items.map((i) => ({ name: i.name, amountKobo: i.amountKobo })),
   totalKobo: r.totalKobo, balanceKobo: r.balanceKobo, status: r.status, dueDate: r.dueDate,
-  lastReminderAt: r.lastReminderAt ?? null, createdAt: r.createdAt,
+  lastReminderAt: r.lastReminderAt ?? null, createdAt: r.createdAt, title: r.title ?? null,
 });
 
 export interface InvoiceFilter {
@@ -83,7 +91,7 @@ function queryOf(filter: InvoiceFilter): Record<string, unknown> {
 }
 
 async function create(
-  data: { studentId: string; classId: string; classArmId: string; sessionId: string; termId: string; feeStructureId: string; items: FeeItem[]; totalKobo: number; dueDate: string; createdBy: string },
+  data: { studentId: string; classId: string; classArmId: string; sessionId: string; termId: string; feeStructureId: string; items: FeeItem[]; totalKobo: number; dueDate: string; createdBy: string; title?: string; blocksReports?: boolean },
   session: ClientSession,
 ): Promise<InvoiceRecord> {
   const number = `INV-${String(await nextSequence('invoice', session)).padStart(6, '0')}`;
@@ -139,9 +147,12 @@ async function adjustBalance(id: string, delta: number, guard: BalanceGuard, ses
 const existsForStructure = async (feeStructureId: string): Promise<boolean> =>
   OBJECT_ID.test(feeStructureId) && (await InvoiceModel.exists({ feeStructureId })) !== null;
 
+const countForStructure = async (feeStructureId: string): Promise<number> =>
+  OBJECT_ID.test(feeStructureId) ? InvoiceModel.countDocuments({ feeStructureId }) : 0;
+
 async function outstandingForStudent(studentId: string, termId: string): Promise<number> {
   if (!OBJECT_ID.test(studentId) || !OBJECT_ID.test(termId)) return 0;
-  const rows = await InvoiceModel.find({ studentId, termId, balanceKobo: { $gt: 0 } }, { balanceKobo: 1 }).lean<Row[]>();
+  const rows = await InvoiceModel.find({ studentId, termId, balanceKobo: { $gt: 0 }, blocksReports: { $ne: false } }, { balanceKobo: 1 }).lean<Row[]>();
   return rows.reduce((sum, r) => sum + r.balanceKobo, 0);
 }
 
@@ -218,6 +229,6 @@ async function totalsByClassArm(filter: { termId: string }): Promise<{ classArmI
 }
 
 export const invoiceRepository = {
-  create, findById, findManyByIds, list, adjustBalance, existsForStructure,
+  create, findById, findManyByIds, list, adjustBalance, existsForStructure, countForStructure,
    outstandingForStudent, defaulters, dueForReminder, markReminded, idsForScope , totalsByClassArm
 };

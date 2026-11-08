@@ -71,6 +71,7 @@ const structureView = z.object({
 const invoiceView = z.object({
   id: z.string(), number: z.string(), studentId: z.string(), studentName: z.string(), admissionNo: z.string(), classArmId: z.string(), classArmName: z.string(),
   termId: z.string(), termName: z.string(), items: z.array(item), totalKobo: num, paidKobo: num, balanceKobo: num, creditKobo: num,
+  kind: z.enum(['TERM_FEES', 'ADDITIONAL']), title: z.string().nullable(),
   status: z.enum(invoiceStatus), dueDate: z.string(), overdue: z.boolean(), createdAt: iso,
 });
 const paymentSummary = z.object({ id: z.string(), method: z.enum(PAYMENT_METHODS), status: z.enum(paymentStatus), amountKobo: num, feeKobo: num, receiptNo: z.string().nullable(), paidAt: iso.nullable() });

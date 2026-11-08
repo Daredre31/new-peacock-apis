@@ -1,0 +1,699 @@
+diff --git a/src/config/constants.ts b/src/config/constants.ts
+index e025dbf..e743ad0 100644
+--- a/src/config/constants.ts
++++ b/src/config/constants.ts
+@@ -89,4 +89,8 @@ export const PERMISSIONS = {
+   'fee-structures:write': [AD],
+   'fee-structures:approve': [SA],
++  'fee-charges:read': [SA, AD],
++  'fee-charges:write': [AD],
++  'fee-charges:approve': [SA],
++  'fee-charges:issue': [AD],
+   'invoices:generate': [AD],
+   'invoices:read': [SA, AD, PA],
+diff --git a/src/modules/fees/feeCharge.repository.ts b/src/modules/fees/feeCharge.repository.ts
+new file mode 100644
+index 0000000..7ae989f
+--- /dev/null
++++ b/src/modules/fees/feeCharge.repository.ts
+@@ -0,0 +1,142 @@
++import mongoose, { type Model, type Types } from 'mongoose';
++import { skipOf } from '../../common/utils/pagination';
++import type { FeeItem } from './feeStructure.repository';
++
++export const FEE_CHARGE_STATUS = { DRAFT: 'DRAFT', APPROVED: 'APPROVED' } as const;
++export type FeeChargeStatus = (typeof FEE_CHARGE_STATUS)[keyof typeof FEE_CHARGE_STATUS];
++
++/** Who is billed: every student in a class, every student in one arm, or a hand-picked list. */
++export type Audience =
++  | { kind: 'CLASS'; classId: string }
++  | { kind: 'ARM'; classArmId: string }
++  | { kind: 'STUDENTS'; studentIds: string[] };
++
++interface FeeChargeDocument {
++  title: string; termId: Types.ObjectId; sessionId: Types.ObjectId;
++  items: FeeItem[]; totalKobo: number; dueDate: string; blocksReports: boolean;
++  audienceKind: Audience['kind']; classId: Types.ObjectId | null; classArmId: Types.ObjectId | null; studentIds: Types.ObjectId[];
++  status: FeeChargeStatus; createdBy: Types.ObjectId; approvedBy: Types.ObjectId | null; approvedAt: Date | null;
++  issuedAt: Date | null; createdAt: Date; updatedAt: Date;
++}
++type Row = FeeChargeDocument & { _id: Types.ObjectId };
++
++const itemSchema = new mongoose.Schema(
++  { name: { type: String, required: true, maxlength: 60 }, amountKobo: { type: Number, required: true, min: 1 } },
++  { _id: false },
++);
++const ref = (to: string) => ({ type: mongoose.Schema.Types.ObjectId, ref: to, default: null });
++const schema = new mongoose.Schema<FeeChargeDocument>(
++  {
++    title: { type: String, required: true, maxlength: 100 },
++    termId: { type: mongoose.Schema.Types.ObjectId, ref: 'Term', required: true },
++    sessionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Session', required: true },
++    items: { type: [itemSchema], required: true },
++    totalKobo: { type: Number, required: true, min: 1 },
++    dueDate: { type: String, required: true },
++    blocksReports: { type: Boolean, default: false },
++    audienceKind: { type: String, enum: ['CLASS', 'ARM', 'STUDENTS'], required: true },
++    classId: ref('Class'), classArmId: ref('ClassArm'),
++    studentIds: { type: [mongoose.Schema.Types.ObjectId], default: [] },
++    status: { type: String, enum: Object.values(FEE_CHARGE_STATUS), default: FEE_CHARGE_STATUS.DRAFT },
++    createdBy: { type: mongoose.Schema.Types.ObjectId, required: true },
++    approvedBy: { type: mongoose.Schema.Types.ObjectId, default: null },
++    approvedAt: { type: Date, default: null },
++    issuedAt: { type: Date, default: null },
++  },
++  { timestamps: true, versionKey: false },
++);
++schema.index({ termId: 1, status: 1, createdAt: -1 });
++schema.index({ status: 1, createdAt: -1 });
++
++const FeeChargeModel: Model<FeeChargeDocument> =
++  (mongoose.models.FeeCharge as Model<FeeChargeDocument> | undefined) ?? mongoose.model<FeeChargeDocument>('FeeCharge', schema);
++
++export interface FeeChargeRecord {
++  id: string; title: string; termId: string; sessionId: string; items: FeeItem[]; totalKobo: number; dueDate: string; blocksReports: boolean;
++  audience: Audience; status: FeeChargeStatus; createdBy: string; approvedAt: Date | null; issuedAt: Date | null; createdAt: Date;
++}
++
++const OBJECT_ID = /^[a-f0-9]{24}$/;
++function audienceOf(r: Row): Audience {
++  if (r.audienceKind === 'CLASS') return { kind: 'CLASS', classId: String(r.classId) };
++  if (r.audienceKind === 'ARM') return { kind: 'ARM', classArmId: String(r.classArmId) };
++  return { kind: 'STUDENTS', studentIds: r.studentIds.map(String) };
++}
++const toRecord = (r: Row): FeeChargeRecord => ({
++  id: r._id.toString(), title: r.title, termId: r.termId.toString(), sessionId: r.sessionId.toString(),
++  items: r.items.map((i) => ({ name: i.name, amountKobo: i.amountKobo })), totalKobo: r.totalKobo, dueDate: r.dueDate,
++  blocksReports: r.blocksReports, audience: audienceOf(r), status: r.status, createdBy: r.createdBy.toString(),
++  approvedAt: r.approvedAt ?? null, issuedAt: r.issuedAt ?? null, createdAt: r.createdAt,
++});
++const audienceFields = (a: Audience) => ({
++  audienceKind: a.kind,
++  classId: a.kind === 'CLASS' ? a.classId : null,
++  classArmId: a.kind === 'ARM' ? a.classArmId : null,
++  studentIds: a.kind === 'STUDENTS' ? a.studentIds : [],
++});
++
++export interface NewCharge {
++  title: string; termId: string; sessionId: string; items: FeeItem[]; totalKobo: number; dueDate: string;
++  blocksReports: boolean; audience: Audience; createdBy: string;
++}
++
++async function create(data: NewCharge): Promise<FeeChargeRecord> {
++  const { audience, ...rest } = data;
++  const doc = await FeeChargeModel.create({ ...rest, ...audienceFields(audience) });
++  return toRecord(doc.toObject() as Row);
++}
++
++async function findById(id: string): Promise<FeeChargeRecord | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const row = await FeeChargeModel.findById(id).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++async function list(filter: { termId?: string | undefined; status?: FeeChargeStatus | undefined }, o: { page: number; limit: number }) {
++  const query: Record<string, unknown> = {};
++  if (filter.termId) query.termId = filter.termId;
++  if (filter.status) query.status = filter.status;
++  const [rows, total] = await Promise.all([
++    FeeChargeModel.find(query).sort({ createdAt: -1, _id: -1 }).skip(skipOf(o.page, o.limit)).limit(o.limit).lean<Row[]>(),
++    FeeChargeModel.countDocuments(query),
++  ]);
++  return { items: rows.map(toRecord), total };
++}
++
++/** Only while the charge is still a draft. Returns null when it was approved in the meantime. */
++async function updateDraft(
++  id: string,
++  patch: Partial<Pick<NewCharge, 'title' | 'items' | 'totalKobo' | 'dueDate' | 'blocksReports' | 'audience'>>,
++): Promise<FeeChargeRecord | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const { audience, ...rest } = patch;
++  const row = await FeeChargeModel.findOneAndUpdate(
++    { _id: id, status: FEE_CHARGE_STATUS.DRAFT },
++    { $set: { ...rest, ...(audience ? audienceFields(audience) : {}) } },
++    { new: true },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++async function deleteDraft(id: string): Promise<boolean> {
++  if (!OBJECT_ID.test(id)) return false;
++  return (await FeeChargeModel.deleteOne({ _id: id, status: FEE_CHARGE_STATUS.DRAFT })).deletedCount === 1;
++}
++
++/** Moves between DRAFT and APPROVED atomically. Reopening also requires that nothing was issued. */
++async function transition(id: string, from: FeeChargeStatus, to: FeeChargeStatus, approval: { by: string; at: Date } | null): Promise<FeeChargeRecord | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const filter: Record<string, unknown> = { _id: id, status: from };
++  if (to === FEE_CHARGE_STATUS.DRAFT) filter.issuedAt = null;
++  const row = await FeeChargeModel.findOneAndUpdate(
++    filter, { $set: { status: to, approvedBy: approval?.by ?? null, approvedAt: approval?.at ?? null } }, { new: true },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++/** Remembers when the first invoices went out, so an issued charge can never be reopened. */
++async function markIssued(id: string, at: Date): Promise<void> {
++  if (OBJECT_ID.test(id)) await FeeChargeModel.updateOne({ _id: id, issuedAt: null }, { $set: { issuedAt: at } });
++}
++
++export const feeChargeRepository = { create, findById, list, updateDraft, deleteDraft, transition, markIssued };
+diff --git a/src/modules/fees/feeCharge.routes.ts b/src/modules/fees/feeCharge.routes.ts
+new file mode 100644
+index 0000000..fcb0e00
+--- /dev/null
++++ b/src/modules/fees/feeCharge.routes.ts
+@@ -0,0 +1,51 @@
++import { Router, type RequestHandler } from 'express';
++import { authorize } from '../../common/middleware/authorize';
++import { validate, type Validated } from '../../common/middleware/validate';
++import { buildPageMeta, sendCreated, sendSuccess } from '../../common/utils/apiResponse';
++import { contextOf, requireUser } from '../../common/utils/request';
++import type { FeeChargeService } from './feeCharge.service';
++import {
++  createFeeChargeSchemas, feeChargeIdSchemas, listFeeChargesSchemas, updateFeeChargeSchemas,
++} from './feeCharge.schema';
++
++export function createFeeChargeRouter(deps: { charges: FeeChargeService; authenticate: RequestHandler }): Router {
++  const { charges, authenticate: auth } = deps;
++  const router = Router();
++
++  router.get('/fee-charges', auth, authorize('fee-charges:read'), validate(listFeeChargesSchemas), async (req, res) => {
++    const { query } = req.validated as Validated<typeof listFeeChargesSchemas>;
++    const { items, total } = await charges.list(query);
++    sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
++  });
++  router.post('/fee-charges', auth, authorize('fee-charges:write'), validate(createFeeChargeSchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof createFeeChargeSchemas>;
++    sendCreated(res, await charges.create(requireUser(req), body, contextOf(req)));
++  });
++  router.get('/fee-charges/:id', auth, authorize('fee-charges:read'), validate(feeChargeIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof feeChargeIdSchemas>;
++    sendSuccess(res, await charges.get(params.id));
++  });
++  router.patch('/fee-charges/:id', auth, authorize('fee-charges:write'), validate(updateFeeChargeSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof updateFeeChargeSchemas>;
++    sendSuccess(res, await charges.update(requireUser(req), params.id, body, contextOf(req)));
++  });
++  router.delete('/fee-charges/:id', auth, authorize('fee-charges:write'), validate(feeChargeIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof feeChargeIdSchemas>;
++    await charges.remove(requireUser(req), params.id, contextOf(req));
++    sendSuccess(res, null);
++  });
++  router.post('/fee-charges/:id/approve', auth, authorize('fee-charges:approve'), validate(feeChargeIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof feeChargeIdSchemas>;
++    sendSuccess(res, await charges.approve(requireUser(req), params.id, contextOf(req)));
++  });
++  router.post('/fee-charges/:id/revoke-approval', auth, authorize('fee-charges:approve'), validate(feeChargeIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof feeChargeIdSchemas>;
++    sendSuccess(res, await charges.revokeApproval(requireUser(req), params.id, contextOf(req)));
++  });
++  router.post('/fee-charges/:id/issue', auth, authorize('fee-charges:issue'), validate(feeChargeIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof feeChargeIdSchemas>;
++    sendSuccess(res, await charges.issue(requireUser(req), params.id, contextOf(req)));
++  });
++
++  return router;
++}
+diff --git a/src/modules/fees/feeCharge.schema.ts b/src/modules/fees/feeCharge.schema.ts
+new file mode 100644
+index 0000000..5e4233c
+--- /dev/null
++++ b/src/modules/fees/feeCharge.schema.ts
+@@ -0,0 +1,53 @@
++import { z } from 'zod';
++import { MAX_KOBO } from '../../common/utils/money';
++import { paginationShape } from '../../common/utils/pagination';
++import { PERMISSIONS } from '../../config/constants';
++import type { OpenApiRegistry } from '../../openapi/registry';
++import { FEE_CHARGE_STATUS, type FeeChargeStatus } from './feeCharge.repository';
++
++const objectId = z.string().regex(/^[a-f0-9]{24}$/);
++const idParams = z.object({ id: objectId });
++const iso = z.iso.datetime();
++const num = z.number().int();
++const kobo = z.number().int().min(1).max(MAX_KOBO);
++const chargeStatus = Object.values(FEE_CHARGE_STATUS) as [FeeChargeStatus, ...FeeChargeStatus[]];
++const item = z.object({ name: z.string().trim().min(1).max(60), amountKobo: kobo });
++const items = z.array(item).min(1).max(30);
++const title = z.string().trim().min(3).max(100);
++
++const audience = z.discriminatedUnion('kind', [
++  z.object({ kind: z.literal('CLASS'), classId: objectId }),
++  z.object({ kind: z.literal('ARM'), classArmId: objectId }),
++  z.object({ kind: z.literal('STUDENTS'), studentIds: z.array(objectId).min(1).max(200) }),
++]);
++
++export const listFeeChargesQuery = z.object({ ...paginationShape, termId: objectId.optional(), status: z.enum(chargeStatus).optional() });
++export const listFeeChargesSchemas = { query: listFeeChargesQuery };
++const createBody = z.object({
++  termId: objectId, title, items, dueDate: z.iso.date(), audience,
++  /** Set true only if an unpaid charge should hold back report cards when the school withholds reports for owing. */
++  blocksReports: z.boolean().default(false),
++});
++export const createFeeChargeSchemas = { body: createBody };
++const updateBody = z.object({ title: title.optional(), items: items.optional(), dueDate: z.iso.date().optional(), audience: audience.optional(), blocksReports: z.boolean().optional() });
++export const updateFeeChargeSchemas = { params: idParams, body: updateBody };
++export const feeChargeIdSchemas = { params: idParams };
++
++const chargeView = z.object({
++  id: z.string(), title: z.string(), termId: z.string(), termName: z.string(), items: z.array(item), totalKobo: num, dueDate: z.string(), blocksReports: z.boolean(),
++  audience: z.object({ kind: z.enum(['CLASS', 'ARM', 'STUDENTS']), classId: z.string().nullable(), classArmId: z.string().nullable(), studentIds: z.array(z.string()), label: z.string() }),
++  status: z.enum(chargeStatus), approvedAt: iso.nullable(), issuedAt: iso.nullable(), invoicesIssued: num, createdAt: iso,
++});
++
++export function registerFeeChargeOperations(registry: OpenApiRegistry): void {
++  const tags = ['fee charges'];
++  const page = (data: z.ZodType) => ({ status: 200, description: 'A page', data: z.array(data), paginated: true as const });
++  registry.register({ method: 'get', path: '/fee-charges', operationId: 'listFeeCharges', summary: 'Extra charges added during a term (trips, levies, replacements). Amounts are in kobo', tags, roles: PERMISSIONS['fee-charges:read'], request: { query: listFeeChargesQuery }, success: page(chargeView) });
++  registry.register({ method: 'post', path: '/fee-charges', operationId: 'createFeeCharge', summary: 'Draft an extra charge for a class, one arm, or chosen students. It needs super admin approval before it can be issued. It never changes the term fee structure or existing invoices', tags, roles: PERMISSIONS['fee-charges:write'], request: { body: createBody }, success: { status: 201, description: 'Created', data: chargeView }, errors: ['VALIDATION_ERROR', 'CONFLICT'] });
++  registry.register({ method: 'get', path: '/fee-charges/{id}', operationId: 'getFeeCharge', summary: 'One extra charge', tags, roles: PERMISSIONS['fee-charges:read'], request: { params: idParams }, success: { status: 200, description: 'The charge', data: chargeView }, errors: ['NOT_FOUND'] });
++  registry.register({ method: 'patch', path: '/fee-charges/{id}', operationId: 'updateFeeCharge', summary: 'Change a draft. An approved charge is frozen', tags, roles: PERMISSIONS['fee-charges:write'], request: { params: idParams, body: updateBody }, success: { status: 200, description: 'Updated', data: chargeView }, errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'delete', path: '/fee-charges/{id}', operationId: 'deleteFeeCharge', summary: 'Delete a draft', tags, roles: PERMISSIONS['fee-charges:write'], request: { params: idParams }, success: { status: 200, description: 'Deleted', data: z.null() }, errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/fee-charges/{id}/approve', operationId: 'approveFeeCharge', summary: 'The super admin approves a charge so it can be issued', tags, roles: PERMISSIONS['fee-charges:approve'], request: { params: idParams }, success: { status: 200, description: 'Approved', data: chargeView }, errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/fee-charges/{id}/revoke-approval', operationId: 'revokeFeeChargeApproval', summary: 'Reopen an approved charge, only while nothing has been issued from it', tags, roles: PERMISSIONS['fee-charges:approve'], request: { params: idParams }, success: { status: 200, description: 'Reopened', data: chargeView }, errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/fee-charges/{id}/issue', operationId: 'issueFeeCharge', summary: 'Create the invoices for an approved charge. Safe to repeat: students who already have it are skipped. Students not enrolled this session are counted in notEnrolled', tags, roles: PERMISSIONS['fee-charges:issue'], request: { params: idParams }, success: { status: 200, description: 'Result', data: z.object({ students: num, created: num, skipped: num, failed: num, notEnrolled: num, totalKobo: num }) }, errors: ['NOT_FOUND', 'CONFLICT'] });
++}
+diff --git a/src/modules/fees/feeCharge.service.ts b/src/modules/fees/feeCharge.service.ts
+new file mode 100644
+index 0000000..1bc2c61
+--- /dev/null
++++ b/src/modules/fees/feeCharge.service.ts
+@@ -0,0 +1,292 @@
++import { AppError } from '../../common/errors/AppError';
++import { addDays, isIsoDate, schoolToday } from '../../common/utils/dates';
++import { isDuplicateKeyError } from '../../common/utils/mongoErrors';
++import { logger } from '../../common/utils/logger';
++import { isKobo, MAX_KOBO } from '../../common/utils/money';
++import { sanitizeText } from '../../common/utils/text';
++import { ROLES } from '../../config/constants';
++import { withTransaction } from '../../config/db';
++import type { enrolmentRepository } from '../academics/enrolment.repository';
++import type { sessionRepository } from '../academics/session.repository';
++import type { structureRepository } from '../academics/structure.repository';
++import { recordSafely, type AuditPort } from '../audit/audit.port';
++import type { NotificationService } from '../notifications/notification.service';
++import type { linkRepository } from '../users/link.repository';
++import type { studentRepository } from '../users/student.repository';
++import type { userRepository } from '../users/user.repository';
++import {
++  FEE_CHARGE_STATUS, type Audience, type FeeChargeRecord, type FeeChargeStatus, type feeChargeRepository,
++} from './feeCharge.repository';
++import type { FeeItem } from './feeStructure.repository';
++import type { invoiceRepository } from './invoice.repository';
++import type { ledgerRepository } from './ledger.repository';
++
++interface Actor { id: string }
++interface Context { ip: string; requestId: string }
++
++const fail = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
++const MAX_STUDENTS_PER_RUN = 5000;
++const MAX_PICKED_STUDENTS = 200;
++
++function cleanItems(raw: { name: string; amountKobo: number }[]): { items: FeeItem[]; totalKobo: number } {
++  const seen = new Set<string>();
++  const items: FeeItem[] = [];
++  let total = 0;
++  raw.forEach((item, i) => {
++    const name = sanitizeText(item.name);
++    if (!name) throw fail(`items.${i}.name`, 'Required');
++    if (seen.has(name.toLowerCase())) throw fail(`items.${i}.name`, 'Listed twice');
++    seen.add(name.toLowerCase());
++    if (!isKobo(item.amountKobo)) throw fail(`items.${i}.amountKobo`, 'Must be a whole number of kobo greater than zero');
++    items.push({ name, amountKobo: item.amountKobo });
++    total += item.amountKobo;
++  });
++  if (total > MAX_KOBO) throw fail('items', 'The total is too large');
++  return { items, totalKobo: total };
++}
++
++function checkDueDate(dueDate: string): void {
++  if (!isIsoDate(dueDate)) throw fail('dueDate', 'Use the format YYYY-MM-DD');
++  if (dueDate < addDays(schoolToday(), -30)) throw fail('dueDate', 'Cannot be more than 30 days in the past');
++}
++
++export function createFeeChargeService(deps: {
++  repo: typeof feeChargeRepository;
++  invoices: Pick<typeof invoiceRepository, 'create' | 'existsForStructure' | 'countForStructure'>;
++  ledger: Pick<typeof ledgerRepository, 'insert'>;
++  sessions: Pick<typeof sessionRepository, 'findTerm'>;
++  structure: Pick<typeof structureRepository, 'findClass' | 'findArm' | 'listArms' | 'armsByIds' | 'classesByIds'>;
++  enrolments: Pick<typeof enrolmentRepository, 'listForSession' | 'forStudents'>;
++  students: Pick<typeof studentRepository, 'findManyByUserIds' | 'profileMap'>;
++  links: Pick<typeof linkRepository, 'activeParentIdsOf'>;
++  users: Pick<typeof userRepository, 'findIdsByRoles'>;
++  notifier: Pick<NotificationService, 'notify'>;
++  audit: AuditPort;
++}) {
++  const { repo, invoices, ledger, sessions, structure, enrolments, students, links, users, notifier, audit } = deps;
++
++  const log = (action: string, actor: Actor, ctx: Context, id: string, metadata: Record<string, unknown>) =>
++    recordSafely(audit, { action, actorId: actor.id, entityType: 'feeCharge', entityId: id, ip: ctx.ip, requestId: ctx.requestId, metadata });
++
++  async function checkAudience(audience: Audience): Promise<Audience> {
++    if (audience.kind === 'CLASS') {
++      if (!(await structure.findClass(audience.classId))) throw fail('audience.classId', 'Class not found');
++      return audience;
++    }
++    if (audience.kind === 'ARM') {
++      if (!(await structure.findArm(audience.classArmId))) throw fail('audience.classArmId', 'Class arm not found');
++      return audience;
++    }
++    const ids = [...new Set(audience.studentIds)];
++    if (ids.length === 0 || ids.length > MAX_PICKED_STUDENTS) throw fail('audience.studentIds', `Pick 1 to ${MAX_PICKED_STUDENTS} students`);
++    const found = await students.findManyByUserIds(ids);
++    if (found.length !== ids.length) throw fail('audience.studentIds', 'One or more students were not found');
++    return { kind: 'STUDENTS', studentIds: ids };
++  }
++
++  async function views(records: FeeChargeRecord[]) {
++    const termNames = new Map(
++      await Promise.all([...new Set(records.map((r) => r.termId))].map(async (id) => [id, (await sessions.findTerm(id))?.name ?? ''] as const)),
++    );
++    const classIds = records.flatMap((r) => (r.audience.kind === 'CLASS' ? [r.audience.classId] : []));
++    const armIds = records.flatMap((r) => (r.audience.kind === 'ARM' ? [r.audience.classArmId] : []));
++    const arms = await structure.armsByIds(armIds);
++    const classes = await structure.classesByIds([...classIds, ...[...arms.values()].map((a) => a.classId)]);
++    const counts = new Map(await Promise.all(records.map(async (r) => [r.id, await invoices.countForStructure(r.id)] as const)));
++    return records.map((r) => {
++      const a = r.audience;
++      const arm = a.kind === 'ARM' ? arms.get(a.classArmId) : undefined;
++      const audience =
++        a.kind === 'CLASS' ? { kind: a.kind, classId: a.classId, classArmId: null, studentIds: [] as string[], label: classes.get(a.classId)?.name ?? '' }
++        : a.kind === 'ARM' ? { kind: a.kind, classId: null, classArmId: a.classArmId, studentIds: [] as string[], label: arm ? `${classes.get(arm.classId)?.name ?? ''} ${arm.name}`.trim() : '' }
++        : { kind: a.kind, classId: null, classArmId: null, studentIds: a.studentIds, label: `${a.studentIds.length} selected student${a.studentIds.length === 1 ? '' : 's'}` };
++      return {
++        id: r.id, title: r.title, termId: r.termId, termName: termNames.get(r.termId) ?? '', items: r.items, totalKobo: r.totalKobo,
++        dueDate: r.dueDate, blocksReports: r.blocksReports, audience, status: r.status,
++        approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null, issuedAt: r.issuedAt ? r.issuedAt.toISOString() : null,
++        invoicesIssued: counts.get(r.id) ?? 0, createdAt: r.createdAt.toISOString(),
++      };
++    });
++  }
++  const viewOf = async (r: FeeChargeRecord) => {
++    const [v] = await views([r]);
++    if (!v) throw new Error('Fee charge view could not be built');
++    return v;
++  };
++
++  async function mustFind(id: string): Promise<FeeChargeRecord> {
++    const found = await repo.findById(id);
++    if (!found) throw new AppError('NOT_FOUND');
++    return found;
++  }
++
++  /** Everyone who should be billed, each with the arm they sit in this session. */
++  async function targetsOf(charge: FeeChargeRecord, sessionId: string): Promise<{ targets: { studentId: string; classArmId: string }[]; notEnrolled: number }> {
++    const a = charge.audience;
++    let placed: { studentId: string; classArmId: string }[];
++    let notEnrolled = 0;
++    if (a.kind === 'CLASS') {
++      const { items: arms } = await structure.listArms({ classId: a.classId }, { page: 1, limit: 500, sort: 'name' });
++      placed = (await Promise.all(arms.map((arm) => enrolments.listForSession(sessionId, arm.id, MAX_STUDENTS_PER_RUN)))).flat();
++    } else if (a.kind === 'ARM') {
++      placed = await enrolments.listForSession(sessionId, a.classArmId, MAX_STUDENTS_PER_RUN);
++    } else {
++      const map = await enrolments.forStudents(a.studentIds, sessionId);
++      placed = a.studentIds.flatMap((id) => {
++        const e = map.get(id);
++        return e ? [{ studentId: id, classArmId: e.classArmId }] : [];
++      });
++      notEnrolled = a.studentIds.length - placed.length;
++    }
++    const active = new Set((await students.findManyByUserIds(placed.map((p) => p.studentId))).filter((s) => s.status === 'ACTIVE').map((s) => s.userId));
++    return { targets: placed.filter((p) => active.has(p.studentId)), notEnrolled };
++  }
++
++  return {
++    async list(input: { page: number; limit: number; termId?: string | undefined; status?: FeeChargeStatus | undefined }) {
++      const { page, limit, ...filter } = input;
++      const { items, total } = await repo.list(filter, { page, limit });
++      return { items: await views(items), total };
++    },
++
++    async get(id: string) {
++      return viewOf(await mustFind(id));
++    },
++
++    async create(
++      actor: Actor,
++      input: { termId: string; title: string; items: { name: string; amountKobo: number }[]; dueDate: string; blocksReports: boolean; audience: Audience },
++      ctx: Context,
++    ) {
++      const term = await sessions.findTerm(input.termId);
++      if (!term) throw fail('termId', 'Term not found');
++      if (term.locked) throw new AppError('CONFLICT', { message: 'This term is closed' });
++      checkDueDate(input.dueDate);
++      const { items, totalKobo } = cleanItems(input.items);
++      const audience = await checkAudience(input.audience);
++
++      const created = await repo.create({
++        title: sanitizeText(input.title), termId: term.id, sessionId: term.sessionId, items, totalKobo, dueDate: input.dueDate,
++        blocksReports: input.blocksReports, audience, createdBy: actor.id,
++      });
++      await notifier.notify({
++        userIds: await users.findIdsByRoles([ROLES.SUPER_ADMIN]), type: 'FEE_CHARGE_PENDING', title: 'An extra charge needs your approval',
++        body: `"${created.title}" is waiting for approval.`, data: { feeChargeId: created.id }, email: false,
++      });
++      await log('FEE_CHARGE_CREATED', actor, ctx, created.id, { title: created.title, totalKobo, audience: audience.kind });
++      return viewOf(created);
++    },
++
++    /** Drafts only: once approved, a charge is frozen. */
++    async update(
++      actor: Actor, id: string,
++      patch: { title?: string | undefined; items?: { name: string; amountKobo: number }[] | undefined; dueDate?: string | undefined; blocksReports?: boolean | undefined; audience?: Audience | undefined },
++      ctx: Context,
++    ) {
++      if (Object.values(patch).every((v) => v === undefined)) throw fail('body', 'Nothing to update');
++      const before = await mustFind(id);
++      if (before.status !== FEE_CHARGE_STATUS.DRAFT) throw new AppError('CONFLICT', { message: 'An approved charge is frozen. Ask the super admin to reopen it, or create a new one.' });
++      if (patch.dueDate !== undefined) checkDueDate(patch.dueDate);
++      const cleaned = patch.items ? cleanItems(patch.items) : null;
++      const audience = patch.audience ? await checkAudience(patch.audience) : undefined;
++
++      const updated = await repo.updateDraft(id, {
++        ...(patch.title !== undefined ? { title: sanitizeText(patch.title) } : {}),
++        ...(cleaned ? { items: cleaned.items, totalKobo: cleaned.totalKobo } : {}),
++        ...(patch.dueDate !== undefined ? { dueDate: patch.dueDate } : {}),
++        ...(patch.blocksReports !== undefined ? { blocksReports: patch.blocksReports } : {}),
++        ...(audience ? { audience } : {}),
++      });
++      if (!updated) throw new AppError('CONFLICT', { message: 'This charge was just approved. Reload it.' });
++      await log('FEE_CHARGE_UPDATED', actor, ctx, id, { before: { totalKobo: before.totalKobo }, after: { totalKobo: updated.totalKobo } });
++      return viewOf(updated);
++    },
++
++    async remove(actor: Actor, id: string, ctx: Context): Promise<void> {
++      const before = await mustFind(id);
++      if (!(await repo.deleteDraft(id))) throw new AppError('CONFLICT', { message: 'Only a draft can be deleted' });
++      await log('FEE_CHARGE_DELETED', actor, ctx, id, { title: before.title });
++    },
++
++    async approve(actor: Actor, id: string, ctx: Context) {
++      const existing = await mustFind(id);
++      const updated = await repo.transition(id, FEE_CHARGE_STATUS.DRAFT, FEE_CHARGE_STATUS.APPROVED, { by: actor.id, at: new Date() });
++      if (!updated) {
++        if (existing.status === FEE_CHARGE_STATUS.APPROVED) return viewOf(existing);
++        throw new AppError('CONFLICT');
++      }
++      await notifier.notify({
++        userIds: [...new Set([existing.createdBy, ...(await users.findIdsByRoles([ROLES.ADMIN]))])], type: 'FEE_CHARGE_APPROVED',
++        title: 'An extra charge was approved', body: `"${updated.title}" can now be issued as invoices.`, data: { feeChargeId: id }, email: false,
++      });
++      await log('FEE_CHARGE_APPROVED', actor, ctx, id, { totalKobo: updated.totalKobo });
++      return viewOf(updated);
++    },
++
++    /** The escape hatch for a mistake, allowed only while nothing has been issued. */
++    async revokeApproval(actor: Actor, id: string, ctx: Context) {
++      const existing = await mustFind(id);
++      if (existing.issuedAt || (await invoices.existsForStructure(id))) throw new AppError('CONFLICT', { message: 'Invoices were already issued from this charge, so it cannot be reopened.' });
++      const updated = await repo.transition(id, FEE_CHARGE_STATUS.APPROVED, FEE_CHARGE_STATUS.DRAFT, null);
++      if (!updated) throw new AppError('CONFLICT', { message: 'This charge is not approved' });
++      await log('FEE_CHARGE_APPROVAL_REVOKED', actor, ctx, id, {});
++      return viewOf(updated);
++    },
++
++    /**
++     * Makes one invoice per student for an approved charge. Safe to run again: students who already
++     * have it are skipped, so a student who joins the class later can still be billed.
++     */
++    async issue(actor: Actor, id: string, ctx: Context) {
++      const charge = await mustFind(id);
++      if (charge.status !== FEE_CHARGE_STATUS.APPROVED) throw new AppError('CONFLICT', { message: 'The super admin must approve this charge before it can be issued' });
++      const term = await sessions.findTerm(charge.termId);
++      if (!term) throw new AppError('NOT_FOUND');
++      if (term.locked) throw new AppError('CONFLICT', { message: 'This term is closed' });
++      if (charge.dueDate < addDays(schoolToday(), -30)) throw fail('dueDate', 'The due date is too far in the past. Create a new charge with a later date.');
++
++      const { targets, notEnrolled } = await targetsOf(charge, term.sessionId);
++      const arms = await structure.armsByIds(targets.map((t) => t.classArmId));
++
++      let created = 0;
++      let skipped = 0;
++      let failed = 0;
++      const billed: string[] = [];
++      for (const target of targets) {
++        const arm = arms.get(target.classArmId);
++        if (!arm) { failed += 1; continue; }
++        try {
++          // The invoice and its first ledger entry are written together or not at all.
++          await withTransaction(async (session) => {
++            const invoice = await invoices.create(
++              {
++                studentId: target.studentId, classId: arm.classId, classArmId: target.classArmId, sessionId: term.sessionId, termId: term.id,
++                feeStructureId: charge.id, items: charge.items, totalKobo: charge.totalKobo, dueDate: charge.dueDate, createdBy: actor.id,
++                title: charge.title, blocksReports: charge.blocksReports,
++              },
++              session,
++            );
++            await ledger.insert({ invoiceId: invoice.id, studentId: target.studentId, type: 'INVOICE', amountKobo: charge.totalKobo, note: charge.title, createdBy: actor.id }, session);
++          });
++          created += 1;
++          billed.push(target.studentId);
++        } catch (err) {
++          if (isDuplicateKeyError(err)) skipped += 1;
++          else { failed += 1; logger.error({ err, studentId: target.studentId }, 'extra charge invoice failed for a student'); }
++        }
++      }
++
++      if (created + skipped > 0) await repo.markIssued(charge.id, new Date());
++      if (billed.length > 0) {
++        await notifier.notify({
++          userIds: await links.activeParentIdsOf(billed), type: 'INVOICE_ISSUED', title: `New charge: ${charge.title}`,
++          body: `An additional charge for ${term.name} is now available. Due ${charge.dueDate}.`, data: { termId: term.id, feeChargeId: charge.id }, email: false,
++        });
++      }
++      await log('FEE_CHARGE_ISSUED', actor, ctx, charge.id, { created, skipped, failed, notEnrolled, totalKobo: charge.totalKobo });
++      return { students: targets.length, created, skipped, failed, notEnrolled, totalKobo: charge.totalKobo };
++    },
++  };
++}
++
++export type FeeChargeService = ReturnType<typeof createFeeChargeService>;
+diff --git a/src/modules/fees/fees.module.ts b/src/modules/fees/fees.module.ts
+index cf674e7..3cd7022 100644
+--- a/src/modules/fees/fees.module.ts
++++ b/src/modules/fees/fees.module.ts
+@@ -24,4 +24,7 @@ import { createConfirmationService } from './confirmation.service';
+ import { feeStructureRepository } from './feeStructure.repository';
+ import { createFeeStructureService } from './feeStructure.service';
++import { feeChargeRepository } from './feeCharge.repository';
++import { createFeeChargeService } from './feeCharge.service';
++import { createFeeChargeRouter } from './feeCharge.routes';
+ import { createFeesRouter } from './fees.routes';
+ import { createFinanceReports } from './finance.reports';
+@@ -59,4 +62,8 @@ export function createFeesModule(deps: {
+     users: userRepository, notifier, audit,
+   });
++  const charges = createFeeChargeService({
++    repo: feeChargeRepository, invoices: invoiceRepository, ledger: ledgerRepository, sessions: sessionRepository, structure: structureRepository,
++    enrolments: enrolmentRepository, students: studentRepository, links: linkRepository, users: userRepository, notifier, audit,
++  });
+   const invoices = createInvoiceService({
+     invoices: invoiceRepository, structures: feeStructureRepository, ledger: ledgerRepository, payments: paymentRepository,
+@@ -117,4 +124,5 @@ export function createFeesModule(deps: {
+   const router = Router();
+   router.use(createOnlineRouter({ online, analytics, ops, refunds, triggerReconcile, authenticate }));
++  router.use(createFeeChargeRouter({ charges, authenticate }));
+   router.use(createFeesRouter({ structures, invoices, payments, collections, authenticate }));
+ 
+diff --git a/src/modules/fees/fees.schema.ts b/src/modules/fees/fees.schema.ts
+index 7e84a67..c2a2629 100644
+--- a/src/modules/fees/fees.schema.ts
++++ b/src/modules/fees/fees.schema.ts
+@@ -72,4 +72,5 @@ const invoiceView = z.object({
+   id: z.string(), number: z.string(), studentId: z.string(), studentName: z.string(), admissionNo: z.string(), classArmId: z.string(), classArmName: z.string(),
+   termId: z.string(), termName: z.string(), items: z.array(item), totalKobo: num, paidKobo: num, balanceKobo: num, creditKobo: num,
++  kind: z.enum(['TERM_FEES', 'ADDITIONAL']), title: z.string().nullable(),
+   status: z.enum(invoiceStatus), dueDate: z.string(), overdue: z.boolean(), createdAt: iso,
+ });
+diff --git a/src/modules/fees/invoice.repository.ts b/src/modules/fees/invoice.repository.ts
+index f236336..6aeac5a 100644
+--- a/src/modules/fees/invoice.repository.ts
++++ b/src/modules/fees/invoice.repository.ts
+@@ -19,4 +19,8 @@ interface InvoiceDocument {
+   balanceKobo: number;
+   status: InvoiceStatus; dueDate: string; lastReminderAt: Date | null; createdBy: Types.ObjectId; createdAt: Date; updatedAt: Date;
++  /** Set only on invoices that come from an extra charge. feeStructureId then holds the charge's id. */
++  title?: string | null;
++  /** False for extra charges that must not hold back report cards. Missing on older invoices, which means true. */
++  blocksReports?: boolean;
+ }
+ type Row = InvoiceDocument & { _id: Types.ObjectId };
+@@ -36,4 +40,6 @@ const schema = new mongoose.Schema<InvoiceDocument>(
+     dueDate: { type: String, required: true },
+     lastReminderAt: { type: Date, default: null },
++    title: { type: String, default: null, maxlength: 100 },
++    blocksReports: { type: Boolean, default: true },
+     createdBy: { type: mongoose.Schema.Types.ObjectId, required: true },
+   },
+@@ -55,4 +61,6 @@ export interface InvoiceRecord {
+   feeStructureId: string; items: FeeItem[]; totalKobo: number; balanceKobo: number; status: InvoiceStatus;
+   dueDate: string; lastReminderAt: Date | null; createdAt: Date;
++  /** The charge title for an extra charge, null for a term fee invoice. */
++  title: string | null;
+ }
+ export type AdjustResult = { ok: true; invoice: InvoiceRecord } | { ok: false; reason: 'MISSING' | 'GUARD' };
+@@ -64,5 +72,5 @@ const toRecord = (r: Row): InvoiceRecord => ({
+   feeStructureId: r.feeStructureId.toString(), items: r.items.map((i) => ({ name: i.name, amountKobo: i.amountKobo })),
+   totalKobo: r.totalKobo, balanceKobo: r.balanceKobo, status: r.status, dueDate: r.dueDate,
+-  lastReminderAt: r.lastReminderAt ?? null, createdAt: r.createdAt,
++  lastReminderAt: r.lastReminderAt ?? null, createdAt: r.createdAt, title: r.title ?? null,
+ });
+ 
+@@ -84,5 +92,5 @@ function queryOf(filter: InvoiceFilter): Record<string, unknown> {
+ 
+ async function create(
+-  data: { studentId: string; classId: string; classArmId: string; sessionId: string; termId: string; feeStructureId: string; items: FeeItem[]; totalKobo: number; dueDate: string; createdBy: string },
++  data: { studentId: string; classId: string; classArmId: string; sessionId: string; termId: string; feeStructureId: string; items: FeeItem[]; totalKobo: number; dueDate: string; createdBy: string; title?: string; blocksReports?: boolean },
+   session: ClientSession,
+ ): Promise<InvoiceRecord> {
+@@ -140,7 +148,10 @@ const existsForStructure = async (feeStructureId: string): Promise<boolean> =>
+   OBJECT_ID.test(feeStructureId) && (await InvoiceModel.exists({ feeStructureId })) !== null;
+ 
++const countForStructure = async (feeStructureId: string): Promise<number> =>
++  OBJECT_ID.test(feeStructureId) ? InvoiceModel.countDocuments({ feeStructureId }) : 0;
++
+ async function outstandingForStudent(studentId: string, termId: string): Promise<number> {
+   if (!OBJECT_ID.test(studentId) || !OBJECT_ID.test(termId)) return 0;
+-  const rows = await InvoiceModel.find({ studentId, termId, balanceKobo: { $gt: 0 } }, { balanceKobo: 1 }).lean<Row[]>();
++  const rows = await InvoiceModel.find({ studentId, termId, balanceKobo: { $gt: 0 }, blocksReports: { $ne: false } }, { balanceKobo: 1 }).lean<Row[]>();
+   return rows.reduce((sum, r) => sum + r.balanceKobo, 0);
+ }
+@@ -219,5 +230,5 @@ async function totalsByClassArm(filter: { termId: string }): Promise<{ classArmI
+ 
+ export const invoiceRepository = {
+-  create, findById, findManyByIds, list, adjustBalance, existsForStructure,
++  create, findById, findManyByIds, list, adjustBalance, existsForStructure, countForStructure,
+    outstandingForStudent, defaulters, dueForReminder, markReminded, idsForScope , totalsByClassArm
+ };
+\ No newline at end of file
+diff --git a/src/modules/fees/invoice.service.ts b/src/modules/fees/invoice.service.ts
+index 1384761..341d4e6 100644
+--- a/src/modules/fees/invoice.service.ts
++++ b/src/modules/fees/invoice.service.ts
+@@ -58,4 +58,5 @@ export function createInvoiceService(deps: {
+         termId: r.termId, termName: terms.get(r.termId) ?? '', items: r.items, totalKobo: r.totalKobo,
+         paidKobo: r.totalKobo - r.balanceKobo, balanceKobo: r.balanceKobo, creditKobo: r.balanceKobo < 0 ? -r.balanceKobo : 0,
++        kind: r.title ? ('ADDITIONAL' as const) : ('TERM_FEES' as const), title: r.title,
+         status: r.status, dueDate: r.dueDate, overdue: r.balanceKobo > 0 && r.dueDate < today, createdAt: r.createdAt.toISOString(),
+       };
+diff --git a/src/openapi/index.ts b/src/openapi/index.ts
+index ac73dea..0b2b656 100644
+--- a/src/openapi/index.ts
++++ b/src/openapi/index.ts
+@@ -28,4 +28,5 @@ import { registerDashboardOperations } from '../modules/dashboards/dashboard.sch
+ import { registerFeeOperations } from '../modules/fees/fees.schema';
+ import { registerOnlineOperations } from '../modules/fees/online.schema';
++import { registerFeeChargeOperations } from '../modules/fees/feeCharge.schema';
+ 
+ /** Each phase adds its module's register function here. */
+@@ -59,4 +60,5 @@ export function createOperationRegistry(): OpenApiRegistry {
+   registerFeeOperations(registry);
+   registerOnlineOperations(registry);
++  registerFeeChargeOperations(registry);
+   
+   return registry;

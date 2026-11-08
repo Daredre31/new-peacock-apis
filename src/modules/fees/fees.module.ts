@@ -23,6 +23,9 @@ import { createCollectionsService } from './collections.service';
 import { createConfirmationService } from './confirmation.service';
 import { feeStructureRepository } from './feeStructure.repository';
 import { createFeeStructureService } from './feeStructure.service';
+import { feeChargeRepository } from './feeCharge.repository';
+import { createFeeChargeService } from './feeCharge.service';
+import { createFeeChargeRouter } from './feeCharge.routes';
 import { createFeesRouter } from './fees.routes';
 import { createFinanceReports } from './finance.reports';
 import { createReportGate, registerFinanceHooks } from './finance.hooks';
@@ -57,6 +60,10 @@ export function createFeesModule(deps: {
   const structures = createFeeStructureService({
     repo: feeStructureRepository, invoices: invoiceRepository, sessions: sessionRepository, structure: structureRepository,
     users: userRepository, notifier, audit,
+  });
+  const charges = createFeeChargeService({
+    repo: feeChargeRepository, invoices: invoiceRepository, ledger: ledgerRepository, sessions: sessionRepository, structure: structureRepository,
+    enrolments: enrolmentRepository, students: studentRepository, links: linkRepository, users: userRepository, notifier, audit,
   });
   const invoices = createInvoiceService({
     invoices: invoiceRepository, structures: feeStructureRepository, ledger: ledgerRepository, payments: paymentRepository,
@@ -116,6 +123,7 @@ export function createFeesModule(deps: {
 
   const router = Router();
   router.use(createOnlineRouter({ online, analytics, ops, refunds, triggerReconcile, authenticate }));
+  router.use(createFeeChargeRouter({ charges, authenticate }));
   router.use(createFeesRouter({ structures, invoices, payments, collections, authenticate }));
 
   return {

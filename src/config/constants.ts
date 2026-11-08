@@ -1,3 +1,6 @@
+/** The school's name as it appears in emails, the API docs and the default settings. */
+export const SCHOOL_NAME = 'Peacock Royal Academy';
+
 /** The five fixed roles. Values are UPPER_SNAKE, as the API conventions require. */
 export const ROLES = {
   SUPER_ADMIN: 'SUPER_ADMIN',
@@ -88,6 +91,10 @@ export const PERMISSIONS = {
   'fee-structures:read': [SA, AD],
   'fee-structures:write': [AD],
   'fee-structures:approve': [SA],
+  'fee-charges:read': [SA, AD],
+  'fee-charges:write': [AD],
+  'fee-charges:approve': [SA],
+  'fee-charges:issue': [AD],
   'invoices:generate': [AD],
   'invoices:read': [SA, AD, PA],
   'payments:initialize': [PA],

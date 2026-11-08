@@ -3,7 +3,7 @@ import { AppError } from '../../common/errors/AppError';
 import { parseIdentifier } from '../../common/utils/identifier';
 import { logger } from '../../common/utils/logger';
 import { assertPasswordPolicy } from '../../common/utils/passwordPolicy';
-import { AUTH_LOCKOUT, USER_STATUS } from '../../config/constants';
+import { AUTH_LOCKOUT, SCHOOL_NAME, USER_STATUS } from '../../config/constants';
 import type { Mailer } from '../../integrations/mailer';
 import type { AuditEntry, AuditPort } from '../audit/audit.port';
 import type { userRepository } from '../users/user.repository';
@@ -138,7 +138,7 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
       await record({ action: 'AUTH_PASSWORD_CHANGED', actorId: user.id, ip: input.ip, requestId: input.requestId });
       await notify(
         user.email,
-        'Your Peacock Academy password was changed',
+        `Your ${SCHOOL_NAME} password was changed`,
         'Your password was just changed. If this was not you, contact the school administrator immediately.',
       );
       return { session };
@@ -149,7 +149,7 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
       const link = `${deps.frontendOrigin}/set-password#token=${token}`;
       return notify(
         input.email,
-        'Welcome to Peacock Academy: choose your password',
+        `Welcome to ${SCHOOL_NAME}: choose your password`,
         `Hello ${input.name},\n\nAn account was created for you. Use this link to choose your password. It works once and expires in ${Math.round(inviteTtl / 86400)} days:\n\n${link}\n\nIf you were not expecting this, ignore this email.`,
       );
     },
@@ -171,7 +171,7 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
       const link = `${deps.frontendOrigin}/reset-password#token=${token}`;
       await notify(
         user.email,
-        'Reset your Peacock Academy password',
+        `Reset your ${SCHOOL_NAME} password`,
         `Use this link to choose a new password. It works once and expires in ${Math.round(ttl / 60)} minutes:\n\n${link}\n\nIf you did not ask for this, ignore this email: your password has not changed.`,
       );
       await record({ action: 'AUTH_PASSWORD_RESET_REQUESTED', actorId: user.id, ip: input.ip, requestId: input.requestId });
@@ -207,7 +207,7 @@ export function createCredentialsService(deps: CredentialsServiceDeps) {
       await record({ action: 'AUTH_PASSWORD_RESET', actorId: user.id, ip: input.ip, requestId: input.requestId });
       await notify(
         user.email,
-        'Your Peacock Academy password was changed',
+        `Your ${SCHOOL_NAME} password was changed`,
         'Your password was just reset. If this was not you, contact the school administrator immediately.',
       );
     },
