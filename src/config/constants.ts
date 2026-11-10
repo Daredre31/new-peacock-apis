@@ -82,6 +82,7 @@ export const PERMISSIONS = {
   'results:moderate': [AD],
   'results:publish': [AD],
   'results:lock': [SA], // lock and unlock
+  'results:annual': [SA, AD], // the yearly average sheet for a class
 
   // ---- CBT
   'cbt:manage': [TE], // create, upload questions, release results

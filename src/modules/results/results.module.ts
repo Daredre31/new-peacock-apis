@@ -15,6 +15,7 @@ import { linkRepository } from '../users/link.repository';
 import { staffRepository } from '../users/staff.repository';
 import { studentRepository } from '../users/student.repository';
 import { userRepository } from '../users/user.repository';
+import { createAnnualResultsService } from './annualResults.service';
 import { reportCardRepository } from './reportCard.repository';
 import { createReportCardsService } from './reportCards.service';
 import { createResultsContext } from './results.context';
@@ -54,9 +55,14 @@ export function createResultsModule(deps: {
     
   });
 
+  const annual = createAnnualResultsService({
+    scores: scoreRepository, settings, sessions: sessionRepository, structure: structureRepository,
+    enrolments: enrolmentRepository, students: studentRepository,
+  });
+
   return {
     router: createResultsRouter({
-      scoresService, importService, resultsService, reportCardsService, studentResults, authenticate: deps.auth.middleware.authenticate,
-    }), ctx
+      scoresService, importService, resultsService, reportCardsService, studentResults, annual, authenticate: deps.auth.middleware.authenticate,
+    }), ctx, annual,
   };
 }

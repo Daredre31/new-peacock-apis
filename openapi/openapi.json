@@ -34051,6 +34051,335 @@
         }
       }
     },
+    "/results/annual/{classArmId}/{sessionId}": {
+      "get": {
+        "operationId": "getAnnualResults",
+        "summary": "The yearly average for a class in a session: each subject averaged over the terms, then the subjects averaged. Published scores only. A student is complete only with published results in every term",
+        "tags": [
+          "results"
+        ],
+        "x-roles": [
+          "SUPER_ADMIN",
+          "ADMIN"
+        ],
+        "parameters": [
+          {
+            "name": "classArmId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            }
+          },
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sheet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "session": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "classArm": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "terms": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "locked": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "locked"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "subjects": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "code": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "code"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "complete": {
+                          "type": "boolean"
+                        },
+                        "students": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "studentId": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "admissionNo": {
+                                "type": "string"
+                              },
+                              "average": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "grade": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "remark": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "position": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "termsWithResults": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "complete": {
+                                "type": "boolean"
+                              },
+                              "missingTermIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "termAverages": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "termId": {
+                                      "type": "string"
+                                    },
+                                    "average": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "termId",
+                                    "average"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "subjects": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "subjectId": {
+                                      "type": "string"
+                                    },
+                                    "average": {
+                                      "type": "number"
+                                    },
+                                    "termsCounted": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "subjectId",
+                                    "average",
+                                    "termsCounted"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "studentId",
+                              "name",
+                              "admissionNo",
+                              "average",
+                              "grade",
+                              "remark",
+                              "position",
+                              "termsWithResults",
+                              "complete",
+                              "missingTermIds",
+                              "termAverages",
+                              "subjects"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "session",
+                        "classArm",
+                        "terms",
+                        "subjects",
+                        "complete",
+                        "students"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/scores/grid": {
       "get": {
         "operationId": "getScoreGrid",

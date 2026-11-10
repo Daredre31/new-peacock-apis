@@ -27,17 +27,12 @@ const shutdown = createShutdown({
   exit: (code) => process.exit(code),
   log: logger,
   steps: [
-    {
-      name: 'http',
-      run: async () => {
-        if (server?.listening) await closeHttpServer(server, HTTP_DRAIN_MS);
-      },
-    },
-    { name: 'redis', run: disconnectRedis },
-    { name: 'mongodb', run: disconnectMongo },
-   { name: 'jobs', run: async () => { await jobs?.close(); await reportJobs?.close(); await paymentJobs?.close(); } },
-    { name: 'bullmq-redis', run: async () => { if (bullmq) await disconnectRedisClient(bullmq); } },
-  ],
+  { name: 'http', run: async () => { if (server?.listening) await closeHttpServer(server, HTTP_DRAIN_MS); } },
+  { name: 'jobs', run: async () => { await jobs?.close(); await reportJobs?.close(); await paymentJobs?.close(); } },
+  { name: 'bullmq-redis', run: async () => { if (bullmq) await disconnectRedisClient(bullmq); } },
+  { name: 'redis', run: disconnectRedis },
+  { name: 'mongodb', run: disconnectMongo },
+],
 });
 
 function stop(reason: string, exitCode = 0): Promise<void> {

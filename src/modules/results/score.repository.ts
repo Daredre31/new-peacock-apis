@@ -75,6 +75,18 @@ async function forStudent(studentId: string, termId?: string): Promise<ScoreReco
   return rows.map(toRecord);
 }
 
+/**
+ * Published scores only, for the yearly average. Matched by student and term, not by class arm,
+ * so a student who changed arm during the session keeps all of their results.
+ */
+async function publishedForStudentsInTerms(studentIds: string[], termIds: string[]): Promise<ScoreRecord[]> {
+  const students = [...new Set(studentIds)].filter((id) => OBJECT_ID.test(id));
+  const terms = [...new Set(termIds)].filter((id) => OBJECT_ID.test(id));
+  if (students.length === 0 || terms.length === 0) return [];
+  const rows = await ScoreModel.find({ studentId: { $in: students }, termId: { $in: terms }, status: SCORE_STATUS.PUBLISHED }).lean<Row[]>();
+  return rows.map(toRecord);
+}
+
 const anyExists = async (): Promise<boolean> => (await ScoreModel.exists({})) !== null;
 const lockedExists = async (classArmId: string, termId: string): Promise<boolean> =>
   (await ScoreModel.exists({ classArmId, termId, locked: true })) !== null;
@@ -122,4 +134,4 @@ async function setLocked(classArmId: string, termId: string, locked: boolean): P
   return result.modifiedCount;
 }
 
-export const scoreRepository = { forGrid, forArmTerm, forStudent, anyExists, lockedExists, saveMany, transition, stampMany, setLocked };
+export const scoreRepository = { forGrid, forArmTerm, forStudent, publishedForStudentsInTerms, anyExists, lockedExists, saveMany, transition, stampMany, setLocked };

@@ -5,9 +5,10 @@ import { authorize } from '../../common/middleware/authorize';
 import { validate, type Validated } from '../../common/middleware/validate';
 import { sendSuccess } from '../../common/utils/apiResponse';
 import { contextOf, requireUser } from '../../common/utils/request';
+import type { AnnualResultsService } from './annualResults.service';
 import type { ReportCardsService } from './reportCards.service';
 import {
-  armTermSchemas, confirmImportSchemas, gridSchemas, importQuerySchemas, moderateSchemas, reportCardPdfSchemas,
+  annualSchemas, armTermSchemas, confirmImportSchemas, gridSchemas, importQuerySchemas, moderateSchemas, reportCardPdfSchemas,
   saveGridSchemas, saveReportCardsSchemas, studentResultsSchemas, submitSchemas, unlockSchemas,
 } from './results.schema';
 import type { ResultsService } from './results.service';
@@ -20,9 +21,9 @@ const CSV_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-ex
 
 export function createResultsRouter(deps: {
   scoresService: ScoresService; importService: ScoresImportService; resultsService: ResultsService;
-  reportCardsService: ReportCardsService; studentResults: StudentResultsService; authenticate: RequestHandler;
+  reportCardsService: ReportCardsService; studentResults: StudentResultsService; annual: AnnualResultsService; authenticate: RequestHandler;
 }): Router {
-  const { scoresService, importService, resultsService, reportCardsService, studentResults, authenticate: auth } = deps;
+  const { scoresService, importService, resultsService, reportCardsService, studentResults, annual, authenticate: auth } = deps;
   const router = Router();
 
   // ---- scores (the subject teacher)
@@ -62,6 +63,10 @@ export function createResultsRouter(deps: {
   });
 
   // ---- results (admin and super admin)
+  router.get('/results/annual/:classArmId/:sessionId', auth, authorize('results:annual'), validate(annualSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof annualSchemas>;
+    sendSuccess(res, await annual.forArm(params.classArmId, params.sessionId));
+  });
   router.get('/results/:classArmId/:termId', auth, authorize('results:sheet'), validate(armTermSchemas), async (req, res) => {
     const { params } = req.validated as Validated<typeof armTermSchemas>;
     sendSuccess(res, await resultsService.sheet(params.classArmId, params.termId));
