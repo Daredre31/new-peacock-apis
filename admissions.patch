@@ -1,0 +1,980 @@
+diff --git a/src/config/constants.ts b/src/config/constants.ts
+index 9582611..85c1bcd 100644
+--- a/src/config/constants.ts
++++ b/src/config/constants.ts
+@@ -2,4 +2,7 @@
+ export const SCHOOL_NAME = 'Peacock Royal Academy';
+ 
++/** Paystack references for admission application fees start with this. Fee payments use PCK-. */
++export const ADMISSION_REFERENCE_PREFIX = 'ADM-';
++
+ /** The five fixed roles. Values are UPPER_SNAKE, as the API conventions require. */
+ export const ROLES = {
+@@ -92,4 +95,7 @@ export const PERMISSIONS = {
+   'fee-structures:write': [AD],
+   'fee-structures:approve': [SA],
++  'admissions:read': [SA, AD],
++  'admissions:review': [SA, AD],
++  'admissions:settings': [SA],
+   'fee-charges:read': [SA, AD],
+   'fee-charges:write': [AD],
+diff --git a/src/modules/admissions/admission.routes.ts b/src/modules/admissions/admission.routes.ts
+new file mode 100644
+index 0000000..5234523
+--- /dev/null
++++ b/src/modules/admissions/admission.routes.ts
+@@ -0,0 +1,77 @@
++import { Router, type RequestHandler } from 'express';
++import { ipKeyGenerator } from 'express-rate-limit';
++import multer from 'multer';
++import { AppError } from '../../common/errors/AppError';
++import { authorize, publicRoute } from '../../common/middleware/authorize';
++import { createRateLimiter, type RedisLike } from '../../common/middleware/rateLimiter';
++import { validate, type Validated } from '../../common/middleware/validate';
++import { buildPageMeta, sendCreated, sendSuccess } from '../../common/utils/apiResponse';
++import { contextOf, requireUser } from '../../common/utils/request';
++import type { AdmissionService } from './admission.service';
++import {
++  acceptSchemas, applicationIdSchemas, applySchemas, declineSchemas, identifySchemas, listApplicationsSchemas, photoSchemas, updateSettingsSchemas,
++} from './admission.schema';
++
++const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 4 } });
++const ipKey = (req: { ip?: string | undefined }): string => ipKeyGenerator(req.ip ?? 'unknown');
++
++export function createAdmissionRouter(deps: { service: AdmissionService; authenticate: RequestHandler; redis: RedisLike | null }): Router {
++  const { service, authenticate: auth, redis } = deps;
++  const router = Router();
++  const none = validate({});
++
++  // Anyone on the internet can reach these, so each one has its own limit.
++  const applyLimiter = createRateLimiter({ name: 'admission-apply', windowMs: 60 * 60_000, limit: 10, key: ipKey, redis, onRedisFailure: 'use-memory' });
++  const lookupLimiter = createRateLimiter({ name: 'admission-lookup', windowMs: 15 * 60_000, limit: 40, key: ipKey, redis, onRedisFailure: 'use-memory' });
++  const photoLimiter = createRateLimiter({ name: 'admission-photo', windowMs: 60 * 60_000, limit: 20, key: ipKey, redis, onRedisFailure: 'use-memory' });
++
++  // ---- public
++  router.get('/public/admissions/info', publicRoute(), lookupLimiter, none, async (_req, res) => { sendSuccess(res, await service.info()); });
++  router.post('/public/admissions', publicRoute(), applyLimiter, validate(applySchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof applySchemas>;
++    sendCreated(res, await service.apply(body, contextOf(req)));
++  });
++  router.post('/public/admissions/pay', publicRoute(), lookupLimiter, validate(identifySchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof identifySchemas>;
++    sendSuccess(res, await service.pay(body));
++  });
++  router.post('/public/admissions/status', publicRoute(), lookupLimiter, validate(identifySchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof identifySchemas>;
++    sendSuccess(res, await service.status(body));
++  });
++  router.post('/public/admissions/photo', publicRoute(), photoLimiter, upload.single('file'), validate(photoSchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof photoSchemas>;
++    if (!req.file) throw new AppError('VALIDATION_ERROR', { details: [{ field: 'file', issue: 'Choose a photo to upload' }] });
++    sendSuccess(res, await service.uploadPhoto({ ...body, image: req.file.buffer }));
++  });
++
++  // ---- staff. The fixed paths come before /admissions/:id.
++  router.get('/admissions', auth, authorize('admissions:read'), validate(listApplicationsSchemas), async (req, res) => {
++    const { query } = req.validated as Validated<typeof listApplicationsSchemas>;
++    const { items, total } = await service.list(query);
++    sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
++  });
++  router.get('/admissions/settings', auth, authorize('admissions:read'), none, async (_req, res) => { sendSuccess(res, await service.getSettings()); });
++  router.put('/admissions/settings', auth, authorize('admissions:settings'), validate(updateSettingsSchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof updateSettingsSchemas>;
++    sendSuccess(res, await service.updateSettings(requireUser(req), body, contextOf(req)));
++  });
++  router.get('/admissions/:id', auth, authorize('admissions:read'), validate(applicationIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof applicationIdSchemas>;
++    sendSuccess(res, await service.get(params.id));
++  });
++  router.post('/admissions/:id/accept', auth, authorize('admissions:review'), validate(acceptSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof acceptSchemas>;
++    sendSuccess(res, await service.accept(requireUser(req), params.id, body, contextOf(req)));
++  });
++  router.post('/admissions/:id/decline', auth, authorize('admissions:review'), validate(declineSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof declineSchemas>;
++    sendSuccess(res, await service.decline(requireUser(req), params.id, body.reason, contextOf(req)));
++  });
++  router.post('/admissions/:id/recheck-payment', auth, authorize('admissions:review'), validate(applicationIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof applicationIdSchemas>;
++    sendSuccess(res, await service.recheckPayment(requireUser(req), params.id, contextOf(req)));
++  });
++
++  return router;
++}
+diff --git a/src/modules/admissions/admission.schema.ts b/src/modules/admissions/admission.schema.ts
+new file mode 100644
+index 0000000..5f9bcac
+--- /dev/null
++++ b/src/modules/admissions/admission.schema.ts
+@@ -0,0 +1,70 @@
++import { z } from 'zod';
++import { paginationShape } from '../../common/utils/pagination';
++import { PERMISSIONS } from '../../config/constants';
++import type { OpenApiRegistry } from '../../openapi/registry';
++import { ADMISSION_STATUS, type AdmissionStatus } from './application.repository';
++
++const objectId = z.string().regex(/^[a-f0-9]{24}$/);
++const idParams = z.object({ id: objectId });
++const num = z.number().int();
++const iso = z.iso.datetime();
++const name = z.string().trim().min(1).max(60);
++const statuses = Object.values(ADMISSION_STATUS) as [AdmissionStatus, ...AdmissionStatus[]];
++const RELATIONSHIPS = ['FATHER', 'MOTHER', 'GUARDIAN', 'OTHER'] as const;
++
++// ---- public
++const applyBody = z.object({
++  childFirstName: name, childMiddleName: name.optional(), childLastName: name,
++  gender: z.enum(['MALE', 'FEMALE']), dateOfBirth: z.iso.date(), classId: objectId,
++  previousSchool: z.string().trim().min(1).max(120).optional(), address: z.string().trim().min(1).max(200).optional(),
++  parentFirstName: name, parentLastName: name, parentEmail: z.string().trim().min(3).max(254), parentPhone: z.string().trim().min(7).max(30),
++  relationship: z.enum(RELATIONSHIPS),
++  /** A hidden field on the form. Real people leave it empty. */
++  website: z.string().max(200).optional(),
++});
++export const applySchemas = { body: applyBody };
++const identify = z.object({ applicationNo: z.string().trim().min(6).max(30), contact: z.string().trim().min(3).max(254) });
++export const identifySchemas = { body: identify };
++export const photoSchemas = { body: identify };
++
++// ---- staff
++export const listApplicationsSchemas = { query: z.object({ ...paginationShape, status: z.enum(statuses).optional(), q: z.string().trim().min(1).max(60).optional() }) };
++export const applicationIdSchemas = { params: idParams };
++const acceptBody = z.object({ classArmId: objectId, sessionId: objectId.optional() });
++export const acceptSchemas = { params: idParams, body: acceptBody };
++const declineBody = z.object({ reason: z.string().trim().min(3).max(300) });
++export const declineSchemas = { params: idParams, body: declineBody };
++const settingsBody = z.object({ open: z.boolean().optional(), feeKobo: z.number().int().min(10_000).max(5_000_000).optional() });
++export const updateSettingsSchemas = { body: settingsBody };
++
++const publicView = z.object({
++  applicationNo: z.string(), status: z.enum(statuses), childName: z.string(), className: z.string(), feeKobo: num, paid: z.boolean(), photoUploaded: z.boolean(),
++  canUploadPhoto: z.boolean(), declineReason: z.string().nullable(), checkoutUrl: z.string().nullable(), createdAt: iso,
++});
++const adminView = z.object({
++  id: z.string(), applicationNo: z.string(), status: z.enum(statuses),
++  child: z.object({ firstName: z.string(), middleName: z.string().nullable(), lastName: z.string(), gender: z.enum(['MALE', 'FEMALE']), dateOfBirth: z.string(), classId: z.string(), className: z.string(), previousSchool: z.string().nullable(), address: z.string().nullable() }),
++  parent: z.object({ firstName: z.string(), lastName: z.string(), email: z.string(), phone: z.string(), relationship: z.enum(RELATIONSHIPS), address: z.string().nullable() }),
++  feeKobo: num, paid: z.boolean(), paidAt: iso.nullable(), photoUrl: z.string().nullable(), declineReason: z.string().nullable(), decidedAt: iso.nullable(),
++  studentId: z.string().nullable(), parentUserId: z.string().nullable(), createdAt: iso,
++  payments: z.array(z.object({ reference: z.string(), amountKobo: num, status: z.enum(['PENDING', 'SUCCESS', 'FAILED']), paidAt: iso.nullable(), createdAt: iso })),
++});
++const settingsView = z.object({ open: z.boolean(), feeKobo: num });
++
++export function registerAdmissionOperations(registry: OpenApiRegistry): void {
++  const pub = ['public admissions'];
++  const staff = ['admissions'];
++  registry.register({ method: 'get', path: '/public/admissions/info', operationId: 'getAdmissionInfo', summary: 'No login. Is admission open, what is the application fee (kobo), and which classes can be chosen', tags: pub, success: { status: 200, description: 'Info', data: z.object({ open: z.boolean(), feeKobo: num, classes: z.array(z.object({ id: z.string(), name: z.string() })) }) } });
++  registry.register({ method: 'post', path: '/public/admissions', operationId: 'applyForAdmission', summary: 'No login. Saves the application and starts the Paystack payment of the application fee. Send the parent to checkoutUrl. If checkoutUrl is null, show message and let them use /public/admissions/pay later', tags: pub, request: { body: applyBody }, success: { status: 201, description: 'Saved', data: z.object({ applicationNo: z.string(), status: z.enum(statuses), feeKobo: num, checkoutUrl: z.string().nullable(), message: z.string().nullable() }) }, errors: ['VALIDATION_ERROR', 'CONFLICT', 'RATE_LIMITED'] });
++  registry.register({ method: 'post', path: '/public/admissions/pay', operationId: 'payAdmissionFee', summary: 'No login. Starts the fee payment again for an unpaid application. Needs the application number and the parent email or phone', tags: pub, request: { body: identify }, success: { status: 200, description: 'Checkout', data: z.object({ applicationNo: z.string(), feeKobo: num, checkoutUrl: z.string() }) }, errors: ['NOT_FOUND', 'CONFLICT', 'SERVICE_UNAVAILABLE', 'RATE_LIMITED'] });
++  registry.register({ method: 'post', path: '/public/admissions/status', operationId: 'getAdmissionStatus', summary: 'No login. Where is my application? Needs the application number and the parent email or phone. Also confirms a payment made just now. Call it on the page Paystack returns to', tags: pub, request: { body: identify }, success: { status: 200, description: 'Status', data: publicView }, errors: ['NOT_FOUND', 'RATE_LIMITED'] });
++  registry.register({ method: 'post', path: '/public/admissions/photo', operationId: 'uploadAdmissionPhoto', summary: 'No login. multipart/form-data with the text fields applicationNo and contact (same as /public/admissions/status) and the file field "file" (JPEG, PNG or WebP, max 2 MB). Allowed once the fee is paid and until the school decides', tags: pub, upload: true, success: { status: 200, description: 'Status', data: publicView }, errors: ['NOT_FOUND', 'CONFLICT', 'VALIDATION_ERROR', 'RATE_LIMITED'] });
++
++  registry.register({ method: 'get', path: '/admissions', operationId: 'listAdmissions', summary: 'Applications, newest paid first. Filter by status. Unpaid ones disappear by themselves after 14 days', tags: staff, roles: PERMISSIONS['admissions:read'], request: { query: listApplicationsSchemas.query }, success: { status: 200, description: 'A page', data: z.array(adminView), paginated: true as const } });
++  registry.register({ method: 'get', path: '/admissions/settings', operationId: 'getAdmissionSettings', summary: 'Admission open or closed, and the application fee in kobo', tags: staff, roles: PERMISSIONS['admissions:read'], success: { status: 200, description: 'Settings', data: settingsView } });
++  registry.register({ method: 'put', path: '/admissions/settings', operationId: 'updateAdmissionSettings', summary: 'Super admin: open or close admission, change the fee (N100 to N50,000). Applications already made keep the fee they were created with', tags: staff, roles: PERMISSIONS['admissions:settings'], request: { body: settingsBody }, success: { status: 200, description: 'Updated', data: settingsView } });
++  registry.register({ method: 'get', path: '/admissions/{id}', operationId: 'getAdmission', summary: 'One application, with the photo URL and payment history', tags: staff, roles: PERMISSIONS['admissions:read'], request: { params: idParams }, success: { status: 200, description: 'The application', data: adminView }, errors: ['NOT_FOUND'] });
++  registry.register({ method: 'post', path: '/admissions/{id}/accept', operationId: 'acceptAdmission', summary: 'Creates the student (in the chosen class arm, current session unless sessionId is sent) and the parent account, links them, and makes the photo the passport. The result shows the student temporary password once. Safe to run again if it stopped half way', tags: staff, roles: PERMISSIONS['admissions:review'], request: { params: idParams, body: acceptBody }, success: { status: 200, description: 'Accepted', data: z.object({ studentId: z.string(), admissionNo: z.string().nullable(), studentTemporaryPassword: z.string().nullable(), parentUserId: z.string(), parentAlreadyExisted: z.boolean(), parentTemporaryPassword: z.string().nullable(), passport: z.enum(['SET', 'FAILED', 'NONE']), note: z.string().nullable() }) }, errors: ['NOT_FOUND', 'CONFLICT', 'VALIDATION_ERROR'] });
++  registry.register({ method: 'post', path: '/admissions/{id}/decline', operationId: 'declineAdmission', summary: 'Declines a paid application and emails the parent the reason. The fee is not refunded here', tags: staff, roles: PERMISSIONS['admissions:review'], request: { params: idParams, body: declineBody }, success: { status: 200, description: 'Declined', data: adminView }, errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/admissions/{id}/recheck-payment', operationId: 'recheckAdmissionPayment', summary: 'When a parent says they paid but it does not show: asks Paystack now', tags: staff, roles: PERMISSIONS['admissions:review'], request: { params: idParams }, success: { status: 200, description: 'Result', data: z.object({ application: adminView, outcomes: z.array(z.string()) }) }, errors: ['NOT_FOUND'] });
++}
+diff --git a/src/modules/admissions/admission.service.ts b/src/modules/admissions/admission.service.ts
+new file mode 100644
+index 0000000..28faeed
+--- /dev/null
++++ b/src/modules/admissions/admission.service.ts
+@@ -0,0 +1,401 @@
++import { randomBytes } from 'node:crypto';
++import { AppError } from '../../common/errors/AppError';
++import { detectImageType } from '../../common/utils/image';
++import { logger } from '../../common/utils/logger';
++import { normalizeEmail, normalizePhone } from '../../common/utils/identifier';
++import { formatNaira } from '../../common/utils/money';
++import { sanitizeText } from '../../common/utils/text';
++import { ADMISSION_REFERENCE_PREFIX, ROLES, SCHOOL_NAME } from '../../config/constants';
++import type { ImageStore } from '../../integrations/imageStore';
++import type { Mailer } from '../../integrations/mailer';
++import type { PaystackClient } from '../../integrations/paystack';
++import type { enrolmentRepository } from '../academics/enrolment.repository';
++import type { sessionRepository } from '../academics/session.repository';
++import type { structureRepository } from '../academics/structure.repository';
++import { recordSafely, type AuditPort } from '../audit/audit.port';
++import type { NotificationService } from '../notifications/notification.service';
++import type { LinkService } from '../users/link.service';
++import type { ParentService } from '../users/parent.service';
++import type { StudentService } from '../users/student.service';
++import type { studentRepository } from '../users/student.repository';
++import type { userRepository } from '../users/user.repository';
++import {
++  ADMISSION_STATUS, FEE_PAYMENT_STATUS, type AdmissionSettings, type AdmissionStatus, type ApplicationRecord,
++  type applicationRepository,
++} from './application.repository';
++
++interface Actor { id: string }
++interface Context { ip: string; requestId: string }
++export type ConfirmOutcome = 'CONFIRMED' | 'ALREADY' | 'NOT_PAID_YET' | 'FAILED' | 'MISMATCH' | 'UNAVAILABLE' | 'UNKNOWN';
++
++const fail = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
++const naira = (kobo: number): string => `NGN ${formatNaira(kobo)}`;
++const REUSE_MS = 25 * 60_000;
++const photoId = (applicationId: string): string => `peacock/admissions/${applicationId}`;
++const passportId = (studentId: string): string => `peacock/students/${studentId}`;
++const LOCK_MS = 2 * 60_000;
++
++function ageOn(dateOfBirth: string, now: Date): number {
++  const d = new Date(`${dateOfBirth}T00:00:00Z`);
++  let age = now.getUTCFullYear() - d.getUTCFullYear();
++  if (now.getUTCMonth() < d.getUTCMonth() || (now.getUTCMonth() === d.getUTCMonth() && now.getUTCDate() < d.getUTCDate())) age -= 1;
++  return age;
++}
++
++export function createAdmissionService(deps: {
++  repo: typeof applicationRepository;
++  paystack: Pick<PaystackClient, 'initialize' | 'verify' | 'isConfigured'>;
++  mailer: Mailer;
++  images: ImageStore;
++  structure: Pick<typeof structureRepository, 'findClass' | 'findArm' | 'listClasses' | 'classesByIds' | 'armsByIds'>;
++  sessions: Pick<typeof sessionRepository, 'findSession' | 'findCurrentSession'>;
++  enrolments: Pick<typeof enrolmentRepository, 'forStudents'>;
++  students: StudentService;
++  studentRecords: Pick<typeof studentRepository, 'update'>;
++  parents: ParentService;
++  links: LinkService;
++  users: Pick<typeof userRepository, 'findAuth' | 'findIdsByRoles'>;
++  notifier: Pick<NotificationService, 'notify'>;
++  returnUrl: string;
++  audit: AuditPort;
++  now?: () => Date;
++}) {
++  const { repo, paystack, mailer, images, structure, sessions, students, studentRecords, parents, links, users, notifier, audit } = deps;
++  const clock = deps.now ?? ((): Date => new Date());
++
++  const log = (action: string, actor: Actor | null, ctx: Context | null, id: string, metadata: Record<string, unknown>) =>
++    recordSafely(audit, { action, ...(actor ? { actorId: actor.id } : {}), entityType: 'admissionApplication', entityId: id, ...(ctx ? { ip: ctx.ip, requestId: ctx.requestId } : {}), metadata });
++
++  async function email(to: string, subject: string, text: string): Promise<void> {
++    try { await mailer.send({ to, subject, text }); } catch (err) { logger.warn({ err: err instanceof Error ? err.message : 'error', subject }, 'admission email failed'); }
++  }
++
++  /** A parent proves it is theirs with the application number AND the email or phone they applied with. */
++  async function mustOwn(applicationNo: string, contact: string): Promise<ApplicationRecord> {
++    const app = await repo.findByNo(applicationNo.trim().toUpperCase());
++    const em = normalizeEmail(contact);
++    const ph = normalizePhone(contact);
++    if (!app || !((em && em === app.parent.email) || (ph && ph === app.parent.phone))) throw new AppError('NOT_FOUND');
++    return app;
++  }
++
++  const classNameOf = async (classId: string): Promise<string> => (await structure.findClass(classId))?.name ?? '';
++
++  /** What the public sees. Nothing about other people, no payment references. */
++  async function publicView(app: ApplicationRecord, extra: Record<string, unknown> = {}) {
++    const pending = app.payments.find((p) => p.status === FEE_PAYMENT_STATUS.PENDING && p.checkoutUrl && Date.now() - p.createdAt.getTime() < REUSE_MS);
++    return {
++      applicationNo: app.applicationNo, status: app.status, childName: `${app.child.firstName} ${app.child.lastName}`, className: await classNameOf(app.child.classId),
++      feeKobo: app.feeKobo, paid: app.paidAt !== null, photoUploaded: app.photoUrl !== null, canUploadPhoto: app.status === ADMISSION_STATUS.SUBMITTED,
++      declineReason: app.status === ADMISSION_STATUS.DECLINED ? app.declineReason : null,
++      checkoutUrl: app.status === ADMISSION_STATUS.PENDING_PAYMENT ? (pending?.checkoutUrl ?? null) : null, createdAt: app.createdAt.toISOString(), ...extra,
++    };
++  }
++
++  async function startPayment(app: ApplicationRecord): Promise<string> {
++    if (!paystack.isConfigured()) throw new AppError('SERVICE_UNAVAILABLE', { message: 'Online payment is not available yet. Your application is saved: please try again later.' });
++    const open = app.payments.find((p) => p.status === FEE_PAYMENT_STATUS.PENDING && p.checkoutUrl && Date.now() - p.createdAt.getTime() < REUSE_MS);
++    if (open?.checkoutUrl) return open.checkoutUrl;
++
++    const reference = `${ADMISSION_REFERENCE_PREFIX}${randomBytes(10).toString('hex').toUpperCase()}`;
++    await repo.addPayment(app.id, { reference, amountKobo: app.feeKobo, status: FEE_PAYMENT_STATUS.PENDING, checkoutUrl: null, createdAt: clock(), paidAt: null });
++    const sep = deps.returnUrl.includes('?') ? '&' : '?';
++    const result = await paystack.initialize({
++      email: app.parent.email, amountKobo: app.feeKobo, reference, callbackUrl: `${deps.returnUrl}${sep}applicationNo=${encodeURIComponent(app.applicationNo)}`,
++      metadata: { applicationNo: app.applicationNo, custom_fields: [{ display_name: 'Application', variable_name: 'application_no', value: app.applicationNo }] },
++    });
++    if (!result.ok || result.data.reference !== reference || !result.data.authorization_url.startsWith('https://')) {
++      await repo.markPaymentFailed(reference);
++      throw new AppError('SERVICE_UNAVAILABLE', { message: 'We could not start the payment. Nothing was charged. Your application is saved: please try again.' });
++    }
++    await repo.setCheckout(reference, result.data.authorization_url);
++    return result.data.authorization_url;
++  }
++
++  /** Asks Paystack what really happened. Safe to call any number of times, from anywhere. */
++  async function confirm(reference: string, options: { throttleMs?: number } = {}): Promise<ConfirmOutcome> {
++    const app = await repo.findByPaymentReference(reference);
++    const payment = app?.payments.find((p) => p.reference === reference);
++    if (!app || !payment) return 'UNKNOWN';
++    if (payment.status === FEE_PAYMENT_STATUS.SUCCESS) return 'ALREADY';
++    if (options.throttleMs !== undefined && !(await repo.claimVerify(reference, options.throttleMs, clock()))) return 'NOT_PAID_YET';
++
++    const verified = await paystack.verify(reference);
++    if (!verified.ok) return verified.kind === 'NOT_FOUND' ? 'NOT_PAID_YET' : 'UNAVAILABLE';
++    const tx = verified.data;
++    if (tx.reference !== reference) return 'MISMATCH';
++    if (tx.status === 'failed' || tx.status === 'reversed') { await repo.markPaymentFailed(reference); return 'FAILED'; }
++    if (tx.status !== 'success') return 'NOT_PAID_YET';
++
++    if (!Number.isSafeInteger(tx.amount) || tx.amount !== payment.amountKobo || tx.currency !== 'NGN') {
++      await notifier.notify({
++        userIds: await users.findIdsByRoles([ROLES.SUPER_ADMIN, ROLES.ADMIN]), type: 'PAYMENT_ALERT', title: 'An admission payment needs review',
++        body: `Application ${app.applicationNo}: expected ${naira(payment.amountKobo)} but Paystack reports ${tx.amount} ${tx.currency}. The application was not marked as paid.`, data: { applicationId: app.id }, email: true,
++      });
++      await log('ADMISSION_PAYMENT_MISMATCH', null, null, app.id, { reference, expectedKobo: payment.amountKobo, gotKobo: tx.amount, currency: tx.currency });
++      return 'MISMATCH';
++    }
++
++    const outcome = await repo.confirmPayment(reference, tx.paid_at ? new Date(tx.paid_at) : clock());
++    if (outcome === 'ALREADY') return 'ALREADY';
++    if (outcome === 'EXTRA') {
++      // Paid twice. The money is real, so staff must refund the second payment in Paystack.
++      await notifier.notify({
++        userIds: await users.findIdsByRoles([ROLES.SUPER_ADMIN, ROLES.ADMIN]), type: 'PAYMENT_ALERT', title: 'An application fee was paid twice',
++        body: `Application ${app.applicationNo} was paid twice (${reference}). Please refund the extra payment in the Paystack dashboard.`, data: { applicationId: app.id }, email: true,
++      });
++      await log('ADMISSION_PAYMENT_DUPLICATE', null, null, app.id, { reference });
++      return 'CONFIRMED';
++    }
++    await log('ADMISSION_PAID', null, null, app.id, { reference, amountKobo: payment.amountKobo });
++    await email(
++      app.parent.email, `${SCHOOL_NAME}: application received (${app.applicationNo})`,
++      `Dear ${app.parent.firstName},\n\nThank you. We received the application fee of ${naira(payment.amountKobo)} for ${app.child.firstName} ${app.child.lastName}.\n\n` +
++        `Your application number is ${app.applicationNo}. Please keep it.\n\nNext step: upload ${app.child.firstName}'s passport photograph on the application status page, using this application number and the email or phone number you applied with. ` +
++        `The school will review the application and contact you.\n\nThe application fee is not refundable.\n\n${SCHOOL_NAME}`,
++    );
++    await notifier.notify({
++      userIds: await users.findIdsByRoles([ROLES.ADMIN]), type: 'ADMISSION_SUBMITTED', title: 'New admission application',
++      body: `${app.child.firstName} ${app.child.lastName} (${app.applicationNo}) has applied and paid.`, data: { applicationId: app.id }, email: false,
++    });
++    return 'CONFIRMED';
++  }
++
++  async function adminView(app: ApplicationRecord) {
++    const className = await classNameOf(app.child.classId);
++    return {
++      id: app.id, applicationNo: app.applicationNo, status: app.status, child: { ...app.child, className }, parent: app.parent, feeKobo: app.feeKobo,
++      paid: app.paidAt !== null, paidAt: app.paidAt ? app.paidAt.toISOString() : null, photoUrl: app.photoUrl, declineReason: app.declineReason,
++      decidedAt: app.decidedAt ? app.decidedAt.toISOString() : null, studentId: app.studentId, parentUserId: app.parentUserId, createdAt: app.createdAt.toISOString(),
++      payments: app.payments.map((p) => ({ reference: p.reference, amountKobo: p.amountKobo, status: p.status, paidAt: p.paidAt ? p.paidAt.toISOString() : null, createdAt: p.createdAt.toISOString() })),
++    };
++  }
++  async function mustFind(id: string): Promise<ApplicationRecord> {
++    const app = await repo.findById(id);
++    if (!app) throw new AppError('NOT_FOUND');
++    return app;
++  }
++
++  return {
++    confirm,
++
++    /** For the public form: is it open, what does it cost, which classes can be chosen. */
++    async info() {
++      const settings = await repo.getSettings();
++      const { items } = await structure.listClasses({}, { page: 1, limit: 100, sort: 'level' });
++      return { open: settings.open, feeKobo: settings.feeKobo, classes: items.map((c) => ({ id: c.id, name: c.name })) };
++    },
++
++    async apply(
++      input: {
++        childFirstName: string; childMiddleName?: string | undefined; childLastName: string; gender: 'MALE' | 'FEMALE'; dateOfBirth: string; classId: string;
++        previousSchool?: string | undefined; address?: string | undefined; parentFirstName: string; parentLastName: string; parentEmail: string;
++        parentPhone: string; relationship: 'FATHER' | 'MOTHER' | 'GUARDIAN' | 'OTHER'; website?: string | undefined;
++      },
++      ctx: Context,
++    ) {
++      if (input.website) throw fail('website', 'Not allowed'); // a hidden field only bots fill in
++      const settings = await repo.getSettings();
++      if (!settings.open) throw new AppError('CONFLICT', { message: 'Admissions are closed at the moment' });
++      const parentEmail = normalizeEmail(input.parentEmail);
++      if (!parentEmail) throw fail('parentEmail', 'Enter a valid email address');
++      const parentPhone = normalizePhone(input.parentPhone);
++      if (!parentPhone) throw fail('parentPhone', 'Enter a valid phone number');
++      const age = ageOn(input.dateOfBirth, clock());
++      if (age < 1 || age > 25) throw fail('dateOfBirth', 'Check the date of birth');
++      if (!(await structure.findClass(input.classId))) throw fail('classId', 'Choose a class from the list');
++
++      const firstName = sanitizeText(input.childFirstName);
++      const lastName = sanitizeText(input.childLastName);
++      const existing = await repo.findDuplicate(parentEmail, firstName, lastName, input.dateOfBirth);
++      let app = existing;
++      if (existing && existing.status !== ADMISSION_STATUS.PENDING_PAYMENT) {
++        throw new AppError('CONFLICT', { message: `An application for this child already exists (${existing.applicationNo}). Use the status page to follow it.` });
++      }
++      if (!app) {
++        app = await repo.create(
++          {
++            child: {
++              firstName, middleName: input.childMiddleName ? sanitizeText(input.childMiddleName) : null, lastName, gender: input.gender, dateOfBirth: input.dateOfBirth,
++              classId: input.classId, previousSchool: input.previousSchool ? sanitizeText(input.previousSchool) : null, address: input.address ? sanitizeText(input.address) : null,
++            },
++            parent: { firstName: sanitizeText(input.parentFirstName), lastName: sanitizeText(input.parentLastName), email: parentEmail, phone: parentPhone, relationship: input.relationship, address: null },
++            feeKobo: settings.feeKobo,
++          },
++          clock(),
++        );
++        await log('ADMISSION_APPLIED', null, ctx, app.id, { applicationNo: app.applicationNo, classId: input.classId });
++      }
++      // If the payment cannot be started the application is still saved, and the parent can start it again.
++      let checkoutUrl: string | null = null;
++      let message: string | null = null;
++      try { checkoutUrl = await startPayment(app); } catch (err) { message = err instanceof AppError ? (err.message) : 'We could not start the payment'; }
++      return { applicationNo: app.applicationNo, status: app.status, feeKobo: app.feeKobo, checkoutUrl, message };
++    },
++
++    /** The "pay" button again: for a payment that was never started, expired or failed. */
++    async pay(input: { applicationNo: string; contact: string }) {
++      const app = await mustOwn(input.applicationNo, input.contact);
++      if (app.status !== ADMISSION_STATUS.PENDING_PAYMENT) throw new AppError('CONFLICT', { message: 'The fee for this application was already paid' });
++      return { applicationNo: app.applicationNo, feeKobo: app.feeKobo, checkoutUrl: await startPayment(app) };
++    },
++
++    async status(input: { applicationNo: string; contact: string }) {
++      let app = await mustOwn(input.applicationNo, input.contact);
++      if (app.status === ADMISSION_STATUS.PENDING_PAYMENT) {
++        for (const p of app.payments.filter((x) => x.status === FEE_PAYMENT_STATUS.PENDING)) await confirm(p.reference, { throttleMs: 10_000 });
++        app = (await repo.findByNo(app.applicationNo)) ?? app;
++      }
++      return publicView(app);
++    },
++
++    async uploadPhoto(input: { applicationNo: string; contact: string; image: Buffer }) {
++      const app = await mustOwn(input.applicationNo, input.contact);
++      if (app.status !== ADMISSION_STATUS.SUBMITTED) throw new AppError('CONFLICT', { message: app.status === ADMISSION_STATUS.PENDING_PAYMENT ? 'Pay the application fee first, then upload the photo' : 'This application can no longer be changed' });
++      if (!detectImageType(input.image)) throw fail('file', 'The file must be a JPEG, PNG or WebP image');
++      const stored = await images.upload(input.image, photoId(app.id));
++      if (!(await repo.setPhoto(app.id, photoId(app.id), stored.url))) throw new AppError('CONFLICT', { message: 'This application can no longer be changed' });
++      await log('ADMISSION_PHOTO_UPLOADED', null, null, app.id, {});
++      return publicView((await repo.findByNo(app.applicationNo)) ?? app);
++    },
++
++    // ---------------- staff ----------------
++    async list(input: { page: number; limit: number; status?: AdmissionStatus | undefined; q?: string | undefined }) {
++      const { page, limit, ...filter } = input;
++      const { items, total } = await repo.list(filter, { page, limit });
++      return { items: await Promise.all(items.map(adminView)), total };
++    },
++    async get(id: string) { return adminView(await mustFind(id)); },
++
++    /** "The parent says they paid": checks every open payment with Paystack right now. */
++    async recheckPayment(actor: Actor, id: string, ctx: Context) {
++      const app = await mustFind(id);
++      const outcomes: ConfirmOutcome[] = [];
++      for (const p of app.payments.filter((x) => x.status !== FEE_PAYMENT_STATUS.SUCCESS)) outcomes.push(await confirm(p.reference));
++      await log('ADMISSION_PAYMENT_RECHECKED', actor, ctx, id, { outcomes });
++      return { application: await adminView((await repo.findById(id)) ?? app), outcomes };
++    },
++
++    async decline(actor: Actor, id: string, reason: string, ctx: Context) {
++      await mustFind(id);
++      const declined = await repo.decline(id, actor.id, sanitizeText(reason), clock());
++      if (!declined) throw new AppError('CONFLICT', { message: 'Only a paid application that is still waiting can be declined' });
++      await log('ADMISSION_DECLINED', actor, ctx, id, { reason: declined.declineReason });
++      await email(
++        declined.parent.email, `${SCHOOL_NAME}: update on application ${declined.applicationNo}`,
++        `Dear ${declined.parent.firstName},\n\nThank you for applying to ${SCHOOL_NAME}. After review, we are unable to offer ${declined.child.firstName} a place at this time.\n\n` +
++          `Reason: ${declined.declineReason ?? 'not given'}\n\nIf you have questions, please contact the school office.\n\n${SCHOOL_NAME}`,
++      );
++      return adminView(declined);
++    },
++
++    /**
++     * Turns an application into a real student and parent, using the same code as the admin screens.
++     * If it stops half way, running it again carries on from where it stopped.
++     */
++    async accept(actor: Actor, id: string, input: { classArmId: string; sessionId?: string | undefined }, ctx: Context) {
++      const existing = await mustFind(id);
++      if (existing.status === ADMISSION_STATUS.ACCEPTED) throw new AppError('CONFLICT', { message: 'This application was already accepted' });
++      if (existing.status !== ADMISSION_STATUS.SUBMITTED) throw new AppError('CONFLICT', { message: 'Only a paid application can be accepted' });
++      const arm = await structure.findArm(input.classArmId);
++      if (!arm) throw fail('classArmId', 'Class arm not found');
++      const session = input.sessionId ? await sessions.findSession(input.sessionId) : await sessions.findCurrentSession();
++      if (!session) throw fail('sessionId', input.sessionId ? 'Session not found' : 'There is no current session yet');
++
++      const now = clock();
++      const app = await repo.claimAccept(id, now, new Date(now.getTime() - LOCK_MS));
++      if (!app) throw new AppError('CONFLICT', { message: 'This application is being processed. Try again in a minute.' });
++
++      try {
++        // 1. the parent (or the existing account, when this family is already in the school)
++        let parentUserId = app.parentUserId;
++        let parentTemporaryPassword: string | null = null;
++        let parentAlreadyExisted = false;
++        if (!parentUserId) {
++          const found = (await users.findAuth({ email: app.parent.email })) ?? (await users.findAuth({ phone: app.parent.phone }));
++          if (found) {
++            if (found.role !== ROLES.PARENT) throw new AppError('CONFLICT', { message: 'The parent email or phone already belongs to a staff or student account. Fix it before accepting.' });
++            parentUserId = found.id;
++            parentAlreadyExisted = true;
++          } else {
++            const created = await parents.create(
++              { firstName: app.parent.firstName, lastName: app.parent.lastName, email: app.parent.email, phone: app.parent.phone, delivery: 'EMAIL_INVITE' },
++              actor, ctx,
++            );
++            parentUserId = created.account.id;
++            parentTemporaryPassword = created.temporaryPassword;
++          }
++          await repo.saveProgress(id, { parentUserId });
++        }
++
++        // 2. the student
++        let studentId = app.studentId;
++        let admissionNo: string | null = null;
++        let studentTemporaryPassword: string | null = null;
++        if (!studentId) {
++          const created = await students.create(
++            {
++              firstName: app.child.firstName, ...(app.child.middleName ? { middleName: app.child.middleName } : {}), lastName: app.child.lastName, gender: app.child.gender,
++              dateOfBirth: app.child.dateOfBirth, ...(app.child.address ? { address: app.child.address } : {}), admissionSessionId: session.id, classArmId: arm.id, delivery: 'TEMPORARY_PASSWORD',
++            },
++            actor, ctx,
++          );
++          studentId = created.account.id;
++          admissionNo = created.account.admissionNo;
++          studentTemporaryPassword = created.temporaryPassword;
++          await repo.saveProgress(id, { studentId });
++        } else {
++          admissionNo = (await students.viewsByUserIds([studentId]))[0]?.admissionNo ?? null;
++        }
++
++        // 3. link them
++        try { await links.link(parentUserId, { studentId, relationship: app.parent.relationship }, actor, ctx); } catch (err) {
++          if (!(err instanceof AppError && err.code === 'CONFLICT')) throw err; // already linked is fine
++        }
++
++        // 4. the photo becomes the passport. A problem here never blocks the admission.
++        let passport: 'SET' | 'FAILED' | 'NONE' = 'NONE';
++        if (app.photoPublicId) {
++          try {
++            const moved = await images.promote(app.photoPublicId, passportId(studentId));
++            await studentRecords.update(studentId, { passportUrl: moved.url });
++            passport = 'SET';
++          } catch (err) {
++            passport = 'FAILED';
++            logger.warn({ err: err instanceof Error ? err.message : 'error', applicationId: id }, 'could not set the admission photo as passport');
++          }
++        }
++
++        const done = await repo.finishAccept(id, actor.id, clock());
++        if (!done) throw new AppError('CONFLICT', { message: 'This application changed while it was being accepted' });
++        await log('ADMISSION_ACCEPTED', actor, ctx, id, { studentId, parentUserId, classArmId: arm.id, sessionId: session.id, passport, parentAlreadyExisted });
++        await email(
++          app.parent.email, `${SCHOOL_NAME}: ${app.child.firstName} has been admitted`,
++          `Dear ${app.parent.firstName},\n\nCongratulations! ${app.child.firstName} ${app.child.lastName} has been offered a place at ${SCHOOL_NAME}.\n\n` +
++            `${admissionNo ? `Admission number: ${admissionNo}\n` : ''}` +
++            (parentAlreadyExisted
++              ? 'Your child has been added to your existing parent account. Please log in to see the details.\n'
++              : 'You will receive a separate email to set up your parent account. Use it to follow your child\'s fees, results and notices.\n') +
++            `\nThe school office will give you the remaining admission details.\n\n${SCHOOL_NAME}`,
++        );
++        return {
++          studentId, admissionNo, studentTemporaryPassword, parentUserId, parentAlreadyExisted, parentTemporaryPassword, passport,
++          note: studentTemporaryPassword === null && admissionNo ? 'Resumed an earlier attempt. If the student has no password, reset it from the student screen.' : null,
++        };
++      } catch (err) {
++        await repo.releaseAccept(id);
++        throw err;
++      }
++    },
++
++    getSettings: (): Promise<AdmissionSettings> => repo.getSettings(),
++    async updateSettings(actor: Actor, patch: Partial<AdmissionSettings>, ctx: Context): Promise<AdmissionSettings> {
++      const before = await repo.getSettings();
++      const after = await repo.updateSettings(patch);
++      await log('ADMISSION_SETTINGS_CHANGED', actor, ctx, 'settings', { before, after });
++      return after;
++    },
++  };
++}
++
++export type AdmissionService = ReturnType<typeof createAdmissionService>;
+diff --git a/src/modules/admissions/admissions.module.ts b/src/modules/admissions/admissions.module.ts
+new file mode 100644
+index 0000000..f41e04d
+--- /dev/null
++++ b/src/modules/admissions/admissions.module.ts
+@@ -0,0 +1,39 @@
++import type { Router } from 'express';
++import type { RedisLike } from '../../common/middleware/rateLimiter';
++import { env } from '../../config/env';
++import type { ImageStore } from '../../integrations/imageStore';
++import type { Mailer } from '../../integrations/mailer';
++import { createPaystackClient, type PaystackClient } from '../../integrations/paystack';
++import { enrolmentRepository } from '../academics/enrolment.repository';
++import { sessionRepository } from '../academics/session.repository';
++import { structureRepository } from '../academics/structure.repository';
++import type { AuditService } from '../audit/audit.service';
++import type { AuthModule } from '../auth/auth.module';
++import type { NotificationService } from '../notifications/notification.service';
++import type { LinkService } from '../users/link.service';
++import type { ParentService } from '../users/parent.service';
++import { studentRepository } from '../users/student.repository';
++import type { StudentService } from '../users/student.service';
++import { userRepository } from '../users/user.repository';
++import { createAdmissionService, type AdmissionService } from './admission.service';
++import { createAdmissionRouter } from './admission.routes';
++import { applicationRepository } from './application.repository';
++
++/** The page Paystack sends the parent back to. The frontend can change this path. */
++const RETURN_PATH = '/admission/status';
++
++export function createAdmissionsModule(deps: {
++  audit: AuditService; auth: AuthModule; notifier: NotificationService; mailer: Mailer; images: ImageStore; rateLimitRedis: RedisLike | null;
++  students: StudentService; parents: ParentService; links: LinkService;
++  /** Tests give a fake Paystack. */
++  paystack?: PaystackClient;
++}): { router: Router; service: AdmissionService; payments: { confirm: AdmissionService['confirm'] } } {
++  const paystack = deps.paystack ?? createPaystackClient({ secretKey: env.PAYSTACK_SECRET_KEY, baseUrl: env.PAYSTACK_BASE_URL });
++  const service = createAdmissionService({
++    repo: applicationRepository, paystack, mailer: deps.mailer, images: deps.images, structure: structureRepository, sessions: sessionRepository,
++    enrolments: enrolmentRepository, students: deps.students, studentRecords: studentRepository, parents: deps.parents, links: deps.links,
++    users: userRepository, notifier: deps.notifier, returnUrl: `${env.CORS_ORIGIN}${RETURN_PATH}`, audit: deps.audit,
++  });
++  const router = createAdmissionRouter({ service, authenticate: deps.auth.middleware.authenticate, redis: deps.rateLimitRedis });
++  return { router, service, payments: { confirm: service.confirm } };
++}
+diff --git a/src/modules/admissions/application.repository.ts b/src/modules/admissions/application.repository.ts
+new file mode 100644
+index 0000000..a86c2b2
+--- /dev/null
++++ b/src/modules/admissions/application.repository.ts
+@@ -0,0 +1,233 @@
++import mongoose, { type Model, type Types } from 'mongoose';
++import { skipOf } from '../../common/utils/pagination';
++import { nextSequence } from '../users/counter.model';
++
++export const ADMISSION_STATUS = { PENDING_PAYMENT: 'PENDING_PAYMENT', SUBMITTED: 'SUBMITTED', ACCEPTED: 'ACCEPTED', DECLINED: 'DECLINED' } as const;
++export type AdmissionStatus = (typeof ADMISSION_STATUS)[keyof typeof ADMISSION_STATUS];
++export const FEE_PAYMENT_STATUS = { PENDING: 'PENDING', SUCCESS: 'SUCCESS', FAILED: 'FAILED' } as const;
++export type FeePaymentStatus = (typeof FEE_PAYMENT_STATUS)[keyof typeof FEE_PAYMENT_STATUS];
++const DEFAULT_FEE_KOBO = 200_000; // 2,000 naira
++const PENDING_LIFETIME_MS = 14 * 24 * 3600_000;
++
++export interface FeePayment { reference: string; amountKobo: number; status: FeePaymentStatus; checkoutUrl: string | null; createdAt: Date; paidAt: Date | null; lastVerifyAt?: Date | null }
++export interface ApplicationChild {
++  firstName: string; middleName: string | null; lastName: string; gender: 'MALE' | 'FEMALE'; dateOfBirth: string; classId: string;
++  previousSchool: string | null; address: string | null;
++}
++export interface ApplicationParent {
++  firstName: string; lastName: string; email: string; phone: string; relationship: 'FATHER' | 'MOTHER' | 'GUARDIAN' | 'OTHER'; address: string | null;
++}
++
++interface ApplicationDocument {
++  applicationNo: string; status: AdmissionStatus; child: ApplicationChild; parent: ApplicationParent;
++  feeKobo: number; payments: FeePayment[]; paidAt: Date | null; expiresAt: Date | null;
++  photoPublicId: string | null; photoUrl: string | null;
++  decidedBy: Types.ObjectId | null; decidedAt: Date | null; declineReason: string | null;
++  studentId: Types.ObjectId | null; parentUserId: Types.ObjectId | null; acceptLockAt: Date | null;
++  createdAt: Date; updatedAt: Date;
++}
++type Row = ApplicationDocument & { _id: Types.ObjectId };
++
++const paymentSchema = new mongoose.Schema(
++  {
++    reference: { type: String, required: true }, amountKobo: { type: Number, required: true },
++    status: { type: String, enum: Object.values(FEE_PAYMENT_STATUS), default: FEE_PAYMENT_STATUS.PENDING },
++    checkoutUrl: { type: String, default: null }, createdAt: { type: Date, required: true }, paidAt: { type: Date, default: null },
++    lastVerifyAt: { type: Date, default: null },
++  },
++  { _id: false },
++);
++const schema = new mongoose.Schema<ApplicationDocument>(
++  {
++    applicationNo: { type: String, required: true, unique: true },
++    status: { type: String, enum: Object.values(ADMISSION_STATUS), default: ADMISSION_STATUS.PENDING_PAYMENT },
++    child: {
++      firstName: { type: String, required: true, maxlength: 60 }, middleName: { type: String, default: null, maxlength: 60 },
++      lastName: { type: String, required: true, maxlength: 60 }, gender: { type: String, enum: ['MALE', 'FEMALE'], required: true },
++      dateOfBirth: { type: String, required: true }, classId: { type: String, required: true },
++      previousSchool: { type: String, default: null, maxlength: 120 }, address: { type: String, default: null, maxlength: 200 },
++    },
++    parent: {
++      firstName: { type: String, required: true, maxlength: 60 }, lastName: { type: String, required: true, maxlength: 60 },
++      email: { type: String, required: true, maxlength: 254 }, phone: { type: String, required: true, maxlength: 30 },
++      relationship: { type: String, enum: ['FATHER', 'MOTHER', 'GUARDIAN', 'OTHER'], required: true }, address: { type: String, default: null, maxlength: 200 },
++    },
++    feeKobo: { type: Number, required: true },
++    payments: { type: [paymentSchema], default: [] },
++    paidAt: { type: Date, default: null },
++    // Only set while unpaid. The database removes unpaid applications once it passes.
++    expiresAt: { type: Date, default: null },
++    photoPublicId: { type: String, default: null }, photoUrl: { type: String, default: null },
++    decidedBy: { type: mongoose.Schema.Types.ObjectId, default: null }, decidedAt: { type: Date, default: null }, declineReason: { type: String, default: null, maxlength: 300 },
++    studentId: { type: mongoose.Schema.Types.ObjectId, default: null }, parentUserId: { type: mongoose.Schema.Types.ObjectId, default: null },
++    acceptLockAt: { type: Date, default: null },
++  },
++  { timestamps: true, versionKey: false },
++);
++schema.index({ status: 1, paidAt: -1, createdAt: -1 });
++schema.index({ 'payments.reference': 1 });
++schema.index({ 'parent.email': 1, 'child.lastName': 1 });
++schema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
++
++const ApplicationModel: Model<ApplicationDocument> =
++  (mongoose.models.AdmissionApplication as Model<ApplicationDocument> | undefined) ??
++  mongoose.model<ApplicationDocument>('AdmissionApplication', schema);
++
++export interface ApplicationRecord {
++  id: string; applicationNo: string; status: AdmissionStatus; child: ApplicationChild; parent: ApplicationParent; feeKobo: number;
++  payments: FeePayment[]; paidAt: Date | null; photoPublicId: string | null; photoUrl: string | null; declineReason: string | null;
++  decidedAt: Date | null; studentId: string | null; parentUserId: string | null; createdAt: Date;
++}
++const OBJECT_ID = /^[a-f0-9]{24}$/;
++const toRecord = (r: Row): ApplicationRecord => ({
++  id: r._id.toString(), applicationNo: r.applicationNo, status: r.status,
++  child: { ...r.child, middleName: r.child.middleName ?? null, previousSchool: r.child.previousSchool ?? null, address: r.child.address ?? null },
++  parent: { ...r.parent, address: r.parent.address ?? null }, feeKobo: r.feeKobo,
++  payments: (r.payments ?? []).map((p) => ({ reference: p.reference, amountKobo: p.amountKobo, status: p.status, checkoutUrl: p.checkoutUrl ?? null, createdAt: p.createdAt, paidAt: p.paidAt ?? null, lastVerifyAt: p.lastVerifyAt ?? null })),
++  paidAt: r.paidAt ?? null, photoPublicId: r.photoPublicId ?? null, photoUrl: r.photoUrl ?? null, declineReason: r.declineReason ?? null,
++  decidedAt: r.decidedAt ?? null, studentId: r.studentId ? r.studentId.toString() : null, parentUserId: r.parentUserId ? r.parentUserId.toString() : null,
++  createdAt: r.createdAt,
++});
++const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++
++export interface NewApplication { child: ApplicationChild; parent: ApplicationParent; feeKobo: number }
++
++async function create(data: NewApplication, now: Date): Promise<ApplicationRecord> {
++  const year = now.getUTCFullYear();
++  const seq = await nextSequence(`admission-${year}`);
++  const doc = await ApplicationModel.create({
++    ...data, applicationNo: `ADM-${year}-${String(seq).padStart(4, '0')}`, expiresAt: new Date(now.getTime() + PENDING_LIFETIME_MS),
++  });
++  return toRecord(doc.toObject() as Row);
++}
++async function findById(id: string): Promise<ApplicationRecord | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const row = await ApplicationModel.findById(id).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++async function findByNo(applicationNo: string): Promise<ApplicationRecord | null> {
++  if (typeof applicationNo !== 'string') return null;
++  const row = await ApplicationModel.findOne({ applicationNo }).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++async function findByPaymentReference(reference: string): Promise<ApplicationRecord | null> {
++  if (typeof reference !== 'string') return null;
++  const row = await ApplicationModel.findOne({ 'payments.reference': reference }).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++/** The same child, applied for by the same parent email, that is still alive (not declined). */
++async function findDuplicate(parentEmail: string, firstName: string, lastName: string, dateOfBirth: string): Promise<ApplicationRecord | null> {
++  const row = await ApplicationModel.findOne({
++    'parent.email': parentEmail, 'child.dateOfBirth': dateOfBirth, status: { $ne: ADMISSION_STATUS.DECLINED },
++    'child.firstName': new RegExp(`^${escapeRegex(firstName)}$`, 'i'), 'child.lastName': new RegExp(`^${escapeRegex(lastName)}$`, 'i'),
++  }).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++async function list(filter: { status?: AdmissionStatus | undefined; q?: string | undefined }, o: { page: number; limit: number }) {
++  const query: Record<string, unknown> = {};
++  if (filter.status) query.status = filter.status;
++  if (filter.q) {
++    const rx = new RegExp(escapeRegex(filter.q), 'i');
++    query.$or = [{ applicationNo: rx }, { 'child.firstName': rx }, { 'child.lastName': rx }, { 'parent.email': rx }, { 'parent.phone': rx }];
++  }
++  const [rows, total] = await Promise.all([
++    ApplicationModel.find(query).sort({ paidAt: -1, createdAt: -1, _id: -1 }).skip(skipOf(o.page, o.limit)).limit(o.limit).lean<Row[]>(),
++    ApplicationModel.countDocuments(query),
++  ]);
++  return { items: rows.map(toRecord), total };
++}
++
++async function addPayment(id: string, payment: FeePayment): Promise<void> {
++  await ApplicationModel.updateOne({ _id: id }, { $push: { payments: payment } });
++}
++async function setCheckout(reference: string, checkoutUrl: string): Promise<void> {
++  await ApplicationModel.updateOne({ 'payments.reference': reference }, { $set: { 'payments.$.checkoutUrl': checkoutUrl } });
++}
++async function markPaymentFailed(reference: string): Promise<void> {
++  await ApplicationModel.updateOne(
++    { payments: { $elemMatch: { reference, status: FEE_PAYMENT_STATUS.PENDING } } }, { $set: { 'payments.$.status': FEE_PAYMENT_STATUS.FAILED } },
++  );
++}
++/** Throttles checks with Paystack: true for only one caller per window. */
++async function claimVerify(reference: string, minGapMs: number, now: Date): Promise<boolean> {
++  const r = await ApplicationModel.updateOne(
++    { payments: { $elemMatch: { reference, status: FEE_PAYMENT_STATUS.PENDING, $or: [{ lastVerifyAt: null }, { lastVerifyAt: { $lt: new Date(now.getTime() - minGapMs) } }] } } },
++    { $set: { 'payments.$.lastVerifyAt': now } },
++  );
++  return r.modifiedCount === 1;
++}
++/**
++ * Marks one payment paid, once. Returns 'ALREADY' if it was paid before, 'FIRST' when this payment
++ * moved the application to SUBMITTED, and 'EXTRA' when the application was already paid by another payment.
++ */
++async function confirmPayment(reference: string, paidAt: Date): Promise<'ALREADY' | 'FIRST' | 'EXTRA'> {
++  const marked = await ApplicationModel.findOneAndUpdate(
++    { payments: { $elemMatch: { reference, status: { $ne: FEE_PAYMENT_STATUS.SUCCESS } } } },
++    { $set: { 'payments.$.status': FEE_PAYMENT_STATUS.SUCCESS, 'payments.$.paidAt': paidAt } },
++  ).lean<Row>();
++  if (!marked) return 'ALREADY';
++  const moved = await ApplicationModel.updateOne(
++    { _id: marked._id, status: ADMISSION_STATUS.PENDING_PAYMENT }, { $set: { status: ADMISSION_STATUS.SUBMITTED, paidAt }, $unset: { expiresAt: 1 } },
++  );
++  return moved.modifiedCount === 1 ? 'FIRST' : 'EXTRA';
++}
++async function setPhoto(id: string, publicId: string, url: string): Promise<boolean> {
++  const r = await ApplicationModel.updateOne({ _id: id, status: ADMISSION_STATUS.SUBMITTED }, { $set: { photoPublicId: publicId, photoUrl: url } });
++  return r.matchedCount === 1;
++}
++
++/** One caller at a time may accept an application. A lock left behind by a crash expires. */
++async function claimAccept(id: string, now: Date, staleBefore: Date): Promise<ApplicationRecord | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const row = await ApplicationModel.findOneAndUpdate(
++    { _id: id, status: ADMISSION_STATUS.SUBMITTED, $or: [{ acceptLockAt: null }, { acceptLockAt: { $lt: staleBefore } }] },
++    { $set: { acceptLockAt: now } }, { new: true },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++async function saveProgress(id: string, progress: { studentId?: string; parentUserId?: string }): Promise<void> {
++  await ApplicationModel.updateOne({ _id: id }, { $set: progress });
++}
++async function releaseAccept(id: string): Promise<void> {
++  await ApplicationModel.updateOne({ _id: id }, { $set: { acceptLockAt: null } });
++}
++async function finishAccept(id: string, by: string, at: Date): Promise<ApplicationRecord | null> {
++  const row = await ApplicationModel.findOneAndUpdate(
++    { _id: id, status: ADMISSION_STATUS.SUBMITTED }, { $set: { status: ADMISSION_STATUS.ACCEPTED, decidedBy: by, decidedAt: at, acceptLockAt: null } }, { new: true },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++async function decline(id: string, by: string, reason: string, at: Date): Promise<ApplicationRecord | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const row = await ApplicationModel.findOneAndUpdate(
++    { _id: id, status: ADMISSION_STATUS.SUBMITTED, acceptLockAt: null },
++    { $set: { status: ADMISSION_STATUS.DECLINED, decidedBy: by, decidedAt: at, declineReason: reason } }, { new: true },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++// ---- the admission settings: open or closed, and the fee
++interface SettingsDocument { _id: string; open: boolean; feeKobo: number }
++const settingsSchema = new mongoose.Schema<SettingsDocument>(
++  { _id: { type: String, required: true }, open: { type: Boolean, default: true }, feeKobo: { type: Number, default: DEFAULT_FEE_KOBO, min: 100 } },
++  { versionKey: false },
++);
++const SettingsModel: Model<SettingsDocument> =
++  (mongoose.models.AdmissionSettings as Model<SettingsDocument> | undefined) ?? mongoose.model<SettingsDocument>('AdmissionSettings', settingsSchema);
++export interface AdmissionSettings { open: boolean; feeKobo: number }
++async function getSettings(): Promise<AdmissionSettings> {
++  const doc = await SettingsModel.findOneAndUpdate({ _id: 'admissions' }, { $setOnInsert: { open: true, feeKobo: DEFAULT_FEE_KOBO } }, { upsert: true, new: true }).lean<SettingsDocument>();
++  return { open: doc?.open ?? true, feeKobo: doc?.feeKobo ?? DEFAULT_FEE_KOBO };
++}
++async function updateSettings(patch: Partial<AdmissionSettings>): Promise<AdmissionSettings> {
++  await getSettings();
++  const set = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
++  const doc = await SettingsModel.findOneAndUpdate({ _id: 'admissions' }, { $set: set }, { new: true }).lean<SettingsDocument>();
++  return { open: doc?.open ?? true, feeKobo: doc?.feeKobo ?? DEFAULT_FEE_KOBO };
++}
++
++export const applicationRepository = {
++  create, findById, findByNo, findByPaymentReference, findDuplicate, list, addPayment, setCheckout, markPaymentFailed, claimVerify, confirmPayment,
++  setPhoto, claimAccept, saveProgress, releaseAccept, finishAccept, decline, getSettings, updateSettings,
++};
+diff --git a/src/modules/fees/fees.module.ts b/src/modules/fees/fees.module.ts
+index 3cd7022..6467954 100644
+--- a/src/modules/fees/fees.module.ts
++++ b/src/modules/fees/fees.module.ts
+@@ -48,4 +48,6 @@ export function createFeesModule(deps: {
+   audit: AuditService; auth: AuthModule; scope: ScopeService; notifier: NotificationService;
+   events: RequestEvents; requestChecks: RequestChecks; settings: SettingsService; paymentJobs: PaymentJobs;
++  /** Admission application fees arrive on the same webhook. */
++  admissionPayments?: { confirm(reference: string): Promise<'CONFIRMED' | 'ALREADY' | 'NOT_PAID_YET' | 'FAILED' | 'MISMATCH' | 'UNAVAILABLE' | 'UNKNOWN'> };
+ }) {
+   const { audit, scope, notifier, settings } = deps;
+@@ -90,5 +92,8 @@ export function createFeesModule(deps: {
+   });
+ 
+-  const processor = createWebhookProcessor({ events: paystackEventRepository, confirmation, refunds, users: userRepository, notifier, audit });
++  const processor = createWebhookProcessor({
++    events: paystackEventRepository, confirmation, refunds, users: userRepository, notifier, audit,
++    ...(deps.admissionPayments ? { admissionPayments: deps.admissionPayments } : {}),
++  });
+   // After the 200 is sent, the event is processed in the background. Anything that fails is retried by the sweep.
+   const dispatch = (eventId: string): void => {
+diff --git a/src/modules/fees/webhook.ts b/src/modules/fees/webhook.ts
+index e58f69e..1b0bca1 100644
+--- a/src/modules/fees/webhook.ts
++++ b/src/modules/fees/webhook.ts
+@@ -3,5 +3,5 @@ import type { RequestHandler } from 'express';
+ import { z } from 'zod';
+ import { logger } from '../../common/utils/logger';
+-import { ROLES } from '../../config/constants';
++import { ADMISSION_REFERENCE_PREFIX, ROLES } from '../../config/constants';
+ import { recordSafely, type AuditPort } from '../audit/audit.port';
+ import type { NotificationService } from '../notifications/notification.service';
+@@ -88,6 +88,8 @@ export function createWebhookProcessor(deps: {
+   notifier: Pick<NotificationService, 'notify'>;
+   audit: AuditPort;
++  /** Application fees for admission. Their references start with ADM-. */
++  admissionPayments?: { confirm(reference: string): Promise<'CONFIRMED' | 'ALREADY' | 'NOT_PAID_YET' | 'FAILED' | 'MISMATCH' | 'UNAVAILABLE' | 'UNKNOWN'> };
+ }) {
+-  const { events, confirmation, refunds, users, notifier, audit } = deps;
++  const { events, confirmation, refunds, users, notifier, audit, admissionPayments } = deps;
+ 
+   async function alertOwner(title: string, body: string): Promise<void> {
+@@ -97,4 +99,14 @@ export function createWebhookProcessor(deps: {
+   async function handle(ev: EventRecord): Promise<'PROCESSED' | 'IGNORED'> {
+     if (ev.event === 'charge.success') {
++      if (ev.reference && ev.reference.startsWith(ADMISSION_REFERENCE_PREFIX)) {
++        if (!admissionPayments) return 'IGNORED';
++        const outcome = await admissionPayments.confirm(ev.reference);
++        if (outcome === 'UNAVAILABLE' || outcome === 'NOT_PAID_YET') throw new Error(`admission payment not confirmed yet (${outcome})`);
++        if (outcome === 'UNKNOWN') {
++          await alertOwner('Unknown admission payment', `Paystack reported an application fee payment (${ev.reference}) that is not in our records. Please check the Paystack dashboard.`);
++          return 'IGNORED';
++        }
++        return 'PROCESSED';
++      }
+       if (!ev.reference || !ev.reference.startsWith(ONLINE_REFERENCE_PREFIX)) return 'IGNORED'; // not one of ours
+       const result = await confirmation.confirm(ev.reference, { source: 'WEBHOOK' });
+diff --git a/src/modules/users/users.module.ts b/src/modules/users/users.module.ts
+index 0db8ed5..743ac36 100644
+--- a/src/modules/users/users.module.ts
++++ b/src/modules/users/users.module.ts
+@@ -131,4 +131,4 @@ export function createUsersModule(deps: {
+   router.use(createSecurityRouter({ service: securityService, authenticate }));
+ 
+-  return { router, scope, armIdsOfUser };
++  return { router, scope, armIdsOfUser, students: studentService, parents: parentService, links: linkService };
+ }
+\ No newline at end of file
+diff --git a/src/openapi/index.ts b/src/openapi/index.ts
+index 0b2b656..8e817a8 100644
+--- a/src/openapi/index.ts
++++ b/src/openapi/index.ts
+@@ -29,4 +29,5 @@ import { registerFeeOperations } from '../modules/fees/fees.schema';
+ import { registerOnlineOperations } from '../modules/fees/online.schema';
+ import { registerFeeChargeOperations } from '../modules/fees/feeCharge.schema';
++import { registerAdmissionOperations } from '../modules/admissions/admission.schema';
+ 
+ /** Each phase adds its module's register function here. */
+@@ -61,4 +62,5 @@ export function createOperationRegistry(): OpenApiRegistry {
+   registerOnlineOperations(registry);
+   registerFeeChargeOperations(registry);
++  registerAdmissionOperations(registry);
+   
+   return registry;
+diff --git a/src/routes.ts b/src/routes.ts
+index 9308a02..48ee071 100644
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -8,4 +8,5 @@ import type { ImageStore } from './integrations/imageStore';
+ import type { Mailer } from './integrations/mailer';
+ import { createAcademicsModule } from './modules/academics/academics.module';
++import { createAdmissionsModule } from './modules/admissions/admissions.module';
+ import { createAuditRouter } from './modules/audit/audit.routes';
+ import type { AuditService } from './modules/audit/audit.service';
+@@ -69,7 +70,15 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
+   router.use(communication.router);
+ 
++  // Public admission form. Its fee payments come back through the same Paystack webhook, so it is built before fees.
++  const admissions = createAdmissionsModule({
++    audit, auth, notifier: communication.notifier, mailer, images, rateLimitRedis,
++    students: users.students, parents: users.parents, links: users.links,
++  });
++  router.use(admissions.router);
++
+   const fees = createFeesModule({
+     audit, auth, scope: users.scope, notifier: communication.notifier, events: communication.events,
+     requestChecks: communication.requestChecks, settings: settings.service, paymentJobs,
++    admissionPayments: admissions.payments,
+   });
+   router.use(fees.router);

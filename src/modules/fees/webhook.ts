@@ -2,7 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import { logger } from '../../common/utils/logger';
-import { ROLES } from '../../config/constants';
+import { ADMISSION_REFERENCE_PREFIX, ROLES } from '../../config/constants';
 import { recordSafely, type AuditPort } from '../audit/audit.port';
 import type { NotificationService } from '../notifications/notification.service';
 import type { userRepository } from '../users/user.repository';
@@ -87,8 +87,10 @@ export function createWebhookProcessor(deps: {
   users: Pick<typeof userRepository, 'findIdsByRoles'>;
   notifier: Pick<NotificationService, 'notify'>;
   audit: AuditPort;
+  /** Application fees for admission. Their references start with ADM-. */
+  admissionPayments?: { confirm(reference: string): Promise<'CONFIRMED' | 'ALREADY' | 'NOT_PAID_YET' | 'FAILED' | 'MISMATCH' | 'UNAVAILABLE' | 'UNKNOWN'> };
 }) {
-  const { events, confirmation, refunds, users, notifier, audit } = deps;
+  const { events, confirmation, refunds, users, notifier, audit, admissionPayments } = deps;
 
   async function alertOwner(title: string, body: string): Promise<void> {
     await notifier.notify({ userIds: await users.findIdsByRoles([ROLES.SUPER_ADMIN]), type: 'PAYMENT_ALERT', title, body, email: true });
@@ -96,6 +98,16 @@ export function createWebhookProcessor(deps: {
 
   async function handle(ev: EventRecord): Promise<'PROCESSED' | 'IGNORED'> {
     if (ev.event === 'charge.success') {
+      if (ev.reference && ev.reference.startsWith(ADMISSION_REFERENCE_PREFIX)) {
+        if (!admissionPayments) return 'IGNORED';
+        const outcome = await admissionPayments.confirm(ev.reference);
+        if (outcome === 'UNAVAILABLE' || outcome === 'NOT_PAID_YET') throw new Error(`admission payment not confirmed yet (${outcome})`);
+        if (outcome === 'UNKNOWN') {
+          await alertOwner('Unknown admission payment', `Paystack reported an application fee payment (${ev.reference}) that is not in our records. Please check the Paystack dashboard.`);
+          return 'IGNORED';
+        }
+        return 'PROCESSED';
+      }
       if (!ev.reference || !ev.reference.startsWith(ONLINE_REFERENCE_PREFIX)) return 'IGNORED'; // not one of ours
       const result = await confirmation.confirm(ev.reference, { source: 'WEBHOOK' });
       switch (result.outcome) {

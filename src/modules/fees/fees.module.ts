@@ -47,6 +47,8 @@ import { createPaystackWebhookHandler, createWebhookProcessor } from './webhook'
 export function createFeesModule(deps: {
   audit: AuditService; auth: AuthModule; scope: ScopeService; notifier: NotificationService;
   events: RequestEvents; requestChecks: RequestChecks; settings: SettingsService; paymentJobs: PaymentJobs;
+  /** Admission application fees arrive on the same webhook. */
+  admissionPayments?: { confirm(reference: string): Promise<'CONFIRMED' | 'ALREADY' | 'NOT_PAID_YET' | 'FAILED' | 'MISMATCH' | 'UNAVAILABLE' | 'UNKNOWN'> };
 }) {
   const { audit, scope, notifier, settings } = deps;
   const authenticate = deps.auth.middleware.authenticate;
@@ -89,7 +91,10 @@ export function createFeesModule(deps: {
     reservedRefunds: (paymentId) => refundRepository.reservedTotal(paymentId),
   });
 
-  const processor = createWebhookProcessor({ events: paystackEventRepository, confirmation, refunds, users: userRepository, notifier, audit });
+  const processor = createWebhookProcessor({
+    events: paystackEventRepository, confirmation, refunds, users: userRepository, notifier, audit,
+    ...(deps.admissionPayments ? { admissionPayments: deps.admissionPayments } : {}),
+  });
   // After the 200 is sent, the event is processed in the background. Anything that fails is retried by the sweep.
   const dispatch = (eventId: string): void => {
     void processor.process(eventId).catch((err: unknown) => logger.error({ err, eventId }, 'webhook processing crashed'));

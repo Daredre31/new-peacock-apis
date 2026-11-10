@@ -1,6 +1,9 @@
 /** The school's name as it appears in emails, the API docs and the default settings. */
 export const SCHOOL_NAME = 'Peacock Royal Academy';
 
+/** Paystack references for admission application fees start with this. Fee payments use PCK-. */
+export const ADMISSION_REFERENCE_PREFIX = 'ADM-';
+
 /** The five fixed roles. Values are UPPER_SNAKE, as the API conventions require. */
 export const ROLES = {
   SUPER_ADMIN: 'SUPER_ADMIN',
@@ -91,6 +94,9 @@ export const PERMISSIONS = {
   'fee-structures:read': [SA, AD],
   'fee-structures:write': [AD],
   'fee-structures:approve': [SA],
+  'admissions:read': [SA, AD],
+  'admissions:review': [SA, AD],
+  'admissions:settings': [SA],
   'fee-charges:read': [SA, AD],
   'fee-charges:write': [AD],
   'fee-charges:approve': [SA],

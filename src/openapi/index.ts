@@ -28,6 +28,7 @@ import { registerDashboardOperations } from '../modules/dashboards/dashboard.sch
 import { registerFeeOperations } from '../modules/fees/fees.schema';
 import { registerOnlineOperations } from '../modules/fees/online.schema';
 import { registerFeeChargeOperations } from '../modules/fees/feeCharge.schema';
+import { registerAdmissionOperations } from '../modules/admissions/admission.schema';
 
 /** Each phase adds its module's register function here. */
 export function createOperationRegistry(): OpenApiRegistry {
@@ -60,6 +61,7 @@ export function createOperationRegistry(): OpenApiRegistry {
   registerFeeOperations(registry);
   registerOnlineOperations(registry);
   registerFeeChargeOperations(registry);
+  registerAdmissionOperations(registry);
   
   return registry;
 }

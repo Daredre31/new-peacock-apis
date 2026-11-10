@@ -130,5 +130,5 @@ export function createUsersModule(deps: {
   );
   router.use(createSecurityRouter({ service: securityService, authenticate }));
 
-  return { router, scope, armIdsOfUser };
+  return { router, scope, armIdsOfUser, students: studentService, parents: parentService, links: linkService };
 }

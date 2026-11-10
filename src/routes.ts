@@ -7,6 +7,7 @@ import type { ReportJobs } from './jobs/report.jobs';
 import type { ImageStore } from './integrations/imageStore';
 import type { Mailer } from './integrations/mailer';
 import { createAcademicsModule } from './modules/academics/academics.module';
+import { createAdmissionsModule } from './modules/admissions/admissions.module';
 import { createAuditRouter } from './modules/audit/audit.routes';
 import type { AuditService } from './modules/audit/audit.service';
 import type { AuthModule } from './modules/auth/auth.module';
@@ -68,9 +69,17 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
   });
   router.use(communication.router);
 
+  // Public admission form. Its fee payments come back through the same Paystack webhook, so it is built before fees.
+  const admissions = createAdmissionsModule({
+    audit, auth, notifier: communication.notifier, mailer, images, rateLimitRedis,
+    students: users.students, parents: users.parents, links: users.links,
+  });
+  router.use(admissions.router);
+
   const fees = createFeesModule({
     audit, auth, scope: users.scope, notifier: communication.notifier, events: communication.events,
     requestChecks: communication.requestChecks, settings: settings.service, paymentJobs,
+    admissionPayments: admissions.payments,
   });
   router.use(fees.router);
 
