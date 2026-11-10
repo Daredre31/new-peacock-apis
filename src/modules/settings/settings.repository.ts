@@ -21,6 +21,8 @@ export interface SchoolPolicy {
    * false: they can use it straight away. Staff and parents are always forced, whatever this says.
    */
   studentsMustChangePassword: boolean;
+  /** A student whose yearly average reaches this percent is promoted. Below it, they repeat. */
+  promotionPassMarkPercent: number;
 }
 
 export const DEFAULT_PROFILE: SchoolProfile = {
@@ -29,6 +31,7 @@ export const DEFAULT_PROFILE: SchoolProfile = {
 export const DEFAULT_POLICY: SchoolPolicy = {
   withholdReportsIfOwing: false, teacherPostsNeedApproval: true, lowAttendancePercent: 75, lowScorePercent: 40,
   studentsMustChangePassword: true, onlinePaymentFeeKobo: 10_000, minPartPaymentPercent: 2,// today's behaviour until the super admin turns it off
+  promotionPassMarkPercent: 40,
 };
 
 interface SettingsDocument {

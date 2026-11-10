@@ -16,6 +16,7 @@ import { createCbtModule } from './modules/cbt/cbt.module';
 import { createCommunicationModule } from './modules/communication/communication.module';
 import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
 import { createPassportPhotosModule } from './modules/passport-photos/passportPhotos.module';
+import { createPromotionsModule } from './modules/promotions/promotions.module';
 import { createPortalModule } from './modules/portal/portal.module';
 import { createResultsModule } from './modules/results/results.module';
 import { scoreRepository } from './modules/results/score.repository';
@@ -94,6 +95,9 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
     reportGate: fees.reportGate,
   });
   router.use(results.router);
+
+  // Promotion reads the yearly averages from results and what students owe from fees, so it comes after both.
+  router.use(createPromotionsModule({ auth, settings: settings.service, annual: results.annual }).router);
 
   const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs });
   router.use(cbt.router);

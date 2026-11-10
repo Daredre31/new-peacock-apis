@@ -1,0 +1,1001 @@
+--- a/src/modules/settings/settings.repository.ts
++++ b/src/modules/settings/settings.repository.ts
+@@ -21,6 +21,8 @@
+    * false: they can use it straight away. Staff and parents are always forced, whatever this says.
+    */
+   studentsMustChangePassword: boolean;
++  /** A student whose yearly average reaches this percent is promoted. Below it, they repeat. */
++  promotionPassMarkPercent: number;
+ }
+ 
+ export const DEFAULT_PROFILE: SchoolProfile = {
+@@ -29,6 +31,7 @@
+ export const DEFAULT_POLICY: SchoolPolicy = {
+   withholdReportsIfOwing: false, teacherPostsNeedApproval: true, lowAttendancePercent: 75, lowScorePercent: 40,
+   studentsMustChangePassword: true, onlinePaymentFeeKobo: 10_000, minPartPaymentPercent: 2,// today's behaviour until the super admin turns it off
++  promotionPassMarkPercent: 40,
+ };
+ 
+ interface SettingsDocument {
+--- a/src/modules/settings/settings.schema.ts
++++ b/src/modules/settings/settings.schema.ts
+@@ -34,6 +34,7 @@
+      onlinePaymentFeeKobo: z.number().int().min(0).max(1_000_000).optional(),
+   minPartPaymentPercent: z.number().int().min(1).max(100).optional(),
+   studentsMustChangePassword: z.boolean().optional(),
++  promotionPassMarkPercent: z.number().int().min(1).max(100).optional(),
+ }).strict();
+ export const updateSettingsBody = z.object({ profile: profileBody.optional(), policy: policyBody.optional() });
+ export const updateSettingsSchemas = { body: updateSettingsBody };
+@@ -41,13 +42,12 @@
+ const profileView = z.object({
+   name: z.string(), shortName: z.string().nullable(), motto: z.string().nullable(), address: z.string().nullable(),
+   phone: z.string().nullable(), email: z.string().nullable(), website: z.string().nullable(),
+-    onlinePaymentFeeKobo: z.number().int(), minPartPaymentPercent: z.number().int(),
+ });
+ const policyView = z.object({
+   withholdReportsIfOwing: z.boolean(), teacherPostsNeedApproval: z.boolean(),
+   lowAttendancePercent: z.number().int(), lowScorePercent: z.number().int(),
+   studentsMustChangePassword: z.boolean(),
+-    onlinePaymentFeeKobo: z.number().int(), minPartPaymentPercent: z.number().int(),
++  onlinePaymentFeeKobo: z.number().int(), minPartPaymentPercent: z.number().int(), promotionPassMarkPercent: z.number().int(),
+ });
+ 
+ export function registerSettingsOperations(registry: OpenApiRegistry): void {
+--- a/src/modules/academics/structure.repository.ts
++++ b/src/modules/academics/structure.repository.ts
+@@ -100,6 +100,12 @@
+   return row ? toClass(row) : null;
+ }
+ 
++/** The class one step up: the lowest level above this one. Null means this is the top class. */
++async function nextClassAfter(level: number): Promise<ClassRecord | null> {
++  const row = await ClassModel.findOne({ level: { $gt: level } }).sort({ level: 1 }).lean<Row<ClassDocument>>();
++  return row ? toClass(row) : null;
++}
++
+ // ---- class arms
+ async function listArms(filter: { classId?: string; q?: string }, o: PageOptions<ArmSort>) {
+   const query: Record<string, unknown> = { ...(filter.q && search('name', filter.q)) };
+@@ -118,6 +124,13 @@
+   return row ? toArm(row) : null;
+ }
+ 
++/** Same arm name in another class, ignoring case: "A" in JSS1 maps to "A" in JSS2. */
++async function findArmByName(classId: string, name: string): Promise<ArmRecord | null> {
++  if (!OBJECT_ID.test(classId)) return null;
++  const row = await ClassArmModel.findOne({ classId, name: new RegExp(`^${escapeRegex(name.trim())}$`, 'i') }).lean<Row<ClassArmDocument>>();
++  return row ? toArm(row) : null;
++}
++
+ async function createArm(data: { classId: string; name: string }): Promise<ArmRecord> {
+   const doc = await ClassArmModel.create(data);
+   return toArm(doc.toObject() as Row<ClassArmDocument>);
+@@ -183,7 +196,7 @@
+ }
+ 
+ export const structureRepository = {
+-  listClasses, findClass, classesByIds, createClass, updateClass,
++  listClasses, findClass, classesByIds, nextClassAfter, findArmByName, createClass, updateClass,
+   listArms, findArm, createArm, updateArm,
+   listSubjects, findSubject, countExistingSubjects, createSubject, updateSubject,
+   armsByIds,subjectsByIds,setClassTeacher,armIdsOfClassTeacher
+--- a/src/modules/fees/invoice.repository.ts
++++ b/src/modules/fees/invoice.repository.ts
+@@ -156,6 +156,20 @@
+   return rows.reduce((sum, r) => sum + r.balanceKobo, 0);
+ }
+ 
++/**
++ * What each student still owes across ALL sessions, so an old unpaid debt is not forgotten.
++ * Extra charges marked as not blocking reports are left out, the same rule the report gate uses.
++ */
++async function outstandingForStudents(studentIds: string[]): Promise<Map<string, number>> {
++  const ids = [...new Set(studentIds)].filter((id) => OBJECT_ID.test(id)).map((id) => new mongoose.Types.ObjectId(id));
++  if (ids.length === 0) return new Map();
++  const rows = await InvoiceModel.aggregate<{ _id: Types.ObjectId; owedKobo: number }>([
++    { $match: { studentId: { $in: ids }, balanceKobo: { $gt: 0 }, blocksReports: { $ne: false } } },
++    { $group: { _id: '$studentId', owedKobo: { $sum: '$balanceKobo' } } },
++  ]);
++  return new Map(rows.map((r) => [r._id.toString(), r.owedKobo]));
++}
++
+ export interface DefaulterRow { studentId: string; classArmId: string; outstandingKobo: number; invoices: number; oldestDueDate: string }
+ export interface DefaulterReport {
+   students: number; outstandingKobo: number; byClassArm: { classArmId: string; students: number; outstandingKobo: number }[]; rows: DefaulterRow[];
+@@ -230,5 +244,5 @@
+ 
+ export const invoiceRepository = {
+   create, findById, findManyByIds, list, adjustBalance, existsForStructure, countForStructure,
+-   outstandingForStudent, defaulters, dueForReminder, markReminded, idsForScope , totalsByClassArm
++   outstandingForStudent, outstandingForStudents, defaulters, dueForReminder, markReminded, idsForScope , totalsByClassArm
+ };
+\ No newline at end of file
+--- a/src/config/constants.ts
++++ b/src/config/constants.ts
+@@ -83,6 +83,7 @@
+   'results:publish': [AD],
+   'results:lock': [SA], // lock and unlock
+   'results:annual': [SA, AD], // the yearly average sheet for a class
++  'promotions:preview': [SA, AD], // what would happen to a class at the end of a session. Writes nothing
+ 
+   // ---- CBT
+   'cbt:manage': [TE], // create, upload questions, release results
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -16,6 +16,7 @@
+ import { createCommunicationModule } from './modules/communication/communication.module';
+ import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
+ import { createPassportPhotosModule } from './modules/passport-photos/passportPhotos.module';
++import { createPromotionsModule } from './modules/promotions/promotions.module';
+ import { createPortalModule } from './modules/portal/portal.module';
+ import { createResultsModule } from './modules/results/results.module';
+ import { scoreRepository } from './modules/results/score.repository';
+@@ -95,6 +96,9 @@
+   });
+   router.use(results.router);
+ 
++  // Promotion reads the yearly averages from results and what students owe from fees, so it comes after both.
++  router.use(createPromotionsModule({ auth, settings: settings.service, annual: results.annual }).router);
++
+   const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs });
+   router.use(cbt.router);
+ 
+--- a/src/openapi/index.ts
++++ b/src/openapi/index.ts
+@@ -18,6 +18,7 @@
+ import { registerRequestOperations } from '../modules/requests/request.schema';
+ import { registerTaskOperations } from '../modules/tasks/task.schema';
+ import { registerSettingsOperations } from '../modules/settings/settings.schema';
++import { registerPromotionOperations } from '../modules/promotions/promotion.schema';
+ import { registerResultsOperations } from '../modules/results/results.schema';
+ import { registerCbtOperations } from '../modules/cbt/cbt.schema';
+ import { registerTimetableOperations } from '../modules/timetable/timetable.schema';
+@@ -52,6 +53,7 @@
+     registerTaskOperations(registry);
+   registerSettingsOperations(registry);
+   registerResultsOperations(registry);
++  registerPromotionOperations(registry);
+   registerCbtOperations(registry);
+     registerTimetableOperations(registry);
+   registerCalendarOperations(registry);
+--- /dev/null
++++ b/src/modules/promotions/promotion.plan.ts
+@@ -0,0 +1,43 @@
++import type { StudentStatus } from '../users/student.model';
++
++export const OUTCOME = {
++  PROMOTE: 'PROMOTE', REPEAT: 'REPEAT', GRADUATE: 'GRADUATE',
++  NEEDS_DECISION: 'NEEDS_DECISION', ALREADY_ENROLLED: 'ALREADY_ENROLLED', NOT_ELIGIBLE: 'NOT_ELIGIBLE',
++} as const;
++export type Outcome = (typeof OUTCOME)[keyof typeof OUTCOME];
++
++export const REASON = {
++  INCOMPLETE_RESULTS: 'INCOMPLETE_RESULTS', OWES_FEES: 'OWES_FEES', NOT_ACTIVE: 'NOT_ACTIVE', ALREADY_ENROLLED: 'ALREADY_ENROLLED',
++} as const;
++export type Reason = (typeof REASON)[keyof typeof REASON];
++
++export interface StudentFacts {
++  /** Null when the student has no active record (missing or deleted). */
++  status: StudentStatus | null;
++  /** Already has an enrolment in the target session, so there is nothing left to do. */
++  alreadyEnrolled: boolean;
++  average: number | null;
++  /** Published results in every term of the session. */
++  complete: boolean;
++  owingKobo: number;
++}
++export interface PromotionRules { passMarkPercent: number; isFinalClass: boolean }
++export interface Decision { outcome: Outcome; blocked: boolean; reasons: Reason[] }
++
++/**
++ * What should happen to one student. Pure: it only reads its inputs.
++ * Passing moves up (or graduates from the top class), failing repeats, anything uncertain waits for a person.
++ * Owing fees BLOCKS a promotion or graduation. It never blocks repeating, because that is not a promotion.
++ */
++export function decide(facts: StudentFacts, rules: PromotionRules): Decision {
++  if (facts.status !== 'ACTIVE') return { outcome: OUTCOME.NOT_ELIGIBLE, blocked: false, reasons: [REASON.NOT_ACTIVE] };
++  if (facts.alreadyEnrolled) return { outcome: OUTCOME.ALREADY_ENROLLED, blocked: false, reasons: [REASON.ALREADY_ENROLLED] };
++
++  const reasons: Reason[] = facts.owingKobo > 0 ? [REASON.OWES_FEES] : [];
++  if (!facts.complete || facts.average === null) {
++    return { outcome: OUTCOME.NEEDS_DECISION, blocked: false, reasons: [REASON.INCOMPLETE_RESULTS, ...reasons] };
++  }
++
++  const outcome = facts.average >= rules.passMarkPercent ? (rules.isFinalClass ? OUTCOME.GRADUATE : OUTCOME.PROMOTE) : OUTCOME.REPEAT;
++  return { outcome, blocked: outcome !== OUTCOME.REPEAT && facts.owingKobo > 0, reasons };
++}
+--- /dev/null
++++ b/src/modules/promotions/promotion.service.ts
+@@ -0,0 +1,127 @@
++import { AppError } from '../../common/errors/AppError';
++import type { enrolmentRepository } from '../academics/enrolment.repository';
++import type { sessionRepository } from '../academics/session.repository';
++import type { structureRepository } from '../academics/structure.repository';
++import type { invoiceRepository } from '../fees/invoice.repository';
++import type { AnnualResultsService } from '../results/annualResults.service';
++import type { SettingsService } from '../settings/settings.service';
++import type { studentRepository } from '../users/student.repository';
++import { decide, OUTCOME, REASON, type Outcome, type Reason } from './promotion.plan';
++
++export type IssueCode = 'TARGET_SESSION_NOT_AFTER_SOURCE' | 'TERMS_NOT_CLOSED' | 'TARGET_ARM_MISSING' | 'NO_STUDENTS';
++export interface Issue { code: IssueCode; message: string }
++
++export interface PreviewStudent {
++  studentId: string; name: string; admissionNo: string;
++  average: number | null; grade: string | null; position: number | null; complete: boolean;
++  outcome: Outcome; blocked: boolean; reasons: Reason[]; owingKobo: number;
++}
++export interface PromotionPreview {
++  passMarkPercent: number;
++  source: { session: { id: string; name: string }; classArm: { id: string; name: string }; termsClosed: boolean };
++  target: {
++    session: { id: string; name: string };
++    nextClass: { id: string; name: string; level: number } | null;
++    arm: { id: string; name: string } | null;
++    isFinalClass: boolean;
++  };
++  issues: Issue[];
++  summary: Record<'promote' | 'repeat' | 'graduate' | 'needsDecision' | 'alreadyEnrolled' | 'notEligible' | 'blockedByFees', number>;
++  students: PreviewStudent[];
++}
++
++export function createPromotionService(deps: {
++  annual: Pick<AnnualResultsService, 'forArm'>;
++  settings: Pick<SettingsService, 'getPolicy'>;
++  sessions: Pick<typeof sessionRepository, 'findSession' | 'findTermsOfSession'>;
++  structure: Pick<typeof structureRepository, 'findArm' | 'classesByIds' | 'nextClassAfter' | 'findArmByName'>;
++  enrolments: Pick<typeof enrolmentRepository, 'forStudents'>;
++  students: Pick<typeof studentRepository, 'findManyByUserIds'>;
++  invoices: Pick<typeof invoiceRepository, 'outstandingForStudents'>;
++}) {
++  const { annual, settings, sessions, structure, enrolments, students, invoices } = deps;
++  const invalid = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
++
++  return {
++    /**
++     * What would happen to every student in a class when the school moves from one session to the next.
++     * Read-only: nothing is saved, so it can be run as often as needed.
++     */
++    async preview(input: { classArmId: string; sessionId: string; targetSessionId: string; targetArmId?: string | undefined }): Promise<PromotionPreview> {
++      const [sourceSession, targetSession, arm] = await Promise.all([
++        sessions.findSession(input.sessionId), sessions.findSession(input.targetSessionId), structure.findArm(input.classArmId),
++      ]);
++      if (!sourceSession || !targetSession || !arm) throw new AppError('NOT_FOUND');
++
++      const issues: Issue[] = [];
++      if (targetSession.startDate.getTime() <= sourceSession.startDate.getTime()) {
++        issues.push({ code: 'TARGET_SESSION_NOT_AFTER_SOURCE', message: 'The target session must start after the session being closed' });
++      }
++      const terms = await sessions.findTermsOfSession(sourceSession.id);
++      const termsClosed = terms.length > 0 && terms.every((t) => t.locked);
++      if (!termsClosed) issues.push({ code: 'TERMS_NOT_CLOSED', message: 'Every term of the session must be closed before students are promoted' });
++
++      const [classes, policy, results] = await Promise.all([
++        structure.classesByIds([arm.classId]), settings.getPolicy(), annual.forArm(arm.id, sourceSession.id),
++      ]);
++      const currentClass = classes.get(arm.classId);
++      if (!currentClass) throw new AppError('NOT_FOUND');
++      const nextClass = await structure.nextClassAfter(currentClass.level);
++      const isFinalClass = nextClass === null;
++
++      // The arm students move into: the one named by the admin, else the arm with the same name one class up.
++      let targetArm: { id: string; name: string } | null = null;
++      if (nextClass) {
++        if (input.targetArmId) {
++          const chosen = await structure.findArm(input.targetArmId);
++          if (!chosen) throw invalid('targetArmId', 'That class arm does not exist');
++          if (chosen.classId !== nextClass.id) throw invalid('targetArmId', `That arm is not in ${nextClass.name}, the next class`);
++          targetArm = { id: chosen.id, name: chosen.name };
++        } else {
++          const matched = await structure.findArmByName(nextClass.id, arm.name);
++          if (matched) targetArm = { id: matched.id, name: matched.name };
++        }
++        if (!targetArm) issues.push({ code: 'TARGET_ARM_MISSING', message: `${nextClass.name} has no arm named "${arm.name}". Create it, or choose the arm to move this class into` });
++      }
++      if (results.students.length === 0) issues.push({ code: 'NO_STUDENTS', message: 'No students are enrolled in this class for the session' });
++
++      const studentIds = results.students.map((s) => s.studentId);
++      const [records, owing, already] = await Promise.all([
++        students.findManyByUserIds(studentIds), invoices.outstandingForStudents(studentIds), enrolments.forStudents(studentIds, targetSession.id),
++      ]);
++      const statusOf = new Map(records.map((r) => [r.userId, r.status]));
++
++      const rows = results.students.map((s): PreviewStudent => {
++        const owingKobo = owing.get(s.studentId) ?? 0;
++        const decision = decide(
++          { status: statusOf.get(s.studentId) ?? null, alreadyEnrolled: already.has(s.studentId), average: s.average, complete: s.complete, owingKobo },
++          { passMarkPercent: policy.promotionPassMarkPercent, isFinalClass },
++        );
++        return {
++          studentId: s.studentId, name: s.name, admissionNo: s.admissionNo, average: s.average, grade: s.grade, position: s.position,
++          complete: s.complete, outcome: decision.outcome, blocked: decision.blocked, reasons: decision.reasons, owingKobo,
++        };
++      });
++
++      const count = (o: Outcome): number => rows.filter((r) => r.outcome === o).length;
++      return {
++        passMarkPercent: policy.promotionPassMarkPercent,
++        source: { session: { id: sourceSession.id, name: sourceSession.name }, classArm: results.classArm, termsClosed },
++        target: {
++          session: { id: targetSession.id, name: targetSession.name },
++          nextClass: nextClass ? { id: nextClass.id, name: nextClass.name, level: nextClass.level } : null,
++          arm: targetArm, isFinalClass,
++        },
++        issues,
++        summary: {
++          promote: count(OUTCOME.PROMOTE), repeat: count(OUTCOME.REPEAT), graduate: count(OUTCOME.GRADUATE),
++          needsDecision: count(OUTCOME.NEEDS_DECISION), alreadyEnrolled: count(OUTCOME.ALREADY_ENROLLED), notEligible: count(OUTCOME.NOT_ELIGIBLE),
++          blockedByFees: rows.filter((r) => r.blocked && r.reasons.includes(REASON.OWES_FEES)).length,
++        },
++        students: rows,
++      };
++    },
++  };
++}
++
++export type PromotionService = ReturnType<typeof createPromotionService>;
+--- /dev/null
++++ b/src/modules/promotions/promotion.schema.ts
+@@ -0,0 +1,44 @@
++import { z } from 'zod';
++import { PERMISSIONS } from '../../config/constants';
++import type { OpenApiRegistry } from '../../openapi/registry';
++
++const objectId = z.string().regex(/^[a-f0-9]{24}$/);
++
++export const previewQuery = z.object({
++  /** The class arm being promoted, and the session that is ending. */
++  classArmId: objectId, sessionId: objectId,
++  /** The session students move into. */
++  targetSessionId: objectId,
++  /** Only needed when the next class has no arm with the same name. */
++  targetArmId: objectId.optional(),
++});
++export const previewSchemas = { query: previewQuery };
++
++export function registerPromotionOperations(registry: OpenApiRegistry): void {
++  const tags = ['promotions'];
++  const num = z.number().int();
++  const named = z.object({ id: z.string(), name: z.string() });
++  const outcome = z.enum(['PROMOTE', 'REPEAT', 'GRADUATE', 'NEEDS_DECISION', 'ALREADY_ENROLLED', 'NOT_ELIGIBLE']);
++  const reason = z.enum(['INCOMPLETE_RESULTS', 'OWES_FEES', 'NOT_ACTIVE', 'ALREADY_ENROLLED']);
++
++  registry.register({
++    method: 'get', path: '/promotions/preview', operationId: 'previewPromotion',
++    summary: 'What would happen to each student in a class when moving to the next session. A yearly average at or above the pass mark promotes (or graduates from the top class), below it repeats. Owing fees blocks a promotion or graduation. Incomplete results need a decision. Writes nothing',
++    tags, roles: PERMISSIONS['promotions:preview'], request: { query: previewQuery },
++    success: {
++      status: 200, description: 'The preview',
++      data: z.object({
++        passMarkPercent: num,
++        source: z.object({ session: named, classArm: named, termsClosed: z.boolean() }),
++        target: z.object({ session: named, nextClass: z.object({ id: z.string(), name: z.string(), level: num }).nullable(), arm: named.nullable(), isFinalClass: z.boolean() }),
++        issues: z.array(z.object({ code: z.enum(['TARGET_SESSION_NOT_AFTER_SOURCE', 'TERMS_NOT_CLOSED', 'TARGET_ARM_MISSING', 'NO_STUDENTS']), message: z.string() })),
++        summary: z.object({ promote: num, repeat: num, graduate: num, needsDecision: num, alreadyEnrolled: num, notEligible: num, blockedByFees: num }),
++        students: z.array(z.object({
++          studentId: z.string(), name: z.string(), admissionNo: z.string(), average: z.number().nullable(), grade: z.string().nullable(),
++          position: num.nullable(), complete: z.boolean(), outcome, blocked: z.boolean(), reasons: z.array(reason), owingKobo: num,
++        })),
++      }),
++    },
++    errors: ['NOT_FOUND'],
++  });
++}
+--- /dev/null
++++ b/src/modules/promotions/promotion.routes.ts
+@@ -0,0 +1,18 @@
++import { Router, type RequestHandler } from 'express';
++import { authorize } from '../../common/middleware/authorize';
++import { validate, type Validated } from '../../common/middleware/validate';
++import { sendSuccess } from '../../common/utils/apiResponse';
++import { previewSchemas } from './promotion.schema';
++import type { PromotionService } from './promotion.service';
++
++export function createPromotionRouter(deps: { service: PromotionService; authenticate: RequestHandler }): Router {
++  const { service, authenticate: auth } = deps;
++  const router = Router();
++
++  router.get('/promotions/preview', auth, authorize('promotions:preview'), validate(previewSchemas), async (req, res) => {
++    const { query } = req.validated as Validated<typeof previewSchemas>;
++    sendSuccess(res, await service.preview(query));
++  });
++
++  return router;
++}
+--- /dev/null
++++ b/src/modules/promotions/promotions.module.ts
+@@ -0,0 +1,18 @@
++import { enrolmentRepository } from '../academics/enrolment.repository';
++import { sessionRepository } from '../academics/session.repository';
++import { structureRepository } from '../academics/structure.repository';
++import type { AuthModule } from '../auth/auth.module';
++import { invoiceRepository } from '../fees/invoice.repository';
++import type { AnnualResultsService } from '../results/annualResults.service';
++import type { SettingsService } from '../settings/settings.service';
++import { studentRepository } from '../users/student.repository';
++import { createPromotionRouter } from './promotion.routes';
++import { createPromotionService } from './promotion.service';
++
++export function createPromotionsModule(deps: { auth: AuthModule; settings: SettingsService; annual: AnnualResultsService }) {
++  const service = createPromotionService({
++    annual: deps.annual, settings: deps.settings, sessions: sessionRepository, structure: structureRepository,
++    enrolments: enrolmentRepository, students: studentRepository, invoices: invoiceRepository,
++  });
++  return { router: createPromotionRouter({ service, authenticate: deps.auth.middleware.authenticate }), service };
++}
+--- a/openapi/openapi.json
++++ b/openapi/openapi.json
+@@ -57,6 +57,9 @@
+       "name": "passport photos"
+     },
+     {
++      "name": "promotions"
++    },
++    {
+       "name": "public admissions"
+     },
+     {
+@@ -26605,6 +26608,450 @@
+         }
+       }
+     },
++    "/promotions/preview": {
++      "get": {
++        "operationId": "previewPromotion",
++        "summary": "What would happen to each student in a class when moving to the next session. A yearly average at or above the pass mark promotes (or graduates from the top class), below it repeats. Owing fees blocks a promotion or graduation. Incomplete results need a decision. Writes nothing",
++        "tags": [
++          "promotions"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN"
++        ],
++        "parameters": [
++          {
++            "name": "classArmId",
++            "in": "query",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          },
++          {
++            "name": "sessionId",
++            "in": "query",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          },
++          {
++            "name": "targetSessionId",
++            "in": "query",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          },
++          {
++            "name": "targetArmId",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "The preview",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "passMarkPercent": {
++                          "type": "integer",
++                          "minimum": -9007199254740991,
++                          "maximum": 9007199254740991
++                        },
++                        "source": {
++                          "type": "object",
++                          "properties": {
++                            "session": {
++                              "type": "object",
++                              "properties": {
++                                "id": {
++                                  "type": "string"
++                                },
++                                "name": {
++                                  "type": "string"
++                                }
++                              },
++                              "required": [
++                                "id",
++                                "name"
++                              ],
++                              "additionalProperties": false
++                            },
++                            "classArm": {
++                              "type": "object",
++                              "properties": {
++                                "id": {
++                                  "type": "string"
++                                },
++                                "name": {
++                                  "type": "string"
++                                }
++                              },
++                              "required": [
++                                "id",
++                                "name"
++                              ],
++                              "additionalProperties": false
++                            },
++                            "termsClosed": {
++                              "type": "boolean"
++                            }
++                          },
++                          "required": [
++                            "session",
++                            "classArm",
++                            "termsClosed"
++                          ],
++                          "additionalProperties": false
++                        },
++                        "target": {
++                          "type": "object",
++                          "properties": {
++                            "session": {
++                              "type": "object",
++                              "properties": {
++                                "id": {
++                                  "type": "string"
++                                },
++                                "name": {
++                                  "type": "string"
++                                }
++                              },
++                              "required": [
++                                "id",
++                                "name"
++                              ],
++                              "additionalProperties": false
++                            },
++                            "nextClass": {
++                              "anyOf": [
++                                {
++                                  "type": "object",
++                                  "properties": {
++                                    "id": {
++                                      "type": "string"
++                                    },
++                                    "name": {
++                                      "type": "string"
++                                    },
++                                    "level": {
++                                      "type": "integer",
++                                      "minimum": -9007199254740991,
++                                      "maximum": 9007199254740991
++                                    }
++                                  },
++                                  "required": [
++                                    "id",
++                                    "name",
++                                    "level"
++                                  ],
++                                  "additionalProperties": false
++                                },
++                                {
++                                  "type": "null"
++                                }
++                              ]
++                            },
++                            "arm": {
++                              "anyOf": [
++                                {
++                                  "type": "object",
++                                  "properties": {
++                                    "id": {
++                                      "type": "string"
++                                    },
++                                    "name": {
++                                      "type": "string"
++                                    }
++                                  },
++                                  "required": [
++                                    "id",
++                                    "name"
++                                  ],
++                                  "additionalProperties": false
++                                },
++                                {
++                                  "type": "null"
++                                }
++                              ]
++                            },
++                            "isFinalClass": {
++                              "type": "boolean"
++                            }
++                          },
++                          "required": [
++                            "session",
++                            "nextClass",
++                            "arm",
++                            "isFinalClass"
++                          ],
++                          "additionalProperties": false
++                        },
++                        "issues": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "code": {
++                                "type": "string",
++                                "enum": [
++                                  "TARGET_SESSION_NOT_AFTER_SOURCE",
++                                  "TERMS_NOT_CLOSED",
++                                  "TARGET_ARM_MISSING",
++                                  "NO_STUDENTS"
++                                ]
++                              },
++                              "message": {
++                                "type": "string"
++                              }
++                            },
++                            "required": [
++                              "code",
++                              "message"
++                            ],
++                            "additionalProperties": false
++                          }
++                        },
++                        "summary": {
++                          "type": "object",
++                          "properties": {
++                            "promote": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "repeat": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "graduate": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "needsDecision": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "alreadyEnrolled": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "notEligible": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "blockedByFees": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            }
++                          },
++                          "required": [
++                            "promote",
++                            "repeat",
++                            "graduate",
++                            "needsDecision",
++                            "alreadyEnrolled",
++                            "notEligible",
++                            "blockedByFees"
++                          ],
++                          "additionalProperties": false
++                        },
++                        "students": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "studentId": {
++                                "type": "string"
++                              },
++                              "name": {
++                                "type": "string"
++                              },
++                              "admissionNo": {
++                                "type": "string"
++                              },
++                              "average": {
++                                "type": [
++                                  "number",
++                                  "null"
++                                ]
++                              },
++                              "grade": {
++                                "type": [
++                                  "string",
++                                  "null"
++                                ]
++                              },
++                              "position": {
++                                "anyOf": [
++                                  {
++                                    "type": "integer",
++                                    "minimum": -9007199254740991,
++                                    "maximum": 9007199254740991
++                                  },
++                                  {
++                                    "type": "null"
++                                  }
++                                ]
++                              },
++                              "complete": {
++                                "type": "boolean"
++                              },
++                              "outcome": {
++                                "type": "string",
++                                "enum": [
++                                  "PROMOTE",
++                                  "REPEAT",
++                                  "GRADUATE",
++                                  "NEEDS_DECISION",
++                                  "ALREADY_ENROLLED",
++                                  "NOT_ELIGIBLE"
++                                ]
++                              },
++                              "blocked": {
++                                "type": "boolean"
++                              },
++                              "reasons": {
++                                "type": "array",
++                                "items": {
++                                  "type": "string",
++                                  "enum": [
++                                    "INCOMPLETE_RESULTS",
++                                    "OWES_FEES",
++                                    "NOT_ACTIVE",
++                                    "ALREADY_ENROLLED"
++                                  ]
++                                }
++                              },
++                              "owingKobo": {
++                                "type": "integer",
++                                "minimum": -9007199254740991,
++                                "maximum": 9007199254740991
++                              }
++                            },
++                            "required": [
++                              "studentId",
++                              "name",
++                              "admissionNo",
++                              "average",
++                              "grade",
++                              "position",
++                              "complete",
++                              "outcome",
++                              "blocked",
++                              "reasons",
++                              "owingKobo"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "passMarkPercent",
++                        "source",
++                        "target",
++                        "issues",
++                        "summary",
++                        "students"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "NOT_FOUND",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/public/admissions": {
+       "post": {
+         "operationId": "applyForAdmission",
+@@ -35968,16 +36415,6 @@
+                                 "string",
+                                 "null"
+                               ]
+-                            },
+-                            "onlinePaymentFeeKobo": {
+-                              "type": "integer",
+-                              "minimum": -9007199254740991,
+-                              "maximum": 9007199254740991
+-                            },
+-                            "minPartPaymentPercent": {
+-                              "type": "integer",
+-                              "minimum": -9007199254740991,
+-                              "maximum": 9007199254740991
+                             }
+                           },
+                           "required": [
+@@ -35987,9 +36424,7 @@
+                             "address",
+                             "phone",
+                             "email",
+-                            "website",
+-                            "onlinePaymentFeeKobo",
+-                            "minPartPaymentPercent"
++                            "website"
+                           ],
+                           "additionalProperties": false
+                         },
+@@ -36026,6 +36461,11 @@
+                                   "type": "integer",
+                                   "minimum": -9007199254740991,
+                                   "maximum": 9007199254740991
++                                },
++                                "promotionPassMarkPercent": {
++                                  "type": "integer",
++                                  "minimum": -9007199254740991,
++                                  "maximum": 9007199254740991
+                                 }
+                               },
+                               "required": [
+@@ -36035,7 +36475,8 @@
+                                 "lowScorePercent",
+                                 "studentsMustChangePassword",
+                                 "onlinePaymentFeeKobo",
+-                                "minPartPaymentPercent"
++                                "minPartPaymentPercent",
++                                "promotionPassMarkPercent"
+                               ],
+                               "additionalProperties": false
+                             },
+@@ -36232,6 +36673,11 @@
+                       },
+                       "studentsMustChangePassword": {
+                         "type": "boolean"
++                      },
++                      "promotionPassMarkPercent": {
++                        "type": "integer",
++                        "minimum": 1,
++                        "maximum": 100
+                       }
+                     },
+                     "additionalProperties": false
+@@ -36300,16 +36746,6 @@
+                                 "string",
+                                 "null"
+                               ]
+-                            },
+-                            "onlinePaymentFeeKobo": {
+-                              "type": "integer",
+-                              "minimum": -9007199254740991,
+-                              "maximum": 9007199254740991
+-                            },
+-                            "minPartPaymentPercent": {
+-                              "type": "integer",
+-                              "minimum": -9007199254740991,
+-                              "maximum": 9007199254740991
+                             }
+                           },
+                           "required": [
+@@ -36319,9 +36755,7 @@
+                             "address",
+                             "phone",
+                             "email",
+-                            "website",
+-                            "onlinePaymentFeeKobo",
+-                            "minPartPaymentPercent"
++                            "website"
+                           ],
+                           "additionalProperties": false
+                         },
+@@ -36356,6 +36790,11 @@
+                               "type": "integer",
+                               "minimum": -9007199254740991,
+                               "maximum": 9007199254740991
++                            },
++                            "promotionPassMarkPercent": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
+                             }
+                           },
+                           "required": [
+@@ -36365,7 +36804,8 @@
+                             "lowScorePercent",
+                             "studentsMustChangePassword",
+                             "onlinePaymentFeeKobo",
+-                            "minPartPaymentPercent"
++                            "minPartPaymentPercent",
++                            "promotionPassMarkPercent"
+                           ],
+                           "additionalProperties": false
+                         }

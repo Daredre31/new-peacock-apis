@@ -18,6 +18,7 @@ import { registerNotificationOperations } from '../modules/notifications/notific
 import { registerRequestOperations } from '../modules/requests/request.schema';
 import { registerTaskOperations } from '../modules/tasks/task.schema';
 import { registerSettingsOperations } from '../modules/settings/settings.schema';
+import { registerPromotionOperations } from '../modules/promotions/promotion.schema';
 import { registerResultsOperations } from '../modules/results/results.schema';
 import { registerCbtOperations } from '../modules/cbt/cbt.schema';
 import { registerTimetableOperations } from '../modules/timetable/timetable.schema';
@@ -52,6 +53,7 @@ export function createOperationRegistry(): OpenApiRegistry {
     registerTaskOperations(registry);
   registerSettingsOperations(registry);
   registerResultsOperations(registry);
+  registerPromotionOperations(registry);
   registerCbtOperations(registry);
     registerTimetableOperations(registry);
   registerCalendarOperations(registry);

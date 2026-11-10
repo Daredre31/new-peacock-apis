@@ -156,6 +156,20 @@ async function outstandingForStudent(studentId: string, termId: string): Promise
   return rows.reduce((sum, r) => sum + r.balanceKobo, 0);
 }
 
+/**
+ * What each student still owes across ALL sessions, so an old unpaid debt is not forgotten.
+ * Extra charges marked as not blocking reports are left out, the same rule the report gate uses.
+ */
+async function outstandingForStudents(studentIds: string[]): Promise<Map<string, number>> {
+  const ids = [...new Set(studentIds)].filter((id) => OBJECT_ID.test(id)).map((id) => new mongoose.Types.ObjectId(id));
+  if (ids.length === 0) return new Map();
+  const rows = await InvoiceModel.aggregate<{ _id: Types.ObjectId; owedKobo: number }>([
+    { $match: { studentId: { $in: ids }, balanceKobo: { $gt: 0 }, blocksReports: { $ne: false } } },
+    { $group: { _id: '$studentId', owedKobo: { $sum: '$balanceKobo' } } },
+  ]);
+  return new Map(rows.map((r) => [r._id.toString(), r.owedKobo]));
+}
+
 export interface DefaulterRow { studentId: string; classArmId: string; outstandingKobo: number; invoices: number; oldestDueDate: string }
 export interface DefaulterReport {
   students: number; outstandingKobo: number; byClassArm: { classArmId: string; students: number; outstandingKobo: number }[]; rows: DefaulterRow[];
@@ -230,5 +244,5 @@ async function totalsByClassArm(filter: { termId: string }): Promise<{ classArmI
 
 export const invoiceRepository = {
   create, findById, findManyByIds, list, adjustBalance, existsForStructure, countForStructure,
-   outstandingForStudent, defaulters, dueForReminder, markReminded, idsForScope , totalsByClassArm
+   outstandingForStudent, outstandingForStudents, defaulters, dueForReminder, markReminded, idsForScope , totalsByClassArm
 };

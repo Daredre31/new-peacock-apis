@@ -83,6 +83,7 @@ export const PERMISSIONS = {
   'results:publish': [AD],
   'results:lock': [SA], // lock and unlock
   'results:annual': [SA, AD], // the yearly average sheet for a class
+  'promotions:preview': [SA, AD], // what would happen to a class at the end of a session. Writes nothing
 
   // ---- CBT
   'cbt:manage': [TE], // create, upload questions, release results

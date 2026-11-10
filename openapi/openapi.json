@@ -57,6 +57,9 @@
       "name": "passport photos"
     },
     {
+      "name": "promotions"
+    },
+    {
       "name": "public admissions"
     },
     {
@@ -26605,6 +26608,450 @@
         }
       }
     },
+    "/promotions/preview": {
+      "get": {
+        "operationId": "previewPromotion",
+        "summary": "What would happen to each student in a class when moving to the next session. A yearly average at or above the pass mark promotes (or graduates from the top class), below it repeats. Owing fees blocks a promotion or graduation. Incomplete results need a decision. Writes nothing",
+        "tags": [
+          "promotions"
+        ],
+        "x-roles": [
+          "SUPER_ADMIN",
+          "ADMIN"
+        ],
+        "parameters": [
+          {
+            "name": "classArmId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            }
+          },
+          {
+            "name": "sessionId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            }
+          },
+          {
+            "name": "targetSessionId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            }
+          },
+          {
+            "name": "targetArmId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "passMarkPercent": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "source": {
+                          "type": "object",
+                          "properties": {
+                            "session": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "classArm": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "termsClosed": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "session",
+                            "classArm",
+                            "termsClosed"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "target": {
+                          "type": "object",
+                          "properties": {
+                            "session": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "nextClass": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "level": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name",
+                                    "level"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "arm": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "isFinalClass": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "session",
+                            "nextClass",
+                            "arm",
+                            "isFinalClass"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "issues": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "TARGET_SESSION_NOT_AFTER_SOURCE",
+                                  "TERMS_NOT_CLOSED",
+                                  "TARGET_ARM_MISSING",
+                                  "NO_STUDENTS"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "message"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "summary": {
+                          "type": "object",
+                          "properties": {
+                            "promote": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "repeat": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "graduate": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "needsDecision": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "alreadyEnrolled": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "notEligible": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "blockedByFees": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "promote",
+                            "repeat",
+                            "graduate",
+                            "needsDecision",
+                            "alreadyEnrolled",
+                            "notEligible",
+                            "blockedByFees"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "students": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "studentId": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "admissionNo": {
+                                "type": "string"
+                              },
+                              "average": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "grade": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "position": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "complete": {
+                                "type": "boolean"
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "PROMOTE",
+                                  "REPEAT",
+                                  "GRADUATE",
+                                  "NEEDS_DECISION",
+                                  "ALREADY_ENROLLED",
+                                  "NOT_ELIGIBLE"
+                                ]
+                              },
+                              "blocked": {
+                                "type": "boolean"
+                              },
+                              "reasons": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "INCOMPLETE_RESULTS",
+                                    "OWES_FEES",
+                                    "NOT_ACTIVE",
+                                    "ALREADY_ENROLLED"
+                                  ]
+                                }
+                              },
+                              "owingKobo": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "studentId",
+                              "name",
+                              "admissionNo",
+                              "average",
+                              "grade",
+                              "position",
+                              "complete",
+                              "outcome",
+                              "blocked",
+                              "reasons",
+                              "owingKobo"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "passMarkPercent",
+                        "source",
+                        "target",
+                        "issues",
+                        "summary",
+                        "students"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/public/admissions": {
       "post": {
         "operationId": "applyForAdmission",
@@ -35968,16 +36415,6 @@
                                 "string",
                                 "null"
                               ]
-                            },
-                            "onlinePaymentFeeKobo": {
-                              "type": "integer",
-                              "minimum": -9007199254740991,
-                              "maximum": 9007199254740991
-                            },
-                            "minPartPaymentPercent": {
-                              "type": "integer",
-                              "minimum": -9007199254740991,
-                              "maximum": 9007199254740991
                             }
                           },
                           "required": [
@@ -35987,9 +36424,7 @@
                             "address",
                             "phone",
                             "email",
-                            "website",
-                            "onlinePaymentFeeKobo",
-                            "minPartPaymentPercent"
+                            "website"
                           ],
                           "additionalProperties": false
                         },
@@ -36026,6 +36461,11 @@
                                   "type": "integer",
                                   "minimum": -9007199254740991,
                                   "maximum": 9007199254740991
+                                },
+                                "promotionPassMarkPercent": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
                                 }
                               },
                               "required": [
@@ -36035,7 +36475,8 @@
                                 "lowScorePercent",
                                 "studentsMustChangePassword",
                                 "onlinePaymentFeeKobo",
-                                "minPartPaymentPercent"
+                                "minPartPaymentPercent",
+                                "promotionPassMarkPercent"
                               ],
                               "additionalProperties": false
                             },
@@ -36232,6 +36673,11 @@
                       },
                       "studentsMustChangePassword": {
                         "type": "boolean"
+                      },
+                      "promotionPassMarkPercent": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100
                       }
                     },
                     "additionalProperties": false
@@ -36300,16 +36746,6 @@
                                 "string",
                                 "null"
                               ]
-                            },
-                            "onlinePaymentFeeKobo": {
-                              "type": "integer",
-                              "minimum": -9007199254740991,
-                              "maximum": 9007199254740991
-                            },
-                            "minPartPaymentPercent": {
-                              "type": "integer",
-                              "minimum": -9007199254740991,
-                              "maximum": 9007199254740991
                             }
                           },
                           "required": [
@@ -36319,9 +36755,7 @@
                             "address",
                             "phone",
                             "email",
-                            "website",
-                            "onlinePaymentFeeKobo",
-                            "minPartPaymentPercent"
+                            "website"
                           ],
                           "additionalProperties": false
                         },
@@ -36356,6 +36790,11 @@
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
+                            },
+                            "promotionPassMarkPercent": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
                             }
                           },
                           "required": [
@@ -36365,7 +36804,8 @@
                             "lowScorePercent",
                             "studentsMustChangePassword",
                             "onlinePaymentFeeKobo",
-                            "minPartPaymentPercent"
+                            "minPartPaymentPercent",
+                            "promotionPassMarkPercent"
                           ],
                           "additionalProperties": false
                         }

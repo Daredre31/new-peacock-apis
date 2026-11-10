@@ -100,6 +100,12 @@ async function updateClass(
   return row ? toClass(row) : null;
 }
 
+/** The class one step up: the lowest level above this one. Null means this is the top class. */
+async function nextClassAfter(level: number): Promise<ClassRecord | null> {
+  const row = await ClassModel.findOne({ level: { $gt: level } }).sort({ level: 1 }).lean<Row<ClassDocument>>();
+  return row ? toClass(row) : null;
+}
+
 // ---- class arms
 async function listArms(filter: { classId?: string; q?: string }, o: PageOptions<ArmSort>) {
   const query: Record<string, unknown> = { ...(filter.q && search('name', filter.q)) };
@@ -115,6 +121,13 @@ async function listArms(filter: { classId?: string; q?: string }, o: PageOptions
 async function findArm(id: string): Promise<ArmRecord | null> {
   if (!OBJECT_ID.test(id)) return null;
   const row = await ClassArmModel.findById(id).lean<Row<ClassArmDocument>>();
+  return row ? toArm(row) : null;
+}
+
+/** Same arm name in another class, ignoring case: "A" in JSS1 maps to "A" in JSS2. */
+async function findArmByName(classId: string, name: string): Promise<ArmRecord | null> {
+  if (!OBJECT_ID.test(classId)) return null;
+  const row = await ClassArmModel.findOne({ classId, name: new RegExp(`^${escapeRegex(name.trim())}$`, 'i') }).lean<Row<ClassArmDocument>>();
   return row ? toArm(row) : null;
 }
 
@@ -183,7 +196,7 @@ async function armIdsOfClassTeacher(teacherId: string): Promise<string[]> {
 }
 
 export const structureRepository = {
-  listClasses, findClass, classesByIds, createClass, updateClass,
+  listClasses, findClass, classesByIds, nextClassAfter, findArmByName, createClass, updateClass,
   listArms, findArm, createArm, updateArm,
   listSubjects, findSubject, countExistingSubjects, createSubject, updateSubject,
   armsByIds,subjectsByIds,setClassTeacher,armIdsOfClassTeacher
