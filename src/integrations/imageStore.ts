@@ -8,12 +8,15 @@ export interface StoredImage {
   url: string;
 }
 
+/** PASSPORT crops a face to 3:4. BRANDING keeps the whole picture, never enlarges it, and stores a PNG so transparency survives and a PDF can embed it. */
+export type ImagePreset = 'passport' | 'branding';
+
 export interface ImageStore {
   /**
    * Saves the image under `publicId`. Uploading again with the same id replaces the old image,
    * so a re-upload never leaves an orphan behind.
    */
-  upload(buffer: Buffer, publicId: string): Promise<StoredImage>;
+  upload(buffer: Buffer, publicId: string, preset?: ImagePreset): Promise<StoredImage>;
   remove(publicId: string): Promise<void>;
   /** Renames an image, replacing anything already stored under the new id. Returns the new delivery URL. */
   promote(fromId: string, toId: string): Promise<StoredImage>;
@@ -21,15 +24,17 @@ export interface ImageStore {
 
 /** Passport framing: 600x800 (3:4), cropped around the face, and capped in size. */
 const PASSPORT_TRANSFORMATION = [{ width: 600, height: 800, crop: 'fill', gravity: 'face' }, { quality: 'auto', fetch_format: 'auto' }];
+/** At most 1000 px on the longest side: sharp at print size, still a small download. */
+const BRANDING_OPTIONS = { transformation: [{ width: 1000, height: 1000, crop: 'limit' }], format: 'png' } as const;
 
 export function createCloudinaryImageStore(config: { cloudName: string; apiKey: string; apiSecret: string }): ImageStore {
   cloudinary.config({ cloud_name: config.cloudName, api_key: config.apiKey, api_secret: config.apiSecret, secure: true });
 
   return {
-    upload: (buffer, publicId) =>
+    upload: (buffer, publicId, preset = 'passport') =>
       new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-          { public_id: publicId, overwrite: true, invalidate: true, resource_type: 'image', transformation: PASSPORT_TRANSFORMATION },
+          { public_id: publicId, overwrite: true, invalidate: true, resource_type: 'image', ...(preset === 'branding' ? BRANDING_OPTIONS : { transformation: PASSPORT_TRANSFORMATION }) },
           (error, result) => {
             if (error || !result) {
               logger.error({ err: error }, 'cloudinary upload failed');

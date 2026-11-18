@@ -84,6 +84,12 @@ export const PERMISSIONS = {
   'results:lock': [SA], // lock and unlock
   'results:annual': [SA, AD], // the yearly average sheet for a class
   'promotions:preview': [SA, AD], // what would happen to a class at the end of a session. Writes nothing
+  'promotions:commit': [SA, AD], // moves a class into the next session
+  // ---- physical library (printed books lent at the library desk)
+  'physical-library:read': [SA, AD, TE, ST], // browse the catalogue
+  'physical-library:manage': [SA, AD, TE], // a teacher needs the librarian flag too: see authorizeLibrarian
+  // ---- shared by both libraries
+  'library:designate': [SA, AD], // choose which teachers are librarians
 
   // ---- CBT
   'cbt:manage': [TE], // create, upload questions, release results
@@ -144,6 +150,7 @@ export const PERMISSIONS = {
   'audit:read': [SA],
   'settings:read': [SA, AD],
   'settings:write': [SA],
+  'branding:write': [SA, AD], // logo, signature, stamp, motto, address and contacts shown on every printed document
   'grading-scale:read': [SA, AD, TE],
   'grading-scale:write': [SA],
   'uploads:presign': ALL_ROLES,
@@ -155,6 +162,13 @@ export const PERMISSIONS = {
 export type Permission = keyof typeof PERMISSIONS;
 
 /** True only if the permission exists and lists this role. Anything unknown is denied. */
+/**
+ * What a graduate may still do: sign out, change their password, and look at their own record and results.
+ * Everything else is refused, including every write. Receipts are not listed because students never had
+ * access to them: fees belong to the parent account.
+ */
+export const READ_ONLY_PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>(['session:self', 'students:read', 'results:read', 'report-cards:read']);
+
 export function can(role: Role, permission: Permission): boolean {
   if (!Object.hasOwn(PERMISSIONS, permission)) return false;
   return (PERMISSIONS[permission] as readonly Role[]).includes(role);

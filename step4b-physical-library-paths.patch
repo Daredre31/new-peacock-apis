@@ -1,0 +1,792 @@
+--- a/openapi/openapi.json
++++ b/openapi/openapi.json
+@@ -51,6 +51,9 @@
+       "name": "library"
+     },
+     {
++      "name": "library-physical"
++    },
++    {
+       "name": "notifications"
+     },
+     {
+@@ -20955,15 +20958,255 @@
+         }
+       }
+     },
+-    "/library/books": {
++    "/library/librarians": {
+       "get": {
+-        "operationId": "listLibraryBooks",
+-        "summary": "Search the catalogue by title, author or ISBN. Shows how many copies are free to borrow",
++        "operationId": "listLibrarians",
++        "summary": "Teachers who run the library",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN"
++        ],
++        "responses": {
++          "200": {
++            "description": "Librarians",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "array",
++                      "items": {
++                        "type": "object",
++                        "properties": {
++                          "userId": {
++                            "type": "string"
++                          },
++                          "staffNo": {
++                            "type": [
++                              "string",
++                              "null"
++                            ]
++                          },
++                          "name": {
++                            "type": "string"
++                          }
++                        },
++                        "required": [
++                          "userId",
++                          "staffNo",
++                          "name"
++                        ],
++                        "additionalProperties": false
++                      }
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/library/librarians/{userId}": {
++      "put": {
++        "operationId": "setLibrarian",
++        "summary": "Make a teacher a librarian, or take it away. Takes effect on their next request. Admins already have library access",
+         "tags": [
+           "library"
+         ],
+         "x-roles": [
+           "SUPER_ADMIN",
++          "ADMIN"
++        ],
++        "parameters": [
++          {
++            "name": "userId",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "isLibrarian": {
++                    "type": "boolean"
++                  }
++                },
++                "required": [
++                  "isLibrarian"
++                ],
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Saved",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "userId": {
++                          "type": "string"
++                        },
++                        "isLibrarian": {
++                          "type": "boolean"
++                        }
++                      },
++                      "required": [
++                        "userId",
++                        "isLibrarian"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/library/physical/books": {
++      "get": {
++        "operationId": "listPhysicalBooks",
++        "summary": "Physical library: search the catalogue by title, author or ISBN. Shows how many copies are free to borrow",
++        "tags": [
++          "library-physical"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
+           "ADMIN",
+           "TEACHER",
+           "STUDENT"
+@@ -21195,10 +21438,10 @@
+         }
+       },
+       "post": {
+-        "operationId": "createLibraryBook",
++        "operationId": "createPhysicalBook",
+         "summary": "Add a book, optionally with its first copies. Barcodes are made automatically (LIB-000001...). A teacher needs to be designated a librarian first",
+         "tags": [
+-          "library"
++          "library-physical"
+         ],
+         "x-roles": [
+           "SUPER_ADMIN",
+@@ -21505,12 +21748,12 @@
+         }
+       }
+     },
+-    "/library/books/{id}": {
++    "/library/physical/books/{id}": {
+       "delete": {
+-        "operationId": "deleteLibraryBook",
++        "operationId": "deletePhysicalBook",
+         "summary": "Remove a book and withdraw all its copies. Refused while a copy is out on loan. A teacher needs to be designated a librarian first",
+         "tags": [
+-          "library"
++          "library-physical"
+         ],
+         "x-roles": [
+           "SUPER_ADMIN",
+@@ -21624,10 +21867,10 @@
+         }
+       },
+       "get": {
+-        "operationId": "getLibraryBook",
++        "operationId": "getPhysicalBook",
+         "summary": "One book. Librarians and admins also see its price and every copy with its barcode",
+         "tags": [
+-          "library"
++          "library-physical"
+         ],
+         "x-roles": [
+           "SUPER_ADMIN",
+@@ -21873,10 +22116,10 @@
+         }
+       },
+       "patch": {
+-        "operationId": "updateLibraryBook",
++        "operationId": "updatePhysicalBook",
+         "summary": "Edit a book. Send null to clear an optional field. A teacher needs to be designated a librarian first",
+         "tags": [
+-          "library"
++          "library-physical"
+         ],
+         "x-roles": [
+           "SUPER_ADMIN",
+@@ -22223,12 +22466,12 @@
+         }
+       }
+     },
+-    "/library/books/{id}/copies": {
++    "/library/physical/books/{id}/copies": {
+       "post": {
+-        "operationId": "addLibraryCopies",
++        "operationId": "addPhysicalCopies",
+         "summary": "Add more physical copies of a book, each with its own barcode. A teacher needs to be designated a librarian first",
+         "tags": [
+-          "library"
++          "library-physical"
+         ],
+         "x-roles": [
+           "SUPER_ADMIN",
+@@ -22403,12 +22646,12 @@
+         }
+       }
+     },
+-    "/library/categories": {
++    "/library/physical/categories": {
+       "get": {
+-        "operationId": "listLibraryCategories",
++        "operationId": "listPhysicalCategories",
+         "summary": "Every category in use, for a filter",
+         "tags": [
+-          "library"
++          "library-physical"
+         ],
+         "x-roles": [
+           "SUPER_ADMIN",
+@@ -22495,12 +22738,12 @@
+         }
+       }
+     },
+-    "/library/copies/{id}": {
++    "/library/physical/copies/{id}": {
+       "patch": {
+-        "operationId": "updateLibraryCopy",
++        "operationId": "updatePhysicalCopy",
+         "summary": "Mark a copy AVAILABLE, DAMAGED or WITHDRAWN, or change its shelf and note. A copy out on loan cannot change status. A teacher needs to be designated a librarian first",
+         "tags": [
+-          "library"
++          "library-physical"
+         ],
+         "x-roles": [
+           "SUPER_ADMIN",
+@@ -22663,246 +22906,6 @@
+             "content": {
+               "application/json": {
+                 "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          },
+-          "422": {
+-            "description": "VALIDATION_ERROR",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          },
+-          "429": {
+-            "description": "RATE_LIMITED",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          },
+-          "500": {
+-            "description": "INTERNAL_ERROR",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          }
+-        }
+-      }
+-    },
+-    "/library/librarians": {
+-      "get": {
+-        "operationId": "listLibrarians",
+-        "summary": "Teachers who run the library",
+-        "tags": [
+-          "library"
+-        ],
+-        "x-roles": [
+-          "SUPER_ADMIN",
+-          "ADMIN"
+-        ],
+-        "responses": {
+-          "200": {
+-            "description": "Librarians",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "type": "object",
+-                  "required": [
+-                    "success",
+-                    "data"
+-                  ],
+-                  "properties": {
+-                    "success": {
+-                      "const": true
+-                    },
+-                    "data": {
+-                      "type": "array",
+-                      "items": {
+-                        "type": "object",
+-                        "properties": {
+-                          "userId": {
+-                            "type": "string"
+-                          },
+-                          "staffNo": {
+-                            "type": [
+-                              "string",
+-                              "null"
+-                            ]
+-                          },
+-                          "name": {
+-                            "type": "string"
+-                          }
+-                        },
+-                        "required": [
+-                          "userId",
+-                          "staffNo",
+-                          "name"
+-                        ],
+-                        "additionalProperties": false
+-                      }
+-                    }
+-                  }
+-                }
+-              }
+-            }
+-          },
+-          "401": {
+-            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          },
+-          "403": {
+-            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          },
+-          "422": {
+-            "description": "VALIDATION_ERROR",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          },
+-          "429": {
+-            "description": "RATE_LIMITED",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          },
+-          "500": {
+-            "description": "INTERNAL_ERROR",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          }
+-        }
+-      }
+-    },
+-    "/library/librarians/{userId}": {
+-      "put": {
+-        "operationId": "setLibrarian",
+-        "summary": "Make a teacher a librarian, or take it away. Takes effect on their next request. Admins already have library access",
+-        "tags": [
+-          "library"
+-        ],
+-        "x-roles": [
+-          "SUPER_ADMIN",
+-          "ADMIN"
+-        ],
+-        "parameters": [
+-          {
+-            "name": "userId",
+-            "in": "path",
+-            "required": true,
+-            "schema": {
+-              "type": "string",
+-              "pattern": "^[a-f0-9]{24}$"
+-            }
+-          }
+-        ],
+-        "requestBody": {
+-          "required": true,
+-          "content": {
+-            "application/json": {
+-              "schema": {
+-                "type": "object",
+-                "properties": {
+-                  "isLibrarian": {
+-                    "type": "boolean"
+-                  }
+-                },
+-                "required": [
+-                  "isLibrarian"
+-                ],
+-                "additionalProperties": false
+-              }
+-            }
+-          }
+-        },
+-        "responses": {
+-          "200": {
+-            "description": "Saved",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "type": "object",
+-                  "required": [
+-                    "success",
+-                    "data"
+-                  ],
+-                  "properties": {
+-                    "success": {
+-                      "const": true
+-                    },
+-                    "data": {
+-                      "type": "object",
+-                      "properties": {
+-                        "userId": {
+-                          "type": "string"
+-                        },
+-                        "isLibrarian": {
+-                          "type": "boolean"
+-                        }
+-                      },
+-                      "required": [
+-                        "userId",
+-                        "isLibrarian"
+-                      ],
+-                      "additionalProperties": false
+-                    }
+-                  }
+-                }
+-              }
+-            }
+-          },
+-          "401": {
+-            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/ErrorResponse"
+-                }
+-              }
+-            }
+-          },
+-          "403": {
+-            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
+-            "content": {
+-              "application/json": {
+-                "schema": {
+                   "$ref": "#/components/schemas/ErrorResponse"
+                 }
+               }
+--- a/src/config/constants.ts
++++ b/src/config/constants.ts
+@@ -85,9 +85,10 @@
+   'results:annual': [SA, AD], // the yearly average sheet for a class
+   'promotions:preview': [SA, AD], // what would happen to a class at the end of a session. Writes nothing
+   'promotions:commit': [SA, AD], // moves a class into the next session
+-  // ---- library
+-  'library:read': [SA, AD, TE, ST], // browse the catalogue
+-  'library:manage': [SA, AD, TE], // a teacher needs the librarian flag too: see authorizeLibrarian
++  // ---- physical library (printed books lent at the library desk)
++  'physical-library:read': [SA, AD, TE, ST], // browse the catalogue
++  'physical-library:manage': [SA, AD, TE], // a teacher needs the librarian flag too: see authorizeLibrarian
++  // ---- shared by both libraries
+   'library:designate': [SA, AD], // choose which teachers are librarians
+ 
+   // ---- CBT
+--- a/src/modules/library/library.module.ts
++++ b/src/modules/library/library.module.ts
+@@ -6,6 +6,7 @@
+ import { createLibraryRouter } from './library.routes';
+ import { createLibraryService } from './library.service';
+ 
++/** The physical library: printed books lent at the desk. The digital library will be its own module. */
+ export function createLibraryModule(deps: { audit: AuditService; auth: AuthModule }) {
+   const service = createLibraryService({ books: bookRepository, users: userRepository, staff: staffRepository, audit: deps.audit });
+   return { router: createLibraryRouter({ service, authenticate: deps.auth.middleware.authenticate }), service };
+--- a/src/modules/library/library.routes.ts
++++ b/src/modules/library/library.routes.ts
+@@ -12,45 +12,45 @@
+   const { service, authenticate: auth } = deps;
+   const router = Router();
+ 
+-  // ---- the catalogue, for everyone who can borrow
+-  router.get('/library/books', auth, authorize('library:read'), validate(listBooksSchemas), async (req, res) => {
++  // ---- the physical library catalogue, for everyone who can borrow
++  router.get('/library/physical/books', auth, authorize('physical-library:read'), validate(listBooksSchemas), async (req, res) => {
+     const { query } = req.validated as Validated<typeof listBooksSchemas>;
+     const { items, total } = await service.listBooks(query, requireUser(req));
+     sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
+   });
+ 
+-  router.get('/library/categories', auth, authorize('library:read'), async (_req, res) => {
++  router.get('/library/physical/categories', auth, authorize('physical-library:read'), async (_req, res) => {
+     sendSuccess(res, await service.listCategories());
+   });
+ 
+-  router.get('/library/books/:id', auth, authorize('library:read'), validate(bookIdSchemas), async (req, res) => {
++  router.get('/library/physical/books/:id', auth, authorize('physical-library:read'), validate(bookIdSchemas), async (req, res) => {
+     const { params } = req.validated as Validated<typeof bookIdSchemas>;
+     sendSuccess(res, await service.getBook(params.id, requireUser(req)));
+   });
+ 
+   // ---- the library desk: admins and designated teachers
+-  router.post('/library/books', auth, authorizeLibrarian('library:manage'), validate(createBookSchemas), async (req, res) => {
++  router.post('/library/physical/books', auth, authorizeLibrarian('physical-library:manage'), validate(createBookSchemas), async (req, res) => {
+     const { body } = req.validated as Validated<typeof createBookSchemas>;
+     sendCreated(res, await service.createBook(body, requireUser(req), contextOf(req)));
+   });
+ 
+-  router.patch('/library/books/:id', auth, authorizeLibrarian('library:manage'), validate(updateBookSchemas), async (req, res) => {
++  router.patch('/library/physical/books/:id', auth, authorizeLibrarian('physical-library:manage'), validate(updateBookSchemas), async (req, res) => {
+     const { params, body } = req.validated as Validated<typeof updateBookSchemas>;
+     sendSuccess(res, await service.updateBook(params.id, body, requireUser(req), contextOf(req)));
+   });
+ 
+-  router.delete('/library/books/:id', auth, authorizeLibrarian('library:manage'), validate(bookIdSchemas), async (req, res) => {
++  router.delete('/library/physical/books/:id', auth, authorizeLibrarian('physical-library:manage'), validate(bookIdSchemas), async (req, res) => {
+     const { params } = req.validated as Validated<typeof bookIdSchemas>;
+     await service.deleteBook(params.id, requireUser(req), contextOf(req));
+     sendSuccess(res, null);
+   });
+ 
+-  router.post('/library/books/:id/copies', auth, authorizeLibrarian('library:manage'), validate(addCopiesSchemas), async (req, res) => {
++  router.post('/library/physical/books/:id/copies', auth, authorizeLibrarian('physical-library:manage'), validate(addCopiesSchemas), async (req, res) => {
+     const { params, body } = req.validated as Validated<typeof addCopiesSchemas>;
+     sendCreated(res, await service.addCopies(params.id, body, requireUser(req), contextOf(req)));
+   });
+ 
+-  router.patch('/library/copies/:id', auth, authorizeLibrarian('library:manage'), validate(updateCopySchemas), async (req, res) => {
++  router.patch('/library/physical/copies/:id', auth, authorizeLibrarian('physical-library:manage'), validate(updateCopySchemas), async (req, res) => {
+     const { params, body } = req.validated as Validated<typeof updateCopySchemas>;
+     sendSuccess(res, await service.updateCopy(params.id, body, requireUser(req), contextOf(req)));
+   });
+--- a/src/modules/library/library.schema.ts
++++ b/src/modules/library/library.schema.ts
+@@ -78,7 +78,8 @@
+ export const designateSchemas = { params: userParams, body: designateBody };
+ 
+ export function registerLibraryOperations(registry: OpenApiRegistry): void {
+-  const tags = ['library'];
++  const tags = ['library-physical'];
++  const sharedTags = ['library'];
+   const num = z.number().int();
+   const copies = z.object({ total: num, available: num });
+   const copy = z.object({ id: z.string(), bookId: z.string(), barcode: z.string(), status: z.enum(['AVAILABLE', 'ON_LOAN', 'LOST', 'DAMAGED', 'WITHDRAWN']), shelfLocation: z.string().nullable(), note: z.string().nullable() });
+@@ -88,18 +89,18 @@
+     priceKobo: num.nullable().optional().describe('Only librarians and admins see this'),
+   });
+   const detail = book.extend({ copyList: z.array(copy).optional().describe('Only librarians and admins see the individual copies') });
+-  const read = PERMISSIONS['library:read'];
+-  const manage = PERMISSIONS['library:manage'];
++  const read = PERMISSIONS['physical-library:read'];
++  const manage = PERMISSIONS['physical-library:manage'];
+   const desk = ' A teacher needs to be designated a librarian first';
+ 
+-  registry.register({ method: 'get', path: '/library/books', operationId: 'listLibraryBooks', summary: 'Search the catalogue by title, author or ISBN. Shows how many copies are free to borrow', tags, roles: read, request: { query: listBooksSchemas.query }, success: { status: 200, description: 'Books', data: z.array(book), paginated: true } });
+-  registry.register({ method: 'get', path: '/library/categories', operationId: 'listLibraryCategories', summary: 'Every category in use, for a filter', tags, roles: read, success: { status: 200, description: 'Categories', data: z.array(z.string()) } });
+-  registry.register({ method: 'get', path: '/library/books/{id}', operationId: 'getLibraryBook', summary: 'One book. Librarians and admins also see its price and every copy with its barcode', tags, roles: read, request: { params: idParams }, success: { status: 200, description: 'The book', data: detail }, errors: ['NOT_FOUND'] });
+-  registry.register({ method: 'post', path: '/library/books', operationId: 'createLibraryBook', summary: `Add a book, optionally with its first copies. Barcodes are made automatically (LIB-000001...).${desk}`, tags, roles: manage, request: { body: createBody }, success: { status: 201, description: 'Created', data: detail }, errors: ['CONFLICT'] });
+-  registry.register({ method: 'patch', path: '/library/books/{id}', operationId: 'updateLibraryBook', summary: `Edit a book. Send null to clear an optional field.${desk}`, tags, roles: manage, request: { params: idParams, body: updateBody }, success: { status: 200, description: 'Updated', data: detail }, errors: ['NOT_FOUND', 'CONFLICT', 'VALIDATION_ERROR'] });
+-  registry.register({ method: 'delete', path: '/library/books/{id}', operationId: 'deleteLibraryBook', summary: `Remove a book and withdraw all its copies. Refused while a copy is out on loan.${desk}`, tags, roles: manage, request: { params: idParams }, success: { status: 200, description: 'Removed', data: z.null() }, errors: ['NOT_FOUND', 'CONFLICT'] });
+-  registry.register({ method: 'post', path: '/library/books/{id}/copies', operationId: 'addLibraryCopies', summary: `Add more physical copies of a book, each with its own barcode.${desk}`, tags, roles: manage, request: { params: idParams, body: addCopiesBody }, success: { status: 201, description: 'The new copies', data: z.array(copy) }, errors: ['NOT_FOUND'] });
+-  registry.register({ method: 'patch', path: '/library/copies/{id}', operationId: 'updateLibraryCopy', summary: `Mark a copy AVAILABLE, DAMAGED or WITHDRAWN, or change its shelf and note. A copy out on loan cannot change status.${desk}`, tags, roles: manage, request: { params: idParams, body: updateCopyBody }, success: { status: 200, description: 'Updated', data: copy }, errors: ['NOT_FOUND', 'CONFLICT', 'VALIDATION_ERROR'] });
+-  registry.register({ method: 'get', path: '/library/librarians', operationId: 'listLibrarians', summary: 'Teachers who run the library', tags, roles: PERMISSIONS['library:designate'], success: { status: 200, description: 'Librarians', data: z.array(z.object({ userId: z.string(), staffNo: z.string().nullable(), name: z.string() })) } });
+-  registry.register({ method: 'put', path: '/library/librarians/{userId}', operationId: 'setLibrarian', summary: 'Make a teacher a librarian, or take it away. Takes effect on their next request. Admins already have library access', tags, roles: PERMISSIONS['library:designate'], request: { params: userParams, body: designateBody }, success: { status: 200, description: 'Saved', data: z.object({ userId: z.string(), isLibrarian: z.boolean() }) }, errors: ['VALIDATION_ERROR'] });
++  registry.register({ method: 'get', path: '/library/physical/books', operationId: 'listPhysicalBooks', summary: 'Physical library: search the catalogue by title, author or ISBN. Shows how many copies are free to borrow', tags, roles: read, request: { query: listBooksSchemas.query }, success: { status: 200, description: 'Books', data: z.array(book), paginated: true } });
++  registry.register({ method: 'get', path: '/library/physical/categories', operationId: 'listPhysicalCategories', summary: 'Every category in use, for a filter', tags, roles: read, success: { status: 200, description: 'Categories', data: z.array(z.string()) } });
++  registry.register({ method: 'get', path: '/library/physical/books/{id}', operationId: 'getPhysicalBook', summary: 'One book. Librarians and admins also see its price and every copy with its barcode', tags, roles: read, request: { params: idParams }, success: { status: 200, description: 'The book', data: detail }, errors: ['NOT_FOUND'] });
++  registry.register({ method: 'post', path: '/library/physical/books', operationId: 'createPhysicalBook', summary: `Add a book, optionally with its first copies. Barcodes are made automatically (LIB-000001...).${desk}`, tags, roles: manage, request: { body: createBody }, success: { status: 201, description: 'Created', data: detail }, errors: ['CONFLICT'] });
++  registry.register({ method: 'patch', path: '/library/physical/books/{id}', operationId: 'updatePhysicalBook', summary: `Edit a book. Send null to clear an optional field.${desk}`, tags, roles: manage, request: { params: idParams, body: updateBody }, success: { status: 200, description: 'Updated', data: detail }, errors: ['NOT_FOUND', 'CONFLICT', 'VALIDATION_ERROR'] });
++  registry.register({ method: 'delete', path: '/library/physical/books/{id}', operationId: 'deletePhysicalBook', summary: `Remove a book and withdraw all its copies. Refused while a copy is out on loan.${desk}`, tags, roles: manage, request: { params: idParams }, success: { status: 200, description: 'Removed', data: z.null() }, errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/library/physical/books/{id}/copies', operationId: 'addPhysicalCopies', summary: `Add more physical copies of a book, each with its own barcode.${desk}`, tags, roles: manage, request: { params: idParams, body: addCopiesBody }, success: { status: 201, description: 'The new copies', data: z.array(copy) }, errors: ['NOT_FOUND'] });
++  registry.register({ method: 'patch', path: '/library/physical/copies/{id}', operationId: 'updatePhysicalCopy', summary: `Mark a copy AVAILABLE, DAMAGED or WITHDRAWN, or change its shelf and note. A copy out on loan cannot change status.${desk}`, tags, roles: manage, request: { params: idParams, body: updateCopyBody }, success: { status: 200, description: 'Updated', data: copy }, errors: ['NOT_FOUND', 'CONFLICT', 'VALIDATION_ERROR'] });
++  registry.register({ method: 'get', path: '/library/librarians', operationId: 'listLibrarians', summary: 'Teachers who run the library', tags: sharedTags, roles: PERMISSIONS['library:designate'], success: { status: 200, description: 'Librarians', data: z.array(z.object({ userId: z.string(), staffNo: z.string().nullable(), name: z.string() })) } });
++  registry.register({ method: 'put', path: '/library/librarians/{userId}', operationId: 'setLibrarian', summary: 'Make a teacher a librarian, or take it away. Takes effect on their next request. Admins already have library access', tags: sharedTags, roles: PERMISSIONS['library:designate'], request: { params: userParams, body: designateBody }, success: { status: 200, description: 'Saved', data: z.object({ userId: z.string(), isLibrarian: z.boolean() }) }, errors: ['VALIDATION_ERROR'] });
+ }
+--- a/src/modules/library/library.service.ts
++++ b/src/modules/library/library.service.ts
+@@ -65,7 +65,7 @@
+         const made = copies > 0 ? await books.createCopies(book.id, copies, shelfLocation ?? null, tx) : [];
+         return { book, made };
+       });
+-      await log('LIBRARY_BOOK_CREATED', actor, ctx, 'LibraryBook', created.book.id, { title: created.book.title, copies: created.made.length });
++      await log('PHYSICAL_BOOK_CREATED', actor, ctx, 'PhysicalBook', created.book.id, { title: created.book.title, copies: created.made.length });
+       return { ...view(created.book, { total: created.made.length, available: created.made.length }, true), copyList: created.made };
+     },
+ 
+@@ -73,7 +73,7 @@
+       if (Object.values(patch).every((v) => v === undefined)) throw invalid('body', 'Nothing to update');
+       const updated = await books.updateBook(id, patch);
+       if (!updated) throw new AppError('NOT_FOUND');
+-      await log('LIBRARY_BOOK_UPDATED', actor, ctx, 'LibraryBook', id, { fields: Object.keys(patch).filter((k) => patch[k as keyof BookInput] !== undefined) });
++      await log('PHYSICAL_BOOK_UPDATED', actor, ctx, 'PhysicalBook', id, { fields: Object.keys(patch).filter((k) => patch[k as keyof BookInput] !== undefined) });
+       return this.getBook(id, actor);
+     },
+ 
+@@ -81,13 +81,13 @@
+       const result = await withTransaction((tx) => books.softDeleteBook(id, tx));
+       if (result === 'NOT_FOUND') throw new AppError('NOT_FOUND');
+       if (result === 'ON_LOAN') throw new AppError('CONFLICT', { details: [{ field: 'id', issue: 'A copy of this book is out on loan. Wait for it to come back' }] });
+-      await log('LIBRARY_BOOK_DELETED', actor, ctx, 'LibraryBook', id);
++      await log('PHYSICAL_BOOK_DELETED', actor, ctx, 'PhysicalBook', id);
+     },
+ 
+     async addCopies(bookId: string, input: { count: number; shelfLocation?: string | null | undefined }, actor: Actor, ctx: Context): Promise<CopyRecord[]> {
+       if (!(await books.findBook(bookId))) throw new AppError('NOT_FOUND');
+       const made = await withTransaction((tx) => books.createCopies(bookId, input.count, input.shelfLocation ?? null, tx));
+-      await log('LIBRARY_COPIES_ADDED', actor, ctx, 'LibraryBook', bookId, { barcodes: made.map((c) => c.barcode) });
++      await log('PHYSICAL_COPIES_ADDED', actor, ctx, 'PhysicalBook', bookId, { barcodes: made.map((c) => c.barcode) });
+       return made;
+     },
+ 
+@@ -96,7 +96,7 @@
+       const result = await books.updateCopy(id, patch);
+       if (result === null) throw new AppError('NOT_FOUND');
+       if (result === 'ON_LOAN') throw new AppError('CONFLICT', { details: [{ field: 'status', issue: 'This copy is out on loan. Return it first' }] });
+-      await log('LIBRARY_COPY_UPDATED', actor, ctx, 'LibraryCopy', id, { barcode: result.barcode, ...(patch.status ? { status: patch.status } : {}) });
++      await log('PHYSICAL_COPY_UPDATED', actor, ctx, 'PhysicalCopy', id, { barcode: result.barcode, ...(patch.status ? { status: patch.status } : {}) });
+       return result;
+     },
+ 

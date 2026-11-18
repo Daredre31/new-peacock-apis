@@ -1,10 +1,16 @@
 import mongoose, { type ClientSession, type Model, type Types } from 'mongoose';
 
+export type EnrolmentOutcome = 'PROMOTED' | 'REPEATED' | 'GRADUATED';
+
 interface EnrolmentDocument {
   studentId: Types.ObjectId; // the student's user id
   sessionId: Types.ObjectId;
   classArmId: Types.ObjectId;
   status: 'ACTIVE' | 'COMPLETED';
+  /** How the year ended for this student. Set when the enrolment is completed. */
+  outcome?: EnrolmentOutcome;
+  /** On a new enrolment made by promotion: the session it came from, so it can be undone. */
+  promotedFromSessionId?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -16,6 +22,8 @@ const schema = new mongoose.Schema<EnrolmentDocument>(
     sessionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Session', required: true },
     classArmId: { type: mongoose.Schema.Types.ObjectId, ref: 'ClassArm', required: true },
     status: { type: String, enum: ['ACTIVE', 'COMPLETED'], default: 'ACTIVE' },
+    outcome: { type: String, enum: ['PROMOTED', 'REPEATED', 'GRADUATED'] },
+    promotedFromSessionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Session' },
   },
   { timestamps: true, versionKey: false },
 );
@@ -64,4 +72,35 @@ async function listForSession(sessionId: string, armId: string | undefined, limi
   const rows = await EnrolmentModel.find({ sessionId, ...(armId ? { classArmId: armId } : {}) }).limit(limit).lean<Row[]>();
   return rows.map(toRecord);
 }
-export const enrolmentRepository = { upsert, forStudents, studentIdsInArms,listForSession };
+export type ApplyOutcomeResult = 'APPLIED' | 'SOURCE_CHANGED' | 'ALREADY_ENROLLED';
+
+/**
+ * Ends one student's year and, unless they graduate, starts the next. Run it inside a transaction:
+ * both writes happen or neither does. The source enrolment is only completed if it is still active in the
+ * arm the caller looked at, so a student who was moved or already processed is left alone.
+ */
+async function applyOutcome(
+  input: { studentId: string; fromSessionId: string; fromArmId: string; outcome: EnrolmentOutcome; next?: { sessionId: string; classArmId: string } },
+  session: ClientSession,
+): Promise<ApplyOutcomeResult> {
+  // Look before writing, so "already enrolled" never leaves a half-finished change behind.
+  if (input.next) {
+    const exists = await EnrolmentModel.exists({ studentId: input.studentId, sessionId: input.next.sessionId }).session(session);
+    if (exists) return 'ALREADY_ENROLLED';
+  }
+  const closed = await EnrolmentModel.updateOne(
+    { studentId: input.studentId, sessionId: input.fromSessionId, classArmId: input.fromArmId, status: 'ACTIVE' },
+    { $set: { status: 'COMPLETED', outcome: input.outcome } },
+    { session },
+  );
+  if (closed.matchedCount === 0) return 'SOURCE_CHANGED';
+  if (input.next) {
+    await EnrolmentModel.create(
+      [{ studentId: input.studentId, sessionId: input.next.sessionId, classArmId: input.next.classArmId, status: 'ACTIVE', promotedFromSessionId: input.fromSessionId }],
+      { session },
+    );
+  }
+  return 'APPLIED';
+}
+
+export const enrolmentRepository = { upsert, forStudents, studentIdsInArms, listForSession, applyOutcome };

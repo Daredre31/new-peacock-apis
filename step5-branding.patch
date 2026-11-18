@@ -1,0 +1,1124 @@
+--- a/openapi/openapi.json
++++ b/openapi/openapi.json
+@@ -39152,6 +39152,833 @@
+         }
+       }
+     },
++    "/settings/branding": {
++      "get": {
++        "operationId": "getBranding",
++        "summary": "Everything printed documents carry about the school: name, motto, address, contacts, logo, principal name and signature, and the school stamp. The image URLs are null until uploaded",
++        "tags": [
++          "settings"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN",
++          "TEACHER",
++          "PARENT",
++          "STUDENT"
++        ],
++        "responses": {
++          "200": {
++            "description": "Branding",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "name": {
++                          "type": "string"
++                        },
++                        "shortName": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "motto": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "address": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "phone": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "email": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "website": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "principalName": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "logoUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "principalSignatureUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "stampUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        }
++                      },
++                      "required": [
++                        "name",
++                        "shortName",
++                        "motto",
++                        "address",
++                        "phone",
++                        "email",
++                        "website",
++                        "principalName",
++                        "logoUrl",
++                        "principalSignatureUrl",
++                        "stampUrl"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      },
++      "put": {
++        "operationId": "updateBranding",
++        "summary": "Change the text side of branding. Only the fields you send change; send null to clear an optional one. Images are uploaded with PUT /settings/branding/{asset}",
++        "tags": [
++          "settings"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN"
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "name": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 100
++                  },
++                  "shortName": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "maxLength": 30
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "motto": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "maxLength": 150
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "address": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "maxLength": 250
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "phone": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "maxLength": 30
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "email": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "maxLength": 254
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "website": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "maxLength": 200
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "principalName": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "maxLength": 100
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  }
++                },
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Saved",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "name": {
++                          "type": "string"
++                        },
++                        "shortName": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "motto": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "address": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "phone": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "email": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "website": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "principalName": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "logoUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "principalSignatureUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "stampUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        }
++                      },
++                      "required": [
++                        "name",
++                        "shortName",
++                        "motto",
++                        "address",
++                        "phone",
++                        "email",
++                        "website",
++                        "principalName",
++                        "logoUrl",
++                        "principalSignatureUrl",
++                        "stampUrl"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/settings/branding/{asset}": {
++      "delete": {
++        "operationId": "removeBrandingImage",
++        "summary": "Remove the logo, signature or stamp. Documents are then printed without it",
++        "tags": [
++          "settings"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN"
++        ],
++        "parameters": [
++          {
++            "name": "asset",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "enum": [
++                "logo",
++                "signature",
++                "stamp"
++              ]
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Removed",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "name": {
++                          "type": "string"
++                        },
++                        "shortName": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "motto": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "address": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "phone": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "email": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "website": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "principalName": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "logoUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "principalSignatureUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "stampUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        }
++                      },
++                      "required": [
++                        "name",
++                        "shortName",
++                        "motto",
++                        "address",
++                        "phone",
++                        "email",
++                        "website",
++                        "principalName",
++                        "logoUrl",
++                        "principalSignatureUrl",
++                        "stampUrl"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "503": {
++            "description": "SERVICE_UNAVAILABLE",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      },
++      "put": {
++        "operationId": "setBrandingImage",
++        "summary": "Upload the school logo, the principal signature or the school stamp (asset is logo, signature or stamp). Field \"file\", JPEG, PNG or WebP, max 2 MB. It is kept as a PNG no larger than 1000 px, so transparency survives and it prints sharply. Replaces any earlier upload",
++        "tags": [
++          "settings"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN"
++        ],
++        "parameters": [
++          {
++            "name": "asset",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "enum": [
++                "logo",
++                "signature",
++                "stamp"
++              ]
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "multipart/form-data": {
++              "schema": {
++                "type": "object",
++                "required": [
++                  "file"
++                ],
++                "properties": {
++                  "file": {
++                    "type": "string",
++                    "format": "binary"
++                  }
++                }
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Saved",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "name": {
++                          "type": "string"
++                        },
++                        "shortName": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "motto": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "address": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "phone": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "email": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "website": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "principalName": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "logoUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "principalSignatureUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "stampUrl": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        }
++                      },
++                      "required": [
++                        "name",
++                        "shortName",
++                        "motto",
++                        "address",
++                        "phone",
++                        "email",
++                        "website",
++                        "principalName",
++                        "logoUrl",
++                        "principalSignatureUrl",
++                        "stampUrl"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "503": {
++            "description": "SERVICE_UNAVAILABLE",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/settings/grading-scale": {
+       "get": {
+         "operationId": "getGradingScale",
+--- a/src/config/constants.ts
++++ b/src/config/constants.ts
+@@ -150,6 +150,7 @@
+   'audit:read': [SA],
+   'settings:read': [SA, AD],
+   'settings:write': [SA],
++  'branding:write': [SA, AD], // logo, signature, stamp, motto, address and contacts shown on every printed document
+   'grading-scale:read': [SA, AD, TE],
+   'grading-scale:write': [SA],
+   'uploads:presign': ALL_ROLES,
+--- a/src/integrations/imageStore.ts
++++ b/src/integrations/imageStore.ts
+@@ -8,12 +8,15 @@
+   url: string;
+ }
+ 
++/** PASSPORT crops a face to 3:4. BRANDING keeps the whole picture, never enlarges it, and stores a PNG so transparency survives and a PDF can embed it. */
++export type ImagePreset = 'passport' | 'branding';
++
+ export interface ImageStore {
+   /**
+    * Saves the image under `publicId`. Uploading again with the same id replaces the old image,
+    * so a re-upload never leaves an orphan behind.
+    */
+-  upload(buffer: Buffer, publicId: string): Promise<StoredImage>;
++  upload(buffer: Buffer, publicId: string, preset?: ImagePreset): Promise<StoredImage>;
+   remove(publicId: string): Promise<void>;
+   /** Renames an image, replacing anything already stored under the new id. Returns the new delivery URL. */
+   promote(fromId: string, toId: string): Promise<StoredImage>;
+@@ -21,15 +24,17 @@
+ 
+ /** Passport framing: 600x800 (3:4), cropped around the face, and capped in size. */
+ const PASSPORT_TRANSFORMATION = [{ width: 600, height: 800, crop: 'fill', gravity: 'face' }, { quality: 'auto', fetch_format: 'auto' }];
++/** At most 1000 px on the longest side: sharp at print size, still a small download. */
++const BRANDING_OPTIONS = { transformation: [{ width: 1000, height: 1000, crop: 'limit' }], format: 'png' } as const;
+ 
+ export function createCloudinaryImageStore(config: { cloudName: string; apiKey: string; apiSecret: string }): ImageStore {
+   cloudinary.config({ cloud_name: config.cloudName, api_key: config.apiKey, api_secret: config.apiSecret, secure: true });
+ 
+   return {
+-    upload: (buffer, publicId) =>
++    upload: (buffer, publicId, preset = 'passport') =>
+       new Promise((resolve, reject) => {
+         const stream = cloudinary.uploader.upload_stream(
+-          { public_id: publicId, overwrite: true, invalidate: true, resource_type: 'image', transformation: PASSPORT_TRANSFORMATION },
++          { public_id: publicId, overwrite: true, invalidate: true, resource_type: 'image', ...(preset === 'branding' ? BRANDING_OPTIONS : { transformation: PASSPORT_TRANSFORMATION }) },
+           (error, result) => {
+             if (error || !result) {
+               logger.error({ err: error }, 'cloudinary upload failed');
+--- a/src/modules/settings/settings.module.ts
++++ b/src/modules/settings/settings.module.ts
+@@ -1,17 +1,23 @@
+ import { Router } from 'express';
++import multer from 'multer';
++import { AppError } from '../../common/errors/AppError';
+ import { authorize } from '../../common/middleware/authorize';
+ import { validate, type Validated } from '../../common/middleware/validate';
+ import { sendSuccess } from '../../common/utils/apiResponse';
++import { detectImageType } from '../../common/utils/image';
+ import { contextOf, requireUser } from '../../common/utils/request';
+ import type { AuditService } from '../audit/audit.service';
+ import type { AuthModule } from '../auth/auth.module';
+ import { settingsRepository } from './settings.repository';
+-import { setGradingScaleSchemas, updateSettingsSchemas } from './settings.schema';
++import type { ImageStore } from '../../integrations/imageStore';
++import { brandingAssetSchemas, setGradingScaleSchemas, updateBrandingSchemas, updateSettingsSchemas } from './settings.schema';
+ import { createSettingsService } from './settings.service';
+ 
+-export function createSettingsModule(deps: { audit: AuditService; auth: AuthModule; assessmentInUse?: () => Promise<boolean>; onStudentPasswordChangeOff?: () => Promise<number> }) {
++const uploadImage = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
++
++export function createSettingsModule(deps: { audit: AuditService; auth: AuthModule; images?: ImageStore; assessmentInUse?: () => Promise<boolean>; onStudentPasswordChangeOff?: () => Promise<number> }) {
+   const auth = deps.auth.middleware.authenticate;
+-  const service = createSettingsService({ repo: settingsRepository, audit: deps.audit, assessmentInUse: deps.assessmentInUse, onStudentPasswordChangeOff: deps.onStudentPasswordChangeOff });
++  const service = createSettingsService({ repo: settingsRepository, audit: deps.audit, assessmentInUse: deps.assessmentInUse, onStudentPasswordChangeOff: deps.onStudentPasswordChangeOff, images: deps.images });
+ 
+   const router = Router();
+   router.get('/settings/grading-scale', auth, authorize('grading-scale:read'), validate({}), async (_req, res) => {
+@@ -29,5 +35,25 @@
+     sendSuccess(res, await service.update(body, requireUser(req), contextOf(req)));
+   });
+ 
++  router.get('/settings/branding', auth, authorize('session:self'), validate({}), async (_req, res) => {
++    sendSuccess(res, await service.getBranding());
++  });
++  router.put('/settings/branding', auth, authorize('branding:write'), validate(updateBrandingSchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof updateBrandingSchemas>;
++    sendSuccess(res, await service.updateBranding(body, requireUser(req), contextOf(req)));
++  });
++  router.put('/settings/branding/:asset', auth, authorize('branding:write'), uploadImage.single('file'), validate(brandingAssetSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof brandingAssetSchemas>;
++    const file = req.file;
++    if (!file || !detectImageType(file.buffer)) {
++      throw new AppError('VALIDATION_ERROR', { details: [{ field: 'file', issue: 'Attach a JPEG, PNG or WebP image in the "file" field' }] });
++    }
++    sendSuccess(res, await service.setBrandingImage(params.asset, file.buffer, requireUser(req), contextOf(req)));
++  });
++  router.delete('/settings/branding/:asset', auth, authorize('branding:write'), validate(brandingAssetSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof brandingAssetSchemas>;
++    sendSuccess(res, await service.removeBrandingImage(params.asset, requireUser(req), contextOf(req)));
++  });
++
+   return { router, service };
+ }
+\ No newline at end of file
+--- a/src/modules/settings/settings.repository.ts
++++ b/src/modules/settings/settings.repository.ts
+@@ -6,6 +6,13 @@
+   name: string; shortName: string | null; motto: string | null; address: string | null;
+   phone: string | null; email: string | null; website: string | null;
+ }
++/** What printed documents (report cards, exam results) carry besides the profile text. The images live in Cloudinary and only their URLs are kept. */
++export interface SchoolBranding {
++  logoUrl: string | null;
++  principalName: string | null;
++  principalSignatureUrl: string | null;
++  stampUrl: string | null;
++}
+ export interface SchoolPolicy {
+   /** Used by Phase 4: parents see "withheld" instead of the report card while fees are owed. */
+   withholdReportsIfOwing: boolean;
+@@ -28,6 +35,7 @@
+ export const DEFAULT_PROFILE: SchoolProfile = {
+   name: SCHOOL_NAME, shortName: null, motto: null, address: null, phone: null, email: null, website: null,
+ };
++export const DEFAULT_BRANDING: SchoolBranding = { logoUrl: null, principalName: null, principalSignatureUrl: null, stampUrl: null };
+ export const DEFAULT_POLICY: SchoolPolicy = {
+   withholdReportsIfOwing: false, teacherPostsNeedApproval: true, lowAttendancePercent: 75, lowScorePercent: 40,
+   studentsMustChangePassword: true, onlinePaymentFeeKobo: 10_000, minPartPaymentPercent: 2,// today's behaviour until the super admin turns it off
+@@ -38,6 +46,8 @@
+   _id: string;
+   assessment: AssessmentConfig | null;
+   profile: Partial<SchoolProfile> | null;
++  /** Absent until first set. Written field by field, so never default it to null: a dotted $set cannot go inside null. */
++  branding?: Partial<SchoolBranding>;
+   policy: Partial<SchoolPolicy> | null;
+   updatedBy: mongoose.Types.ObjectId | null;
+   updatedAt: Date;
+@@ -48,6 +58,7 @@
+     _id: { type: String, required: true },
+     assessment: { type: mongoose.Schema.Types.Mixed, default: null },
+     profile: { type: mongoose.Schema.Types.Mixed, default: null },
++    branding: { type: mongoose.Schema.Types.Mixed },
+     policy: { type: mongoose.Schema.Types.Mixed, default: null },
+     updatedBy: { type: mongoose.Schema.Types.ObjectId, default: null },
+   },
+@@ -67,7 +78,14 @@
+   await SettingsModel.updateOne({ _id: DOC_ID }, { $set: set }, { upsert: true });
+ }
+ 
++/** Sets one branding field without touching the others, so two admins changing different things never overwrite each other. */
++async function setBrandingField(field: keyof SchoolBranding, value: string | null, updatedBy: string): Promise<void> {
++  await SettingsModel.updateOne({ _id: DOC_ID }, { $set: { [`branding.${field}`]: value, updatedBy } }, { upsert: true });
++}
++
+ export const settingsRepository = {
++  getBranding: async (): Promise<SchoolBranding> => ({ ...DEFAULT_BRANDING, ...((await load())?.branding ?? {}) }),
++  setBrandingField,
+   getAssessment: async (): Promise<AssessmentConfig | null> => (await load())?.assessment ?? null,
+   getProfile: async (): Promise<SchoolProfile> => ({ ...DEFAULT_PROFILE, ...((await load())?.profile ?? {}) }),
+   getPolicy: async (): Promise<SchoolPolicy> => ({ ...DEFAULT_POLICY, ...((await load())?.policy ?? {}) }),
+--- a/src/modules/settings/settings.schema.ts
++++ b/src/modules/settings/settings.schema.ts
+@@ -26,6 +26,11 @@
+   shortName: nullableText(30), motto: nullableText(150), address: nullableText(250),
+   phone: nullableText(30), email: nullableText(254), website: nullableText(200),
+ }).strict();
++const brandingBody = z.object({ ...profileBody.shape, principalName: nullableText(100) }).strict();
++const assetParams = z.object({ asset: z.enum(['logo', 'signature', 'stamp']) });
++export const updateBrandingSchemas = { body: brandingBody };
++export const brandingAssetSchemas = { params: assetParams };
++
+ const policyBody = z.object({
+   withholdReportsIfOwing: z.boolean().optional(),
+   teacherPostsNeedApproval: z.boolean().optional(),
+@@ -43,6 +48,10 @@
+   name: z.string(), shortName: z.string().nullable(), motto: z.string().nullable(), address: z.string().nullable(),
+   phone: z.string().nullable(), email: z.string().nullable(), website: z.string().nullable(),
+ });
++const brandingView = profileView.extend({
++  principalName: z.string().nullable(),
++  logoUrl: z.string().nullable(), principalSignatureUrl: z.string().nullable(), stampUrl: z.string().nullable(),
++});
+ const policyView = z.object({
+   withholdReportsIfOwing: z.boolean(), teacherPostsNeedApproval: z.boolean(),
+   lowAttendancePercent: z.number().int(), lowScorePercent: z.number().int(),
+@@ -56,4 +65,9 @@
+   registry.register({ method: 'put', path: '/settings/grading-scale', operationId: 'setGradingScale', summary: 'Replace the scale. Component maximums must add up to 100. Components cannot change once scores exist', tags, roles: PERMISSIONS['grading-scale:write'], request: { body: assessmentBody }, success: { status: 200, description: 'Saved', data: assessmentBody }, errors: ['CONFLICT'] });
+   registry.register({ method: 'get', path: '/settings', operationId: 'getSettings', summary: 'The school profile (everyone). The policy flags are returned to the super admin only, and are null for everyone else', tags, roles: PERMISSIONS['session:self'], success: { status: 200, description: 'Settings', data: z.object({ profile: profileView, policy: policyView.nullable() }) } });
+   registry.register({ method: 'put', path: '/settings', operationId: 'updateSettings', summary: 'Change the school profile and/or the policy flags. Only the fields you send change; send null to clear an optional profile field. Sending policy.studentsMustChangePassword = false also clears the "must change password" flag on every existing student at once', tags, roles: [ROLES.SUPER_ADMIN], request: { body: updateSettingsBody }, success: { status: 200, description: 'Saved', data: z.object({ profile: profileView, policy: policyView }) } });
++  const brandingTags = ['settings'];
++  registry.register({ method: 'get', path: '/settings/branding', operationId: 'getBranding', summary: 'Everything printed documents carry about the school: name, motto, address, contacts, logo, principal name and signature, and the school stamp. The image URLs are null until uploaded', tags: brandingTags, roles: PERMISSIONS['session:self'], success: { status: 200, description: 'Branding', data: brandingView } });
++  registry.register({ method: 'put', path: '/settings/branding', operationId: 'updateBranding', summary: 'Change the text side of branding. Only the fields you send change; send null to clear an optional one. Images are uploaded with PUT /settings/branding/{asset}', tags: brandingTags, roles: PERMISSIONS['branding:write'], request: { body: brandingBody }, success: { status: 200, description: 'Saved', data: brandingView }, errors: ['VALIDATION_ERROR'] });
++  registry.register({ method: 'put', path: '/settings/branding/{asset}', operationId: 'setBrandingImage', summary: 'Upload the school logo, the principal signature or the school stamp (asset is logo, signature or stamp). Field "file", JPEG, PNG or WebP, max 2 MB. It is kept as a PNG no larger than 1000 px, so transparency survives and it prints sharply. Replaces any earlier upload', tags: brandingTags, roles: PERMISSIONS['branding:write'], request: { params: assetParams }, upload: true, success: { status: 200, description: 'Saved', data: brandingView }, errors: ['VALIDATION_ERROR', 'SERVICE_UNAVAILABLE'] });
++  registry.register({ method: 'delete', path: '/settings/branding/{asset}', operationId: 'removeBrandingImage', summary: 'Remove the logo, signature or stamp. Documents are then printed without it', tags: brandingTags, roles: PERMISSIONS['branding:write'], request: { params: assetParams }, success: { status: 200, description: 'Removed', data: brandingView }, errors: ['SERVICE_UNAVAILABLE'] });
+ }
+\ No newline at end of file
+--- a/src/modules/settings/settings.service.ts
++++ b/src/modules/settings/settings.service.ts
+@@ -1,14 +1,22 @@
+ import { AppError } from '../../common/errors/AppError';
+ import { normalizeEmail, normalizePhone } from '../../common/utils/identifier';
++import type { ImageStore } from '../../integrations/imageStore';
+ import { sanitizeText } from '../../common/utils/text';
+ import { ROLES, type Role } from '../../config/constants';
+ import { recordSafely, type AuditPort } from '../audit/audit.port';
+ import { DEFAULT_ASSESSMENT, assessmentIssues, type AssessmentConfig } from './assessment';
+-import type { SchoolPolicy, SchoolProfile, settingsRepository } from './settings.repository';
++import type { SchoolBranding, SchoolPolicy, SchoolProfile, settingsRepository } from './settings.repository';
+ 
+ export type ProfilePatch = { [K in keyof SchoolProfile]?: SchoolProfile[K] | undefined };
+ export type PolicyPatch = { [K in keyof SchoolPolicy]?: SchoolPolicy[K] | undefined };
+ 
++export type BrandingAsset = 'logo' | 'signature' | 'stamp';
++const ASSET_FIELD = { logo: 'logoUrl', signature: 'principalSignatureUrl', stamp: 'stampUrl' } as const satisfies Record<BrandingAsset, keyof SchoolBranding>;
++const assetPublicId = (asset: BrandingAsset): string => `branding/${asset}`;
++/** Everything a printed document needs about the school, in one object. */
++export type BrandingView = SchoolProfile & SchoolBranding;
++export type BrandingPatch = ProfilePatch & { principalName?: string | null | undefined };
++
+ interface Actor { id: string }
+ interface Context { ip: string; requestId: string }
+ 
+@@ -61,13 +69,53 @@
+   assessmentInUse?: () => Promise<boolean>;
+   /** Called when the super admin switches the student password-change rule off. Returns how many students were freed. */
+   onStudentPasswordChangeOff?: () => Promise<number>;
++  /** Where logos, signatures and stamps are kept. Without it, uploading answers SERVICE_UNAVAILABLE. */
++  images?: ImageStore;
+ }) {
+   const { repo, audit } = deps;
+   const getAssessment = async (): Promise<AssessmentConfig> => (await repo.getAssessment()) ?? DEFAULT_ASSESSMENT;
++  const getBranding = async (): Promise<BrandingView> => {
++    const [profile, branding] = await Promise.all([repo.getProfile(), repo.getBranding()]);
++    return { ...profile, ...branding };
++  };
+ 
+   return {
+     getAssessment,
+     getProfile: (): Promise<SchoolProfile> => repo.getProfile(),
++    getBranding,
++
++    /** The text side of branding: the profile fields plus the principal's name. Images have their own calls. */
++    async updateBranding(patch: BrandingPatch, actor: Actor, ctx: Context): Promise<BrandingView> {
++      const { principalName, ...profilePatch } = patch;
++      const hasProfile = Object.values(profilePatch).some((v) => v !== undefined);
++      if (!hasProfile && principalName === undefined) throw fail('body', 'Nothing to update');
++
++      const before = await getBranding();
++      if (hasProfile) await repo.saveProfile(mergeProfile(await repo.getProfile(), profilePatch), actor.id);
++      if (principalName !== undefined) await repo.setBrandingField('principalName', cleanText('principalName', principalName, 100) ?? null, actor.id);
++
++      const after = await getBranding();
++      await recordSafely(audit, { action: 'BRANDING_CHANGED', actorId: actor.id, entityType: 'settings', entityId: 'branding', ip: ctx.ip, requestId: ctx.requestId, before: { ...before }, after: { ...after } });
++      return after;
++    },
++
++    /** Saves a logo, signature or stamp. The caller has already checked it is a real image. A new upload replaces the old one. */
++    async setBrandingImage(asset: BrandingAsset, image: Buffer, actor: Actor, ctx: Context): Promise<BrandingView> {
++      if (!deps.images) throw new AppError('SERVICE_UNAVAILABLE');
++      const stored = await deps.images.upload(image, assetPublicId(asset), 'branding');
++      await repo.setBrandingField(ASSET_FIELD[asset], stored.url, actor.id);
++      await recordSafely(audit, { action: 'BRANDING_IMAGE_SET', actorId: actor.id, entityType: 'settings', entityId: `branding.${asset}`, ip: ctx.ip, requestId: ctx.requestId, after: { url: stored.url } });
++      return getBranding();
++    },
++
++    /** Removes the image first. If the store fails nothing changes, so the settings never point at a picture that still exists. */
++    async removeBrandingImage(asset: BrandingAsset, actor: Actor, ctx: Context): Promise<BrandingView> {
++      if (!deps.images) throw new AppError('SERVICE_UNAVAILABLE');
++      await deps.images.remove(assetPublicId(asset));
++      await repo.setBrandingField(ASSET_FIELD[asset], null, actor.id);
++      await recordSafely(audit, { action: 'BRANDING_IMAGE_REMOVED', actorId: actor.id, entityType: 'settings', entityId: `branding.${asset}`, ip: ctx.ip, requestId: ctx.requestId });
++      return getBranding();
++    },
+     getPolicy: (): Promise<SchoolPolicy> => repo.getPolicy(),
+ 
+     async setAssessment(config: AssessmentConfig, actor: Actor, ctx: Context): Promise<AssessmentConfig> {
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -57,7 +57,7 @@
+ 
+   // Settings come before the modules that read them, and that includes users (the student password rule).
+   const settings = createSettingsModule({
+-    audit, auth,
++    audit, auth, images,
+     assessmentInUse: () => scoreRepository.anyExists(),
+     onStudentPasswordChangeOff: () => userRepository.clearMustChangePasswordForRole(ROLES.STUDENT),
+   });

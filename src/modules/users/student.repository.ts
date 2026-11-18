@@ -130,6 +130,11 @@ async function softDelete(userId: string, now: Date, session: ClientSession): Pr
   const result = await StudentModel.updateOne({ userId, deletedAt: null }, { $set: { deletedAt: now } }, { session });
   return result.matchedCount > 0;
 }
+/** ACTIVE to GRADUATED only. False means the student was not active (already graduated, withdrawn or deleted). */
+async function markGraduated(userId: string, session: ClientSession): Promise<boolean> {
+  const result = await StudentModel.updateOne({ userId, deletedAt: null, status: 'ACTIVE' }, { $set: { status: 'GRADUATED' } }, { session });
+  return result.matchedCount > 0;
+}
 async function userIdsByAdmissionNos(nos: string[]): Promise<Map<string, string>> {
   if (nos.length === 0) return new Map();
   const rows = await StudentModel.find({ admissionNo: { $in: nos }, deletedAt: null }, { admissionNo: 1, userId: 1 }).lean<Row[]>();
@@ -144,6 +149,6 @@ async function profileMap(userIds: string[]): Promise<Map<string, { name: string
 }
 const countActive = (): Promise<number> => StudentModel.countDocuments({ deletedAt: null, status: 'ACTIVE' });
 export const studentRepository = {
-  create, findByUserId, findManyByUserIds, findUserIdByAdmissionNo,
+  create, findByUserId, findManyByUserIds, findUserIdByAdmissionNo, markGraduated,
    nameMap, list, update, softDelete, profileMap, userIdsByAdmissionNos, countActive
 };

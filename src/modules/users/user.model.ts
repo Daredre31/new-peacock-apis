@@ -11,6 +11,10 @@ export interface UserDocument {
   role: Role;
   status: UserStatus;
   mustChangePassword: boolean;
+  /** Graduates can look at their results but cannot change or start anything. */
+  readOnly: boolean;
+  /** A teacher the admin has allowed to run the school library. */
+  isLibrarian: boolean;
   failedLoginCount: number;
   lockedUntil?: Date | null;
   lastLoginAt?: Date | null;
@@ -48,6 +52,8 @@ const userSchema = new mongoose.Schema<UserDocument>(
       required: true,
     },
     mustChangePassword: { type: Boolean, default: false },
+    readOnly: { type: Boolean, default: false },
+    isLibrarian: { type: Boolean, default: false },
     failedLoginCount: { type: Number, default: 0, min: 0 },
     lockedUntil: { type: Date, default: null },
     lastLoginAt: { type: Date, default: null },

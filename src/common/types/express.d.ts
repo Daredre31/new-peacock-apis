@@ -8,6 +8,10 @@ declare global {
       id: string;
       role: Role;
       mustChangePassword: boolean;
+      /** True for graduates: only the permissions in READ_ONLY_PERMISSIONS are allowed. */
+      readOnly: boolean;
+      /** True for a teacher the admin made a librarian. Checked by authorizeLibrarian. */
+      isLibrarian: boolean;
       /** Refresh-token family of this login, used by logout and force-logout. */
       sessionId: string;
     }

@@ -1,0 +1,809 @@
+--- a/openapi/openapi.json
++++ b/openapi/openapi.json
+@@ -26608,6 +26608,292 @@
+         }
+       }
+     },
++    "/promotions/commit": {
++      "post": {
++        "operationId": "commitPromotion",
++        "summary": "Moves a class into the next session. Run the preview first. Refused while the preview shows any issue. Each student is saved on their own, so it is safe to run again after a partial result. Students owing fees are skipped and an override cannot lift that. Graduates keep read-only access to their results",
++        "tags": [
++          "promotions"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN"
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "classArmId": {
++                    "type": "string",
++                    "pattern": "^[a-f0-9]{24}$"
++                  },
++                  "sessionId": {
++                    "type": "string",
++                    "pattern": "^[a-f0-9]{24}$"
++                  },
++                  "targetSessionId": {
++                    "type": "string",
++                    "pattern": "^[a-f0-9]{24}$"
++                  },
++                  "targetArmId": {
++                    "type": "string",
++                    "pattern": "^[a-f0-9]{24}$"
++                  },
++                  "overrides": {
++                    "default": [],
++                    "maxItems": 500,
++                    "type": "array",
++                    "items": {
++                      "type": "object",
++                      "properties": {
++                        "studentId": {
++                          "type": "string",
++                          "pattern": "^[a-f0-9]{24}$"
++                        },
++                        "outcome": {
++                          "type": "string",
++                          "enum": [
++                            "PROMOTE",
++                            "REPEAT",
++                            "GRADUATE"
++                          ]
++                        },
++                        "reason": {
++                          "type": "string",
++                          "minLength": 3,
++                          "maxLength": 200
++                        }
++                      },
++                      "required": [
++                        "studentId",
++                        "outcome",
++                        "reason"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                },
++                "required": [
++                  "classArmId",
++                  "sessionId",
++                  "targetSessionId"
++                ],
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "What was done",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "summary": {
++                          "type": "object",
++                          "properties": {
++                            "applied": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "skipped": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "failed": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            }
++                          },
++                          "required": [
++                            "applied",
++                            "skipped",
++                            "failed"
++                          ],
++                          "additionalProperties": false
++                        },
++                        "applied": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "studentId": {
++                                "type": "string"
++                              },
++                              "name": {
++                                "type": "string"
++                              },
++                              "outcome": {
++                                "type": "string",
++                                "enum": [
++                                  "PROMOTE",
++                                  "REPEAT",
++                                  "GRADUATE"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "studentId",
++                              "name",
++                              "outcome"
++                            ],
++                            "additionalProperties": false
++                          }
++                        },
++                        "skipped": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "studentId": {
++                                "type": "string"
++                              },
++                              "name": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "ALREADY_ENROLLED",
++                                  "NOT_ELIGIBLE",
++                                  "NEEDS_DECISION",
++                                  "OWES_FEES",
++                                  "CHANGED_MEANWHILE"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "studentId",
++                              "name",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        },
++                        "failed": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "studentId": {
++                                "type": "string"
++                              },
++                              "name": {
++                                "type": "string"
++                              }
++                            },
++                            "required": [
++                              "studentId",
++                              "name"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "summary",
++                        "applied",
++                        "skipped",
++                        "failed"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "NOT_FOUND",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "409": {
++            "description": "CONFLICT",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/promotions/preview": {
+       "get": {
+         "operationId": "previewPromotion",
+--- a/src/common/middleware/authenticate.ts
++++ b/src/common/middleware/authenticate.ts
+@@ -9,6 +9,7 @@
+   role: Role;
+   status: UserStatus;
+   mustChangePassword: boolean;
++  readOnly: boolean;
+ }
+ 
+ export interface AuthMiddlewareDeps {
+@@ -54,6 +55,7 @@
+         id: user.id,
+         role: user.role,
+         mustChangePassword: user.mustChangePassword,
++        readOnly: user.readOnly,
+         sessionId: claims.sessionId,
+       };
+       req.log = req.log.child({ userId: user.id, role: user.role });
+--- a/src/common/middleware/authorize.ts
++++ b/src/common/middleware/authorize.ts
+@@ -1,5 +1,5 @@
+ import type { RequestHandler } from 'express';
+-import { can, type Permission } from '../../config/constants';
++import { can, READ_ONLY_PERMISSIONS, type Permission } from '../../config/constants';
+ import { AppError } from '../errors/AppError';
+ 
+ /** Handlers carry a tag so a test can check that every route declares a permission or is public. */
+@@ -17,6 +17,11 @@
+       next(new AppError('FORBIDDEN'));
+       return;
+     }
++    if (user.readOnly && !READ_ONLY_PERMISSIONS.has(permission)) {
++      req.log.warn({ permission }, 'permission denied: read-only account');
++      next(new AppError('FORBIDDEN'));
++      return;
++    }
+     next();
+   };
+   return Object.assign(handler, { permission });
+--- a/src/common/types/express.d.ts
++++ b/src/common/types/express.d.ts
+@@ -8,6 +8,8 @@
+       id: string;
+       role: Role;
+       mustChangePassword: boolean;
++      /** True for graduates: only the permissions in READ_ONLY_PERMISSIONS are allowed. */
++      readOnly: boolean;
+       /** Refresh-token family of this login, used by logout and force-logout. */
+       sessionId: string;
+     }
+--- a/src/config/constants.ts
++++ b/src/config/constants.ts
+@@ -84,6 +84,7 @@
+   'results:lock': [SA], // lock and unlock
+   'results:annual': [SA, AD], // the yearly average sheet for a class
+   'promotions:preview': [SA, AD], // what would happen to a class at the end of a session. Writes nothing
++  'promotions:commit': [SA, AD], // moves a class into the next session
+ 
+   // ---- CBT
+   'cbt:manage': [TE], // create, upload questions, release results
+@@ -155,6 +156,13 @@
+ export type Permission = keyof typeof PERMISSIONS;
+ 
+ /** True only if the permission exists and lists this role. Anything unknown is denied. */
++/**
++ * What a graduate may still do: sign out, change their password, and look at their own record and results.
++ * Everything else is refused, including every write. Receipts are not listed because students never had
++ * access to them: fees belong to the parent account.
++ */
++export const READ_ONLY_PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>(['session:self', 'students:read', 'results:read', 'report-cards:read']);
++
+ export function can(role: Role, permission: Permission): boolean {
+   if (!Object.hasOwn(PERMISSIONS, permission)) return false;
+   return (PERMISSIONS[permission] as readonly Role[]).includes(role);
+--- a/src/modules/academics/enrolment.repository.ts
++++ b/src/modules/academics/enrolment.repository.ts
+@@ -1,10 +1,16 @@
+ import mongoose, { type ClientSession, type Model, type Types } from 'mongoose';
+ 
++export type EnrolmentOutcome = 'PROMOTED' | 'REPEATED' | 'GRADUATED';
++
+ interface EnrolmentDocument {
+   studentId: Types.ObjectId; // the student's user id
+   sessionId: Types.ObjectId;
+   classArmId: Types.ObjectId;
+   status: 'ACTIVE' | 'COMPLETED';
++  /** How the year ended for this student. Set when the enrolment is completed. */
++  outcome?: EnrolmentOutcome;
++  /** On a new enrolment made by promotion: the session it came from, so it can be undone. */
++  promotedFromSessionId?: Types.ObjectId;
+   createdAt: Date;
+   updatedAt: Date;
+ }
+@@ -16,6 +22,8 @@
+     sessionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Session', required: true },
+     classArmId: { type: mongoose.Schema.Types.ObjectId, ref: 'ClassArm', required: true },
+     status: { type: String, enum: ['ACTIVE', 'COMPLETED'], default: 'ACTIVE' },
++    outcome: { type: String, enum: ['PROMOTED', 'REPEATED', 'GRADUATED'] },
++    promotedFromSessionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Session' },
+   },
+   { timestamps: true, versionKey: false },
+ );
+@@ -64,4 +72,35 @@
+   const rows = await EnrolmentModel.find({ sessionId, ...(armId ? { classArmId: armId } : {}) }).limit(limit).lean<Row[]>();
+   return rows.map(toRecord);
+ }
+-export const enrolmentRepository = { upsert, forStudents, studentIdsInArms,listForSession };
+\ No newline at end of file
++export type ApplyOutcomeResult = 'APPLIED' | 'SOURCE_CHANGED' | 'ALREADY_ENROLLED';
++
++/**
++ * Ends one student's year and, unless they graduate, starts the next. Run it inside a transaction:
++ * both writes happen or neither does. The source enrolment is only completed if it is still active in the
++ * arm the caller looked at, so a student who was moved or already processed is left alone.
++ */
++async function applyOutcome(
++  input: { studentId: string; fromSessionId: string; fromArmId: string; outcome: EnrolmentOutcome; next?: { sessionId: string; classArmId: string } },
++  session: ClientSession,
++): Promise<ApplyOutcomeResult> {
++  // Look before writing, so "already enrolled" never leaves a half-finished change behind.
++  if (input.next) {
++    const exists = await EnrolmentModel.exists({ studentId: input.studentId, sessionId: input.next.sessionId }).session(session);
++    if (exists) return 'ALREADY_ENROLLED';
++  }
++  const closed = await EnrolmentModel.updateOne(
++    { studentId: input.studentId, sessionId: input.fromSessionId, classArmId: input.fromArmId, status: 'ACTIVE' },
++    { $set: { status: 'COMPLETED', outcome: input.outcome } },
++    { session },
++  );
++  if (closed.matchedCount === 0) return 'SOURCE_CHANGED';
++  if (input.next) {
++    await EnrolmentModel.create(
++      [{ studentId: input.studentId, sessionId: input.next.sessionId, classArmId: input.next.classArmId, status: 'ACTIVE', promotedFromSessionId: input.fromSessionId }],
++      { session },
++    );
++  }
++  return 'APPLIED';
++}
++
++export const enrolmentRepository = { upsert, forStudents, studentIdsInArms, listForSession, applyOutcome };
+\ No newline at end of file
+--- a/src/modules/promotions/promotion.routes.ts
++++ b/src/modules/promotions/promotion.routes.ts
+@@ -2,7 +2,8 @@
+ import { authorize } from '../../common/middleware/authorize';
+ import { validate, type Validated } from '../../common/middleware/validate';
+ import { sendSuccess } from '../../common/utils/apiResponse';
+-import { previewSchemas } from './promotion.schema';
++import { contextOf, requireUser } from '../../common/utils/request';
++import { commitSchemas, previewSchemas } from './promotion.schema';
+ import type { PromotionService } from './promotion.service';
+ 
+ export function createPromotionRouter(deps: { service: PromotionService; authenticate: RequestHandler }): Router {
+@@ -14,5 +15,10 @@
+     sendSuccess(res, await service.preview(query));
+   });
+ 
++  router.post('/promotions/commit', auth, authorize('promotions:commit'), validate(commitSchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof commitSchemas>;
++    sendSuccess(res, await service.commit(body, requireUser(req), contextOf(req)));
++  });
++
+   return router;
+ }
+--- a/src/modules/promotions/promotion.schema.ts
++++ b/src/modules/promotions/promotion.schema.ts
+@@ -14,6 +14,17 @@
+ });
+ export const previewSchemas = { query: previewQuery };
+ 
++export const commitBody = z.object({
++  classArmId: objectId, sessionId: objectId, targetSessionId: objectId, targetArmId: objectId.optional(),
++  /** Decisions for individual students. Needed for anyone left as NEEDS_DECISION, and to change a proposed outcome. */
++  overrides: z.array(z.object({
++    studentId: objectId,
++    outcome: z.enum(['PROMOTE', 'REPEAT', 'GRADUATE']),
++    reason: z.string().trim().min(3).max(200),
++  }).strict()).max(500).default([]),
++}).strict();
++export const commitSchemas = { body: commitBody };
++
+ export function registerPromotionOperations(registry: OpenApiRegistry): void {
+   const tags = ['promotions'];
+   const num = z.number().int();
+@@ -41,4 +52,21 @@
+     },
+     errors: ['NOT_FOUND'],
+   });
++
++  const person = z.object({ studentId: z.string(), name: z.string() });
++  registry.register({
++    method: 'post', path: '/promotions/commit', operationId: 'commitPromotion',
++    summary: 'Moves a class into the next session. Run the preview first. Refused while the preview shows any issue. Each student is saved on their own, so it is safe to run again after a partial result. Students owing fees are skipped and an override cannot lift that. Graduates keep read-only access to their results',
++    tags, roles: PERMISSIONS['promotions:commit'], request: { body: commitBody },
++    success: {
++      status: 200, description: 'What was done',
++      data: z.object({
++        summary: z.object({ applied: num, skipped: num, failed: num }),
++        applied: z.array(person.extend({ outcome: z.enum(['PROMOTE', 'REPEAT', 'GRADUATE']) })),
++        skipped: z.array(person.extend({ reason: z.enum(['ALREADY_ENROLLED', 'NOT_ELIGIBLE', 'NEEDS_DECISION', 'OWES_FEES', 'CHANGED_MEANWHILE']) })),
++        failed: z.array(person),
++      }),
++    },
++    errors: ['NOT_FOUND', 'VALIDATION_ERROR', 'CONFLICT'],
++  });
+ }
+--- a/src/modules/promotions/promotion.service.ts
++++ b/src/modules/promotions/promotion.service.ts
+@@ -1,11 +1,17 @@
+ import { AppError } from '../../common/errors/AppError';
++import { logger } from '../../common/utils/logger';
++import { withTransaction } from '../../config/db';
++import type { AuditPort } from '../audit/audit.port';
+ import type { enrolmentRepository } from '../academics/enrolment.repository';
+ import type { sessionRepository } from '../academics/session.repository';
+ import type { structureRepository } from '../academics/structure.repository';
+ import type { invoiceRepository } from '../fees/invoice.repository';
+ import type { AnnualResultsService } from '../results/annualResults.service';
++import type { NotificationService } from '../notifications/notification.service';
+ import type { SettingsService } from '../settings/settings.service';
++import type { linkRepository } from '../users/link.repository';
+ import type { studentRepository } from '../users/student.repository';
++import type { userRepository } from '../users/user.repository';
+ import { decide, OUTCOME, REASON, type Outcome, type Reason } from './promotion.plan';
+ 
+ export type IssueCode = 'TARGET_SESSION_NOT_AFTER_SOURCE' | 'TERMS_NOT_CLOSED' | 'TARGET_ARM_MISSING' | 'NO_STUDENTS';
+@@ -30,19 +36,39 @@
+   students: PreviewStudent[];
+ }
+ 
++export type Decision = 'PROMOTE' | 'REPEAT' | 'GRADUATE';
++export type SkipReason = 'ALREADY_ENROLLED' | 'NOT_ELIGIBLE' | 'NEEDS_DECISION' | 'OWES_FEES' | 'CHANGED_MEANWHILE';
++export interface Override { studentId: string; outcome: Decision; reason: string }
++export interface CommitInput { classArmId: string; sessionId: string; targetSessionId: string; targetArmId?: string | undefined; overrides: Override[] }
++export interface CommitResult {
++  summary: { applied: number; skipped: number; failed: number };
++  applied: { studentId: string; name: string; outcome: Decision }[];
++  skipped: { studentId: string; name: string; reason: SkipReason }[];
++  failed: { studentId: string; name: string }[];
++}
++interface Actor { id: string }
++interface Context { ip: string; requestId: string }
++
++/** Thrown inside a student's transaction to undo it when the record changed under us. */
++class ChangedMeanwhile extends Error {}
++
+ export function createPromotionService(deps: {
+   annual: Pick<AnnualResultsService, 'forArm'>;
+   settings: Pick<SettingsService, 'getPolicy'>;
+   sessions: Pick<typeof sessionRepository, 'findSession' | 'findTermsOfSession'>;
+   structure: Pick<typeof structureRepository, 'findArm' | 'classesByIds' | 'nextClassAfter' | 'findArmByName'>;
+-  enrolments: Pick<typeof enrolmentRepository, 'forStudents'>;
+-  students: Pick<typeof studentRepository, 'findManyByUserIds'>;
++  enrolments: Pick<typeof enrolmentRepository, 'forStudents' | 'applyOutcome'>;
++  students: Pick<typeof studentRepository, 'findManyByUserIds' | 'markGraduated'>;
+   invoices: Pick<typeof invoiceRepository, 'outstandingForStudents'>;
++  users: Pick<typeof userRepository, 'setReadOnly'>;
++  links: Pick<typeof linkRepository, 'activeParentIdsOf'>;
++  notifier: Pick<NotificationService, 'notify'>;
++  audit: AuditPort;
+ }) {
+-  const { annual, settings, sessions, structure, enrolments, students, invoices } = deps;
++  const { annual, settings, sessions, structure, enrolments, students, invoices, users, links, notifier, audit } = deps;
+   const invalid = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
+ 
+-  return {
++  const service = {
+     /**
+      * What would happen to every student in a class when the school moves from one session to the next.
+      * Read-only: nothing is saved, so it can be run as often as needed.
+@@ -121,7 +147,104 @@
+         students: rows,
+       };
+     },
++
++    /**
++     * Moves a class into the next session. The plan is worked out again here from the database, never taken from
++     * the client, and only the overrides in the request can change it. Each student is saved in their own
++     * transaction, so a failure on one leaves the others done and the whole call safe to run again.
++     *
++     * Refused outright while the preview shows any issue. Students owing fees cannot be promoted or graduated,
++     * and an override cannot lift that.
++     */
++    async commit(input: CommitInput, actor: Actor, ctx: Context): Promise<CommitResult> {
++      const plan = await service.preview(input);
++      if (plan.issues.length > 0) {
++        throw new AppError('CONFLICT', { details: plan.issues.map((i) => ({ field: i.code, issue: i.message })) });
++      }
++
++      const rowOf = new Map(plan.students.map((r) => [r.studentId, r]));
++      const overrideOf = new Map<string, Override>();
++      input.overrides.forEach((o, i) => {
++        const field = `overrides.${i}`;
++        if (overrideOf.has(o.studentId)) throw invalid(field, 'This student appears more than once');
++        if (!rowOf.has(o.studentId)) throw invalid(field, 'This student is not in the class');
++        if (o.outcome === 'GRADUATE' && !plan.target.isFinalClass) throw invalid(field, 'Only the top class can graduate');
++        if (o.outcome === 'PROMOTE' && plan.target.isFinalClass) throw invalid(field, 'The top class has no next class. Use GRADUATE');
++        overrideOf.set(o.studentId, o);
++      });
++
++      const result: CommitResult = { summary: { applied: 0, skipped: 0, failed: 0 }, applied: [], skipped: [], failed: [] };
++      const sourceArmId = plan.source.classArm.id;
++
++      for (const row of plan.students) {
++        const skip = (reason: SkipReason): void => { result.skipped.push({ studentId: row.studentId, name: row.name, reason }); };
++        if (row.outcome === OUTCOME.ALREADY_ENROLLED || row.outcome === OUTCOME.NOT_ELIGIBLE) { skip(row.outcome); continue; }
++
++        const chosen: Decision | null = overrideOf.get(row.studentId)?.outcome
++          ?? (row.outcome === OUTCOME.PROMOTE || row.outcome === OUTCOME.REPEAT || row.outcome === OUTCOME.GRADUATE ? row.outcome : null);
++        if (!chosen) { skip('NEEDS_DECISION'); continue; }
++        if (chosen !== 'REPEAT' && row.owingKobo > 0) { skip('OWES_FEES'); continue; }
++
++        const nextArmId = chosen === 'PROMOTE' ? plan.target.arm?.id : sourceArmId;
++        if (chosen !== 'GRADUATE' && !nextArmId) { skip('CHANGED_MEANWHILE'); continue; }
++
++        try {
++          const outcome = await withTransaction(async (tx) => {
++            const done = await enrolments.applyOutcome({
++              studentId: row.studentId, fromSessionId: plan.source.session.id, fromArmId: sourceArmId,
++              outcome: chosen === 'PROMOTE' ? 'PROMOTED' : chosen === 'REPEAT' ? 'REPEATED' : 'GRADUATED',
++              ...(chosen !== 'GRADUATE' && nextArmId ? { next: { sessionId: plan.target.session.id, classArmId: nextArmId } } : {}),
++            }, tx);
++            if (done !== 'APPLIED') return done;
++            if (chosen === 'GRADUATE') {
++              if (!(await students.markGraduated(row.studentId, tx))) throw new ChangedMeanwhile();
++              await users.setReadOnly(row.studentId, true, tx);
++            }
++            return done;
++          });
++          if (outcome === 'APPLIED') result.applied.push({ studentId: row.studentId, name: row.name, outcome: chosen });
++          else skip(outcome === 'ALREADY_ENROLLED' ? 'ALREADY_ENROLLED' : 'CHANGED_MEANWHILE');
++        } catch (err) {
++          if (err instanceof ChangedMeanwhile) { skip('CHANGED_MEANWHILE'); continue; }
++          logger.error({ err, studentId: row.studentId, requestId: ctx.requestId }, 'promotion failed for one student');
++          result.failed.push({ studentId: row.studentId, name: row.name });
++        }
++      }
++      result.summary = { applied: result.applied.length, skipped: result.skipped.length, failed: result.failed.length };
++
++      // The students are already saved. Neither the audit entry nor the notices may turn that into an error.
++      try {
++        await audit.record({
++          action: 'PROMOTION_COMMITTED', actorId: actor.id, entityType: 'ClassArm', entityId: sourceArmId, ip: ctx.ip, requestId: ctx.requestId,
++          metadata: {
++            fromSessionId: plan.source.session.id, toSessionId: plan.target.session.id, toArmId: plan.target.arm?.id ?? null,
++            passMarkPercent: plan.passMarkPercent, summary: result.summary,
++            overrides: input.overrides.map((o) => ({ studentId: o.studentId, outcome: o.outcome, reason: o.reason, proposed: rowOf.get(o.studentId)?.outcome })),
++            graduated: result.applied.filter((a) => a.outcome === 'GRADUATE').map((a) => a.studentId),
++          },
++        });
++      } catch (err) {
++        logger.error({ err, requestId: ctx.requestId }, 'promotion audit entry could not be written');
++      }
++
++      try {
++        for (const a of result.applied) {
++          const parentIds = await links.activeParentIdsOf([a.studentId]);
++          if (parentIds.length === 0) continue;
++          const body = a.outcome === 'PROMOTE'
++            ? `${a.name} has been promoted to ${plan.target.nextClass?.name ?? ''} ${plan.target.arm?.name ?? ''} for the ${plan.target.session.name} session.`.replace(/\s+/g, ' ')
++            : a.outcome === 'REPEAT'
++              ? `${a.name} will repeat ${plan.source.classArm.name} in the ${plan.target.session.name} session.`
++              : `${a.name} has graduated. Results and report cards stay available to view.`;
++          await notifier.notify({ userIds: parentIds, type: 'PROMOTION_OUTCOME', title: 'End of session outcome', body, data: { studentId: a.studentId }, email: true });
++        }
++      } catch (err) {
++        logger.error({ err, requestId: ctx.requestId }, 'promotion notices could not be sent');
++      }
++      return result;
++    },
+   };
++  return service;
+ }
+ 
+ export type PromotionService = ReturnType<typeof createPromotionService>;
+--- a/src/modules/promotions/promotions.module.ts
++++ b/src/modules/promotions/promotions.module.ts
+@@ -1,18 +1,23 @@
+ import { enrolmentRepository } from '../academics/enrolment.repository';
+ import { sessionRepository } from '../academics/session.repository';
+ import { structureRepository } from '../academics/structure.repository';
++import type { AuditService } from '../audit/audit.service';
+ import type { AuthModule } from '../auth/auth.module';
+ import { invoiceRepository } from '../fees/invoice.repository';
++import type { NotificationService } from '../notifications/notification.service';
+ import type { AnnualResultsService } from '../results/annualResults.service';
+ import type { SettingsService } from '../settings/settings.service';
++import { linkRepository } from '../users/link.repository';
+ import { studentRepository } from '../users/student.repository';
++import { userRepository } from '../users/user.repository';
+ import { createPromotionRouter } from './promotion.routes';
+ import { createPromotionService } from './promotion.service';
+ 
+-export function createPromotionsModule(deps: { auth: AuthModule; settings: SettingsService; annual: AnnualResultsService }) {
++export function createPromotionsModule(deps: { audit: AuditService; auth: AuthModule; settings: SettingsService; annual: AnnualResultsService; notifier: NotificationService }) {
+   const service = createPromotionService({
+     annual: deps.annual, settings: deps.settings, sessions: sessionRepository, structure: structureRepository,
+     enrolments: enrolmentRepository, students: studentRepository, invoices: invoiceRepository,
++    users: userRepository, links: linkRepository, notifier: deps.notifier, audit: deps.audit,
+   });
+   return { router: createPromotionRouter({ service, authenticate: deps.auth.middleware.authenticate }), service };
+ }
+--- a/src/modules/users/student.repository.ts
++++ b/src/modules/users/student.repository.ts
+@@ -130,6 +130,11 @@
+   const result = await StudentModel.updateOne({ userId, deletedAt: null }, { $set: { deletedAt: now } }, { session });
+   return result.matchedCount > 0;
+ }
++/** ACTIVE to GRADUATED only. False means the student was not active (already graduated, withdrawn or deleted). */
++async function markGraduated(userId: string, session: ClientSession): Promise<boolean> {
++  const result = await StudentModel.updateOne({ userId, deletedAt: null, status: 'ACTIVE' }, { $set: { status: 'GRADUATED' } }, { session });
++  return result.matchedCount > 0;
++}
+ async function userIdsByAdmissionNos(nos: string[]): Promise<Map<string, string>> {
+   if (nos.length === 0) return new Map();
+   const rows = await StudentModel.find({ admissionNo: { $in: nos }, deletedAt: null }, { admissionNo: 1, userId: 1 }).lean<Row[]>();
+@@ -144,6 +149,6 @@
+ }
+ const countActive = (): Promise<number> => StudentModel.countDocuments({ deletedAt: null, status: 'ACTIVE' });
+ export const studentRepository = {
+-  create, findByUserId, findManyByUserIds, findUserIdByAdmissionNo,
++  create, findByUserId, findManyByUserIds, findUserIdByAdmissionNo, markGraduated,
+    nameMap, list, update, softDelete, profileMap, userIdsByAdmissionNos, countActive
+ };
+\ No newline at end of file
+--- a/src/modules/users/student.service.ts
++++ b/src/modules/users/student.service.ts
+@@ -38,7 +38,7 @@
+ };
+ 
+ export interface StudentServiceDeps {
+-  users: Pick<typeof userRepository, 'create' | 'findById' | 'findManyByIds' | 'updateContact' | 'softDelete'>;
++  users: Pick<typeof userRepository, 'create' | 'findById' | 'findManyByIds' | 'updateContact' | 'softDelete' | 'setReadOnly'>;
+   students: typeof studentRepository;
+   enrolments: Pick<typeof enrolmentRepository, 'upsert' | 'forStudents' | 'studentIdsInArms'>;
+   sessions: Pick<typeof sessionRepository, 'findSession' | 'findCurrentSession'>;
+@@ -251,6 +251,7 @@
+       await withTransaction(async (tx) => {
+         if (Object.keys(contact).length > 0 && !(await users.updateContact(userId, contact, tx))) throw new AppError('NOT_FOUND');
+         if (Object.keys(profile).length > 0) await students.update(userId, profile, tx);
++        if (patch.status !== undefined) await users.setReadOnly(userId, patch.status === 'GRADUATED', tx);
+       });
+ 
+       const after = await mustGet(userId);
+--- a/src/modules/users/user.model.ts
++++ b/src/modules/users/user.model.ts
+@@ -11,6 +11,8 @@
+   role: Role;
+   status: UserStatus;
+   mustChangePassword: boolean;
++  /** Graduates can look at their results but cannot change or start anything. */
++  readOnly: boolean;
+   failedLoginCount: number;
+   lockedUntil?: Date | null;
+   lastLoginAt?: Date | null;
+@@ -48,6 +50,7 @@
+       required: true,
+     },
+     mustChangePassword: { type: Boolean, default: false },
++    readOnly: { type: Boolean, default: false },
+     failedLoginCount: { type: Number, default: 0, min: 0 },
+     lockedUntil: { type: Date, default: null },
+     lastLoginAt: { type: Date, default: null },
+--- a/src/modules/users/user.repository.ts
++++ b/src/modules/users/user.repository.ts
+@@ -15,6 +15,7 @@
+   role: Role;
+   status: UserStatus;
+   mustChangePassword: boolean;
++  readOnly: boolean;
+   failedLoginCount: number;
+   lockedUntil: Date | null;
+   lastLoginAt: Date | null;
+@@ -57,6 +58,7 @@
+     role: doc.role,
+     status: doc.status,
+     mustChangePassword: doc.mustChangePassword,
++    readOnly: doc.readOnly === true,
+     failedLoginCount: doc.failedLoginCount,
+     lockedUntil: doc.lockedUntil ?? null,
+     lastLoginAt: doc.lastLoginAt ?? null,
+@@ -113,6 +115,13 @@
+   }
+ }
+ 
++/** Turns read-only access on or off. Takes effect on the person's very next request. */
++async function setReadOnly(id: string, readOnly: boolean, session?: ClientSession): Promise<boolean> {
++  if (!OBJECT_ID.test(id)) return false;
++  const result = await UserModel.updateOne({ _id: id, deletedAt: null }, { $set: { readOnly } }, session ? { session } : {});
++  return result.matchedCount > 0;
++}
++
+ async function findById(id: string): Promise<UserRecord | null> {
+   if (!OBJECT_ID.test(id)) return null;
+   const doc = await UserModel.findOne({ _id: id, deletedAt: null }).lean<Lean>();
+@@ -333,6 +342,7 @@
+   create,
+   clearMustChangePasswordForRole,
+   findById,
++  setReadOnly,
+   findAuth,
+   recordFailedLogin,
+   recordSuccessfulLogin,
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -97,7 +97,7 @@
+   router.use(results.router);
+ 
+   // Promotion reads the yearly averages from results and what students owe from fees, so it comes after both.
+-  router.use(createPromotionsModule({ auth, settings: settings.service, annual: results.annual }).router);
++  router.use(createPromotionsModule({ audit, auth, settings: settings.service, annual: results.annual, notifier: communication.notifier }).router);
+ 
+   const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs });
+   router.use(cbt.router);

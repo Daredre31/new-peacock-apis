@@ -15,6 +15,8 @@ export interface UserRecord {
   role: Role;
   status: UserStatus;
   mustChangePassword: boolean;
+  readOnly: boolean;
+  isLibrarian: boolean;
   failedLoginCount: number;
   lockedUntil: Date | null;
   lastLoginAt: Date | null;
@@ -57,6 +59,8 @@ function toRecord(doc: Lean): UserRecord {
     role: doc.role,
     status: doc.status,
     mustChangePassword: doc.mustChangePassword,
+    readOnly: doc.readOnly === true,
+    isLibrarian: doc.isLibrarian === true,
     failedLoginCount: doc.failedLoginCount,
     lockedUntil: doc.lockedUntil ?? null,
     lastLoginAt: doc.lastLoginAt ?? null,
@@ -111,6 +115,25 @@ async function create(
   } catch (err) {
     throw mapDuplicateKey(err);
   }
+}
+
+/** Turns read-only access on or off. Takes effect on the person's very next request. */
+async function setReadOnly(id: string, readOnly: boolean, session?: ClientSession): Promise<boolean> {
+  if (!OBJECT_ID.test(id)) return false;
+  const result = await UserModel.updateOne({ _id: id, deletedAt: null }, { $set: { readOnly } }, session ? { session } : {});
+  return result.matchedCount > 0;
+}
+
+/** Only teachers can be librarians. Admins already can run the library. False means no active teacher has that id. */
+async function setLibrarian(id: string, isLibrarian: boolean): Promise<boolean> {
+  if (!OBJECT_ID.test(id)) return false;
+  const result = await UserModel.updateOne({ _id: id, role: 'TEACHER', deletedAt: null }, { $set: { isLibrarian } });
+  return result.matchedCount > 0;
+}
+
+async function listLibrarians(): Promise<UserRecord[]> {
+  const docs = await UserModel.find({ isLibrarian: true, deletedAt: null }).lean<Lean[]>();
+  return docs.map(toRecord);
 }
 
 async function findById(id: string): Promise<UserRecord | null> {
@@ -333,6 +356,9 @@ export const userRepository = {
   create,
   clearMustChangePasswordForRole,
   findById,
+  setReadOnly,
+  setLibrarian,
+  listLibrarians,
   findAuth,
   recordFailedLogin,
   recordSuccessfulLogin,

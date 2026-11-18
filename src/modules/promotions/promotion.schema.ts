@@ -14,6 +14,17 @@ export const previewQuery = z.object({
 });
 export const previewSchemas = { query: previewQuery };
 
+export const commitBody = z.object({
+  classArmId: objectId, sessionId: objectId, targetSessionId: objectId, targetArmId: objectId.optional(),
+  /** Decisions for individual students. Needed for anyone left as NEEDS_DECISION, and to change a proposed outcome. */
+  overrides: z.array(z.object({
+    studentId: objectId,
+    outcome: z.enum(['PROMOTE', 'REPEAT', 'GRADUATE']),
+    reason: z.string().trim().min(3).max(200),
+  }).strict()).max(500).default([]),
+}).strict();
+export const commitSchemas = { body: commitBody };
+
 export function registerPromotionOperations(registry: OpenApiRegistry): void {
   const tags = ['promotions'];
   const num = z.number().int();
@@ -40,5 +51,22 @@ export function registerPromotionOperations(registry: OpenApiRegistry): void {
       }),
     },
     errors: ['NOT_FOUND'],
+  });
+
+  const person = z.object({ studentId: z.string(), name: z.string() });
+  registry.register({
+    method: 'post', path: '/promotions/commit', operationId: 'commitPromotion',
+    summary: 'Moves a class into the next session. Run the preview first. Refused while the preview shows any issue. Each student is saved on their own, so it is safe to run again after a partial result. Students owing fees are skipped and an override cannot lift that. Graduates keep read-only access to their results',
+    tags, roles: PERMISSIONS['promotions:commit'], request: { body: commitBody },
+    success: {
+      status: 200, description: 'What was done',
+      data: z.object({
+        summary: z.object({ applied: num, skipped: num, failed: num }),
+        applied: z.array(person.extend({ outcome: z.enum(['PROMOTE', 'REPEAT', 'GRADUATE']) })),
+        skipped: z.array(person.extend({ reason: z.enum(['ALREADY_ENROLLED', 'NOT_ELIGIBLE', 'NEEDS_DECISION', 'OWES_FEES', 'CHANGED_MEANWHILE']) })),
+        failed: z.array(person),
+      }),
+    },
+    errors: ['NOT_FOUND', 'VALIDATION_ERROR', 'CONFLICT'],
   });
 }

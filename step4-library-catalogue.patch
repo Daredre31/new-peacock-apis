@@ -1,0 +1,2736 @@
+--- a/openapi/openapi.json
++++ b/openapi/openapi.json
+@@ -48,6 +48,9 @@
+       "name": "fees"
+     },
+     {
++      "name": "library"
++    },
++    {
+       "name": "notifications"
+     },
+     {
+@@ -20914,6 +20917,1992 @@
+             "content": {
+               "application/json": {
+                 "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/library/books": {
++      "get": {
++        "operationId": "listLibraryBooks",
++        "summary": "Search the catalogue by title, author or ISBN. Shows how many copies are free to borrow",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN",
++          "TEACHER",
++          "STUDENT"
++        ],
++        "parameters": [
++          {
++            "name": "page",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "default": 1,
++              "type": "integer",
++              "minimum": 1,
++              "maximum": 100000
++            }
++          },
++          {
++            "name": "limit",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "default": 20,
++              "type": "integer",
++              "minimum": 1,
++              "maximum": 100
++            }
++          },
++          {
++            "name": "q",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "type": "string",
++              "minLength": 1,
++              "maxLength": 50
++            }
++          },
++          {
++            "name": "category",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "type": "string",
++              "minLength": 1,
++              "maxLength": 60
++            }
++          },
++          {
++            "name": "availableOnly",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "type": "string"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Books",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data",
++                    "meta"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "array",
++                      "items": {
++                        "type": "object",
++                        "properties": {
++                          "id": {
++                            "type": "string"
++                          },
++                          "title": {
++                            "type": "string"
++                          },
++                          "authors": {
++                            "type": "array",
++                            "items": {
++                              "type": "string"
++                            }
++                          },
++                          "isbn": {
++                            "type": [
++                              "string",
++                              "null"
++                            ]
++                          },
++                          "category": {
++                            "type": "string"
++                          },
++                          "publisher": {
++                            "type": [
++                              "string",
++                              "null"
++                            ]
++                          },
++                          "publishedYear": {
++                            "anyOf": [
++                              {
++                                "type": "integer",
++                                "minimum": -9007199254740991,
++                                "maximum": 9007199254740991
++                              },
++                              {
++                                "type": "null"
++                              }
++                            ]
++                          },
++                          "description": {
++                            "type": [
++                              "string",
++                              "null"
++                            ]
++                          },
++                          "copies": {
++                            "type": "object",
++                            "properties": {
++                              "total": {
++                                "type": "integer",
++                                "minimum": -9007199254740991,
++                                "maximum": 9007199254740991
++                              },
++                              "available": {
++                                "type": "integer",
++                                "minimum": -9007199254740991,
++                                "maximum": 9007199254740991
++                              }
++                            },
++                            "required": [
++                              "total",
++                              "available"
++                            ],
++                            "additionalProperties": false
++                          },
++                          "priceKobo": {
++                            "description": "Only librarians and admins see this",
++                            "anyOf": [
++                              {
++                                "type": "integer",
++                                "minimum": -9007199254740991,
++                                "maximum": 9007199254740991
++                              },
++                              {
++                                "type": "null"
++                              }
++                            ]
++                          }
++                        },
++                        "required": [
++                          "id",
++                          "title",
++                          "authors",
++                          "isbn",
++                          "category",
++                          "publisher",
++                          "publishedYear",
++                          "description",
++                          "copies"
++                        ],
++                        "additionalProperties": false
++                      }
++                    },
++                    "meta": {
++                      "$ref": "#/components/schemas/PageMeta"
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      },
++      "post": {
++        "operationId": "createLibraryBook",
++        "summary": "Add a book, optionally with its first copies. Barcodes are made automatically (LIB-000001...). A teacher needs to be designated a librarian first",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN",
++          "TEACHER"
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "title": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 200
++                  },
++                  "authors": {
++                    "minItems": 1,
++                    "maxItems": 5,
++                    "type": "array",
++                    "items": {
++                      "type": "string",
++                      "minLength": 1,
++                      "maxLength": 100
++                    }
++                  },
++                  "category": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 60
++                  },
++                  "isbn": {
++                    "type": "string",
++                    "maxLength": 30
++                  },
++                  "publisher": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 100
++                  },
++                  "publishedYear": {
++                    "type": "integer",
++                    "minimum": 1400,
++                    "maximum": 2100
++                  },
++                  "description": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 2000
++                  },
++                  "priceKobo": {
++                    "type": "integer",
++                    "minimum": 0,
++                    "maximum": 100000000
++                  },
++                  "copies": {
++                    "default": 0,
++                    "type": "integer",
++                    "minimum": 0,
++                    "maximum": 100
++                  },
++                  "shelfLocation": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 50
++                  }
++                },
++                "required": [
++                  "title",
++                  "authors",
++                  "category"
++                ],
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "responses": {
++          "201": {
++            "description": "Created",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "id": {
++                          "type": "string"
++                        },
++                        "title": {
++                          "type": "string"
++                        },
++                        "authors": {
++                          "type": "array",
++                          "items": {
++                            "type": "string"
++                          }
++                        },
++                        "isbn": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "category": {
++                          "type": "string"
++                        },
++                        "publisher": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "publishedYear": {
++                          "anyOf": [
++                            {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            {
++                              "type": "null"
++                            }
++                          ]
++                        },
++                        "description": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "copies": {
++                          "type": "object",
++                          "properties": {
++                            "total": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "available": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            }
++                          },
++                          "required": [
++                            "total",
++                            "available"
++                          ],
++                          "additionalProperties": false
++                        },
++                        "priceKobo": {
++                          "description": "Only librarians and admins see this",
++                          "anyOf": [
++                            {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            {
++                              "type": "null"
++                            }
++                          ]
++                        },
++                        "copyList": {
++                          "description": "Only librarians and admins see the individual copies",
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "id": {
++                                "type": "string"
++                              },
++                              "bookId": {
++                                "type": "string"
++                              },
++                              "barcode": {
++                                "type": "string"
++                              },
++                              "status": {
++                                "type": "string",
++                                "enum": [
++                                  "AVAILABLE",
++                                  "ON_LOAN",
++                                  "LOST",
++                                  "DAMAGED",
++                                  "WITHDRAWN"
++                                ]
++                              },
++                              "shelfLocation": {
++                                "type": [
++                                  "string",
++                                  "null"
++                                ]
++                              },
++                              "note": {
++                                "type": [
++                                  "string",
++                                  "null"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "id",
++                              "bookId",
++                              "barcode",
++                              "status",
++                              "shelfLocation",
++                              "note"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "id",
++                        "title",
++                        "authors",
++                        "isbn",
++                        "category",
++                        "publisher",
++                        "publishedYear",
++                        "description",
++                        "copies"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "409": {
++            "description": "CONFLICT",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/library/books/{id}": {
++      "delete": {
++        "operationId": "deleteLibraryBook",
++        "summary": "Remove a book and withdraw all its copies. Refused while a copy is out on loan. A teacher needs to be designated a librarian first",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN",
++          "TEACHER"
++        ],
++        "parameters": [
++          {
++            "name": "id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Removed",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "null"
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "NOT_FOUND",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "409": {
++            "description": "CONFLICT",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      },
++      "get": {
++        "operationId": "getLibraryBook",
++        "summary": "One book. Librarians and admins also see its price and every copy with its barcode",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN",
++          "TEACHER",
++          "STUDENT"
++        ],
++        "parameters": [
++          {
++            "name": "id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "The book",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "id": {
++                          "type": "string"
++                        },
++                        "title": {
++                          "type": "string"
++                        },
++                        "authors": {
++                          "type": "array",
++                          "items": {
++                            "type": "string"
++                          }
++                        },
++                        "isbn": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "category": {
++                          "type": "string"
++                        },
++                        "publisher": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "publishedYear": {
++                          "anyOf": [
++                            {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            {
++                              "type": "null"
++                            }
++                          ]
++                        },
++                        "description": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "copies": {
++                          "type": "object",
++                          "properties": {
++                            "total": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "available": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            }
++                          },
++                          "required": [
++                            "total",
++                            "available"
++                          ],
++                          "additionalProperties": false
++                        },
++                        "priceKobo": {
++                          "description": "Only librarians and admins see this",
++                          "anyOf": [
++                            {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            {
++                              "type": "null"
++                            }
++                          ]
++                        },
++                        "copyList": {
++                          "description": "Only librarians and admins see the individual copies",
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "id": {
++                                "type": "string"
++                              },
++                              "bookId": {
++                                "type": "string"
++                              },
++                              "barcode": {
++                                "type": "string"
++                              },
++                              "status": {
++                                "type": "string",
++                                "enum": [
++                                  "AVAILABLE",
++                                  "ON_LOAN",
++                                  "LOST",
++                                  "DAMAGED",
++                                  "WITHDRAWN"
++                                ]
++                              },
++                              "shelfLocation": {
++                                "type": [
++                                  "string",
++                                  "null"
++                                ]
++                              },
++                              "note": {
++                                "type": [
++                                  "string",
++                                  "null"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "id",
++                              "bookId",
++                              "barcode",
++                              "status",
++                              "shelfLocation",
++                              "note"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "id",
++                        "title",
++                        "authors",
++                        "isbn",
++                        "category",
++                        "publisher",
++                        "publishedYear",
++                        "description",
++                        "copies"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "NOT_FOUND",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      },
++      "patch": {
++        "operationId": "updateLibraryBook",
++        "summary": "Edit a book. Send null to clear an optional field. A teacher needs to be designated a librarian first",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN",
++          "TEACHER"
++        ],
++        "parameters": [
++          {
++            "name": "id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "title": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 200
++                  },
++                  "authors": {
++                    "minItems": 1,
++                    "maxItems": 5,
++                    "type": "array",
++                    "items": {
++                      "type": "string",
++                      "minLength": 1,
++                      "maxLength": 100
++                    }
++                  },
++                  "category": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 60
++                  },
++                  "isbn": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "maxLength": 30
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "publisher": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "minLength": 1,
++                        "maxLength": 100
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "publishedYear": {
++                    "anyOf": [
++                      {
++                        "type": "integer",
++                        "minimum": 1400,
++                        "maximum": 2100
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "description": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "minLength": 1,
++                        "maxLength": 2000
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "priceKobo": {
++                    "anyOf": [
++                      {
++                        "type": "integer",
++                        "minimum": 0,
++                        "maximum": 100000000
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  }
++                },
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Updated",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "id": {
++                          "type": "string"
++                        },
++                        "title": {
++                          "type": "string"
++                        },
++                        "authors": {
++                          "type": "array",
++                          "items": {
++                            "type": "string"
++                          }
++                        },
++                        "isbn": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "category": {
++                          "type": "string"
++                        },
++                        "publisher": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "publishedYear": {
++                          "anyOf": [
++                            {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            {
++                              "type": "null"
++                            }
++                          ]
++                        },
++                        "description": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "copies": {
++                          "type": "object",
++                          "properties": {
++                            "total": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            "available": {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            }
++                          },
++                          "required": [
++                            "total",
++                            "available"
++                          ],
++                          "additionalProperties": false
++                        },
++                        "priceKobo": {
++                          "description": "Only librarians and admins see this",
++                          "anyOf": [
++                            {
++                              "type": "integer",
++                              "minimum": -9007199254740991,
++                              "maximum": 9007199254740991
++                            },
++                            {
++                              "type": "null"
++                            }
++                          ]
++                        },
++                        "copyList": {
++                          "description": "Only librarians and admins see the individual copies",
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "id": {
++                                "type": "string"
++                              },
++                              "bookId": {
++                                "type": "string"
++                              },
++                              "barcode": {
++                                "type": "string"
++                              },
++                              "status": {
++                                "type": "string",
++                                "enum": [
++                                  "AVAILABLE",
++                                  "ON_LOAN",
++                                  "LOST",
++                                  "DAMAGED",
++                                  "WITHDRAWN"
++                                ]
++                              },
++                              "shelfLocation": {
++                                "type": [
++                                  "string",
++                                  "null"
++                                ]
++                              },
++                              "note": {
++                                "type": [
++                                  "string",
++                                  "null"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "id",
++                              "bookId",
++                              "barcode",
++                              "status",
++                              "shelfLocation",
++                              "note"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "id",
++                        "title",
++                        "authors",
++                        "isbn",
++                        "category",
++                        "publisher",
++                        "publishedYear",
++                        "description",
++                        "copies"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "NOT_FOUND",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "409": {
++            "description": "CONFLICT",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/library/books/{id}/copies": {
++      "post": {
++        "operationId": "addLibraryCopies",
++        "summary": "Add more physical copies of a book, each with its own barcode. A teacher needs to be designated a librarian first",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN",
++          "TEACHER"
++        ],
++        "parameters": [
++          {
++            "name": "id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "count": {
++                    "type": "integer",
++                    "minimum": 1,
++                    "maximum": 100
++                  },
++                  "shelfLocation": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 50
++                  }
++                },
++                "required": [
++                  "count"
++                ],
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "responses": {
++          "201": {
++            "description": "The new copies",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "array",
++                      "items": {
++                        "type": "object",
++                        "properties": {
++                          "id": {
++                            "type": "string"
++                          },
++                          "bookId": {
++                            "type": "string"
++                          },
++                          "barcode": {
++                            "type": "string"
++                          },
++                          "status": {
++                            "type": "string",
++                            "enum": [
++                              "AVAILABLE",
++                              "ON_LOAN",
++                              "LOST",
++                              "DAMAGED",
++                              "WITHDRAWN"
++                            ]
++                          },
++                          "shelfLocation": {
++                            "type": [
++                              "string",
++                              "null"
++                            ]
++                          },
++                          "note": {
++                            "type": [
++                              "string",
++                              "null"
++                            ]
++                          }
++                        },
++                        "required": [
++                          "id",
++                          "bookId",
++                          "barcode",
++                          "status",
++                          "shelfLocation",
++                          "note"
++                        ],
++                        "additionalProperties": false
++                      }
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "NOT_FOUND",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/library/categories": {
++      "get": {
++        "operationId": "listLibraryCategories",
++        "summary": "Every category in use, for a filter",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN",
++          "TEACHER",
++          "STUDENT"
++        ],
++        "responses": {
++          "200": {
++            "description": "Categories",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "array",
++                      "items": {
++                        "type": "string"
++                      }
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/library/copies/{id}": {
++      "patch": {
++        "operationId": "updateLibraryCopy",
++        "summary": "Mark a copy AVAILABLE, DAMAGED or WITHDRAWN, or change its shelf and note. A copy out on loan cannot change status. A teacher needs to be designated a librarian first",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN",
++          "TEACHER"
++        ],
++        "parameters": [
++          {
++            "name": "id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "status": {
++                    "type": "string",
++                    "enum": [
++                      "AVAILABLE",
++                      "DAMAGED",
++                      "WITHDRAWN"
++                    ]
++                  },
++                  "shelfLocation": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "minLength": 1,
++                        "maxLength": 50
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  },
++                  "note": {
++                    "anyOf": [
++                      {
++                        "type": "string",
++                        "minLength": 1,
++                        "maxLength": 200
++                      },
++                      {
++                        "type": "null"
++                      }
++                    ]
++                  }
++                },
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Updated",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "id": {
++                          "type": "string"
++                        },
++                        "bookId": {
++                          "type": "string"
++                        },
++                        "barcode": {
++                          "type": "string"
++                        },
++                        "status": {
++                          "type": "string",
++                          "enum": [
++                            "AVAILABLE",
++                            "ON_LOAN",
++                            "LOST",
++                            "DAMAGED",
++                            "WITHDRAWN"
++                          ]
++                        },
++                        "shelfLocation": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        },
++                        "note": {
++                          "type": [
++                            "string",
++                            "null"
++                          ]
++                        }
++                      },
++                      "required": [
++                        "id",
++                        "bookId",
++                        "barcode",
++                        "status",
++                        "shelfLocation",
++                        "note"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "NOT_FOUND",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "409": {
++            "description": "CONFLICT",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/library/librarians": {
++      "get": {
++        "operationId": "listLibrarians",
++        "summary": "Teachers who run the library",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN"
++        ],
++        "responses": {
++          "200": {
++            "description": "Librarians",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "array",
++                      "items": {
++                        "type": "object",
++                        "properties": {
++                          "userId": {
++                            "type": "string"
++                          },
++                          "staffNo": {
++                            "type": [
++                              "string",
++                              "null"
++                            ]
++                          },
++                          "name": {
++                            "type": "string"
++                          }
++                        },
++                        "required": [
++                          "userId",
++                          "staffNo",
++                          "name"
++                        ],
++                        "additionalProperties": false
++                      }
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "VALIDATION_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "429": {
++            "description": "RATE_LIMITED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL_ERROR",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/library/librarians/{userId}": {
++      "put": {
++        "operationId": "setLibrarian",
++        "summary": "Make a teacher a librarian, or take it away. Takes effect on their next request. Admins already have library access",
++        "tags": [
++          "library"
++        ],
++        "x-roles": [
++          "SUPER_ADMIN",
++          "ADMIN"
++        ],
++        "parameters": [
++          {
++            "name": "userId",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-f0-9]{24}$"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "isLibrarian": {
++                    "type": "boolean"
++                  }
++                },
++                "required": [
++                  "isLibrarian"
++                ],
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Saved",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "required": [
++                    "success",
++                    "data"
++                  ],
++                  "properties": {
++                    "success": {
++                      "const": true
++                    },
++                    "data": {
++                      "type": "object",
++                      "properties": {
++                        "userId": {
++                          "type": "string"
++                        },
++                        "isLibrarian": {
++                          "type": "boolean"
++                        }
++                      },
++                      "required": [
++                        "userId",
++                        "isLibrarian"
++                      ],
++                      "additionalProperties": false
++                    }
++                  }
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "TOKEN_EXPIRED | UNAUTHENTICATED",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ErrorResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "CSRF_INVALID | FORBIDDEN | PASSWORD_CHANGE_REQUIRED",
++            "content": {
++              "application/json": {
++                "schema": {
+                   "$ref": "#/components/schemas/ErrorResponse"
+                 }
+               }
+--- a/src/common/middleware/authenticate.ts
++++ b/src/common/middleware/authenticate.ts
+@@ -10,6 +10,7 @@
+   status: UserStatus;
+   mustChangePassword: boolean;
+   readOnly: boolean;
++  isLibrarian: boolean;
+ }
+ 
+ export interface AuthMiddlewareDeps {
+@@ -56,6 +57,7 @@
+         role: user.role,
+         mustChangePassword: user.mustChangePassword,
+         readOnly: user.readOnly,
++        isLibrarian: user.isLibrarian,
+         sessionId: claims.sessionId,
+       };
+       req.log = req.log.child({ userId: user.id, role: user.role });
+--- a/src/common/middleware/authorize.ts
++++ b/src/common/middleware/authorize.ts
+@@ -27,6 +27,27 @@
+   return Object.assign(handler, { permission });
+ }
+ 
++/**
++ * Like authorize, for the library desk: admins always pass, and a teacher passes only if an admin
++ * made them a librarian. The flag is read from the database on every request, so removing it is instant.
++ */
++export function authorizeLibrarian(permission: Permission): GuardedHandler {
++  const base = authorize(permission);
++  const handler: RequestHandler = (req, res, next) => {
++    base(req, res, (err?: unknown) => {
++      if (err) { next(err); return; }
++      const user = req.user;
++      if (user && user.role === 'TEACHER' && !user.isLibrarian) {
++        req.log.warn({ permission }, 'permission denied: teacher is not a librarian');
++        next(new AppError('FORBIDDEN'));
++        return;
++      }
++      next();
++    });
++  };
++  return Object.assign(handler, { permission });
++}
++
+ /** For login, refresh, forgot and reset password, the webhook and health. Makes "public" a deliberate choice. */
+ export function publicRoute(): GuardedHandler {
+   const handler: RequestHandler = (_req, _res, next) => {
+--- a/src/common/types/express.d.ts
++++ b/src/common/types/express.d.ts
+@@ -10,6 +10,8 @@
+       mustChangePassword: boolean;
+       /** True for graduates: only the permissions in READ_ONLY_PERMISSIONS are allowed. */
+       readOnly: boolean;
++      /** True for a teacher the admin made a librarian. Checked by authorizeLibrarian. */
++      isLibrarian: boolean;
+       /** Refresh-token family of this login, used by logout and force-logout. */
+       sessionId: string;
+     }
+--- a/src/config/constants.ts
++++ b/src/config/constants.ts
+@@ -85,6 +85,10 @@
+   'results:annual': [SA, AD], // the yearly average sheet for a class
+   'promotions:preview': [SA, AD], // what would happen to a class at the end of a session. Writes nothing
+   'promotions:commit': [SA, AD], // moves a class into the next session
++  // ---- library
++  'library:read': [SA, AD, TE, ST], // browse the catalogue
++  'library:manage': [SA, AD, TE], // a teacher needs the librarian flag too: see authorizeLibrarian
++  'library:designate': [SA, AD], // choose which teachers are librarians
+ 
+   // ---- CBT
+   'cbt:manage': [TE], // create, upload questions, release results
+--- /dev/null
++++ b/src/modules/library/book.repository.ts
+@@ -0,0 +1,235 @@
++import mongoose, { type ClientSession, type Model, type Types } from 'mongoose';
++import { AppError } from '../../common/errors/AppError';
++import { skipOf } from '../../common/utils/pagination';
++import { escapeRegex } from '../../common/utils/search';
++import { nextSequence } from '../users/counter.model';
++
++export const COPY_STATUS = { AVAILABLE: 'AVAILABLE', ON_LOAN: 'ON_LOAN', LOST: 'LOST', DAMAGED: 'DAMAGED', WITHDRAWN: 'WITHDRAWN' } as const;
++export type CopyStatus = (typeof COPY_STATUS)[keyof typeof COPY_STATUS];
++
++interface BookDocument {
++  title: string;
++  authors: string[];
++  /** Left out entirely when there is none, so the unique index only covers books that have one. */
++  isbn?: string;
++  category: string;
++  publisher: string | null;
++  publishedYear: number | null;
++  description: string | null;
++  priceKobo: number | null;
++  deletedAt: Date | null;
++  createdAt: Date;
++  updatedAt: Date;
++}
++type BookRow = BookDocument & { _id: Types.ObjectId };
++
++interface CopyDocument {
++  bookId: Types.ObjectId;
++  barcode: string;
++  status: CopyStatus;
++  shelfLocation: string | null;
++  note: string | null;
++  createdAt: Date;
++  updatedAt: Date;
++}
++type CopyRow = CopyDocument & { _id: Types.ObjectId };
++
++const bookSchema = new mongoose.Schema<BookDocument>(
++  {
++    title: { type: String, required: true, maxlength: 200 },
++    authors: { type: [String], required: true },
++    isbn: { type: String },
++    category: { type: String, required: true, maxlength: 60 },
++    publisher: { type: String, default: null, maxlength: 100 },
++    publishedYear: { type: Number, default: null },
++    description: { type: String, default: null, maxlength: 2000 },
++    priceKobo: { type: Number, default: null, min: 0 },
++    deletedAt: { type: Date, default: null },
++  },
++  { timestamps: true, versionKey: false },
++);
++bookSchema.index({ isbn: 1 }, { unique: true, partialFilterExpression: { isbn: { $type: 'string' } } });
++bookSchema.index({ deletedAt: 1, title: 1 });
++bookSchema.index({ deletedAt: 1, category: 1 });
++
++const copySchema = new mongoose.Schema<CopyDocument>(
++  {
++    bookId: { type: mongoose.Schema.Types.ObjectId, ref: 'LibraryBook', required: true },
++    barcode: { type: String, required: true },
++    status: { type: String, enum: Object.values(COPY_STATUS), default: COPY_STATUS.AVAILABLE },
++    shelfLocation: { type: String, default: null, maxlength: 50 },
++    note: { type: String, default: null, maxlength: 200 },
++  },
++  { timestamps: true, versionKey: false },
++);
++copySchema.index({ barcode: 1 }, { unique: true });
++copySchema.index({ bookId: 1, status: 1 });
++
++export const BookModel: Model<BookDocument> =
++  (mongoose.models.LibraryBook as Model<BookDocument> | undefined) ?? mongoose.model<BookDocument>('LibraryBook', bookSchema);
++export const CopyModel: Model<CopyDocument> =
++  (mongoose.models.LibraryCopy as Model<CopyDocument> | undefined) ?? mongoose.model<CopyDocument>('LibraryCopy', copySchema);
++
++export interface BookRecord {
++  id: string; title: string; authors: string[]; isbn: string | null; category: string; publisher: string | null;
++  publishedYear: number | null; description: string | null; priceKobo: number | null;
++}
++export interface CopyRecord { id: string; bookId: string; barcode: string; status: CopyStatus; shelfLocation: string | null; note: string | null }
++export interface CopyCounts { total: number; available: number }
++
++export interface BookInput {
++  title: string; authors: string[]; isbn?: string | null | undefined; category: string; publisher?: string | null | undefined;
++  publishedYear?: number | null | undefined; description?: string | null | undefined; priceKobo?: number | null | undefined;
++}
++
++const OBJECT_ID = /^[a-f0-9]{24}$/;
++const toBook = (r: BookRow): BookRecord => ({
++  id: r._id.toString(), title: r.title, authors: r.authors, isbn: r.isbn ?? null, category: r.category, publisher: r.publisher,
++  publishedYear: r.publishedYear, description: r.description, priceKobo: r.priceKobo,
++});
++const toCopy = (r: CopyRow): CopyRecord => ({
++  id: r._id.toString(), bookId: r.bookId.toString(), barcode: r.barcode, status: r.status, shelfLocation: r.shelfLocation, note: r.note,
++});
++
++/** A repeated ISBN is a CONFLICT that says which field clashed. */
++function mapDuplicate(err: unknown): unknown {
++  if (typeof err === 'object' && err !== null && 'code' in err && err.code === 11000) {
++    return new AppError('CONFLICT', { details: [{ field: 'isbn', issue: 'A book with this ISBN already exists' }] });
++  }
++  return err;
++}
++
++async function createBook(input: BookInput, session: ClientSession): Promise<BookRecord> {
++  try {
++    const [doc] = await BookModel.create(
++      [{
++        title: input.title, authors: input.authors, category: input.category,
++        ...(input.isbn ? { isbn: input.isbn } : {}),
++        publisher: input.publisher ?? null, publishedYear: input.publishedYear ?? null,
++        description: input.description ?? null, priceKobo: input.priceKobo ?? null,
++      }],
++      { session },
++    );
++    if (!doc) throw new Error('Book was not saved');
++    return toBook(doc.toObject() as BookRow);
++  } catch (err) {
++    throw mapDuplicate(err);
++  }
++}
++
++async function findBook(id: string): Promise<BookRecord | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const row = await BookModel.findOne({ _id: id, deletedAt: null }).lean<BookRow>();
++  return row ? toBook(row) : null;
++}
++
++async function updateBook(id: string, patch: Partial<BookInput>): Promise<BookRecord | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const $set: Record<string, unknown> = {};
++  const $unset: Record<string, ''> = {};
++  for (const [key, value] of Object.entries(patch)) {
++    if (value === undefined) continue;
++    if (key === 'isbn') { if (value === null || value === '') $unset.isbn = ''; else $set.isbn = value; continue; }
++    $set[key] = value;
++  }
++  try {
++    const row = await BookModel.findOneAndUpdate(
++      { _id: id, deletedAt: null },
++      { ...(Object.keys($set).length > 0 ? { $set } : {}), ...(Object.keys($unset).length > 0 ? { $unset } : {}) },
++      { new: true },
++    ).lean<BookRow>();
++    return row ? toBook(row) : null;
++  } catch (err) {
++    throw mapDuplicate(err);
++  }
++}
++
++/**
++ * Takes a book off the shelf. Refused while any copy is out on loan. The ISBN is released so the same
++ * book can be added again, and every copy is withdrawn so none can be lent.
++ */
++async function softDeleteBook(id: string, session: ClientSession): Promise<'DELETED' | 'NOT_FOUND' | 'ON_LOAN'> {
++  if (!OBJECT_ID.test(id)) return 'NOT_FOUND';
++  if (await CopyModel.exists({ bookId: id, status: COPY_STATUS.ON_LOAN }).session(session)) return 'ON_LOAN';
++  const done = await BookModel.updateOne({ _id: id, deletedAt: null }, { $set: { deletedAt: new Date() }, $unset: { isbn: '' } }, { session });
++  if (done.matchedCount === 0) return 'NOT_FOUND';
++  await CopyModel.updateMany({ bookId: id }, { $set: { status: COPY_STATUS.WITHDRAWN } }, { session });
++  return 'DELETED';
++}
++
++export interface ListBooksQuery { q?: string | undefined; category?: string | undefined; availableOnly?: boolean | undefined; page: number; limit: number }
++
++async function listBooks(query: ListBooksQuery): Promise<{ items: BookRecord[]; total: number }> {
++  const filter: Record<string, unknown> = { deletedAt: null };
++  if (query.category) filter.category = new RegExp(`^${escapeRegex(query.category.trim())}$`, 'i');
++  if (query.q) {
++    const text = new RegExp(escapeRegex(query.q.trim()), 'i');
++    filter.$or = [{ title: text }, { authors: text }, { isbn: text }];
++  }
++  if (query.availableOnly) {
++    filter._id = { $in: await CopyModel.distinct('bookId', { status: COPY_STATUS.AVAILABLE }) };
++  }
++  const [rows, total] = await Promise.all([
++    BookModel.find(filter).sort({ title: 1, _id: 1 }).skip(skipOf(query.page, query.limit)).limit(query.limit).lean<BookRow[]>(),
++    BookModel.countDocuments(filter),
++  ]);
++  return { items: rows.map(toBook), total };
++}
++
++async function listCategories(): Promise<string[]> {
++  const names = await BookModel.distinct('category', { deletedAt: null });
++  return (names as string[]).sort((a, b) => a.localeCompare(b));
++}
++
++/** Withdrawn copies are not part of the holdings. Available means free to lend right now. */
++async function copyCounts(bookIds: string[]): Promise<Map<string, CopyCounts>> {
++  const ids = [...new Set(bookIds)].filter((id) => OBJECT_ID.test(id)).map((id) => new mongoose.Types.ObjectId(id));
++  const result = new Map<string, CopyCounts>();
++  if (ids.length === 0) return result;
++  const rows = await CopyModel.aggregate<{ _id: { bookId: Types.ObjectId; status: CopyStatus }; n: number }>([
++    { $match: { bookId: { $in: ids }, status: { $ne: COPY_STATUS.WITHDRAWN } } },
++    { $group: { _id: { bookId: '$bookId', status: '$status' }, n: { $sum: 1 } } },
++  ]);
++  for (const r of rows) {
++    const key = r._id.bookId.toString();
++    const current = result.get(key) ?? { total: 0, available: 0 };
++    current.total += r.n;
++    if (r._id.status === COPY_STATUS.AVAILABLE) current.available += r.n;
++    result.set(key, current);
++  }
++  return result;
++}
++
++async function copiesOf(bookId: string): Promise<CopyRecord[]> {
++  if (!OBJECT_ID.test(bookId)) return [];
++  const rows = await CopyModel.find({ bookId }).sort({ barcode: 1 }).lean<CopyRow[]>();
++  return rows.map(toCopy);
++}
++
++/** Barcodes come from one counter, LIB-000001 onwards, so two librarians can never be given the same one. */
++async function createCopies(bookId: string, count: number, shelfLocation: string | null, session: ClientSession): Promise<CopyRecord[]> {
++  const docs: Pick<CopyDocument, 'bookId' | 'barcode' | 'status' | 'shelfLocation'>[] = [];
++  for (let i = 0; i < count; i += 1) {
++    const seq = await nextSequence('library-copy', session);
++    docs.push({ bookId: new mongoose.Types.ObjectId(bookId), barcode: `LIB-${String(seq).padStart(6, '0')}`, status: COPY_STATUS.AVAILABLE, shelfLocation });
++  }
++  const saved = await CopyModel.insertMany(docs, { session });
++  return saved.map((d) => toCopy(d.toObject() as CopyRow));
++}
++
++export interface CopyPatch { status?: 'AVAILABLE' | 'DAMAGED' | 'WITHDRAWN' | undefined; shelfLocation?: string | null | undefined; note?: string | null | undefined }
++
++/** A copy that is out on loan cannot have its status changed here. The loan flow owns that. */
++async function updateCopy(id: string, patch: CopyPatch): Promise<CopyRecord | 'ON_LOAN' | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const $set: Record<string, unknown> = {};
++  for (const [key, value] of Object.entries(patch)) if (value !== undefined) $set[key] = value;
++  const guard = patch.status !== undefined ? { status: { $ne: COPY_STATUS.ON_LOAN } } : {};
++  const row = await CopyModel.findOneAndUpdate({ _id: id, ...guard }, { $set }, { new: true }).lean<CopyRow>();
++  if (row) return toCopy(row);
++  return (await CopyModel.exists({ _id: id })) ? 'ON_LOAN' : null;
++}
++
++export const bookRepository = {
++  createBook, findBook, updateBook, softDeleteBook, listBooks, listCategories, copyCounts, copiesOf, createCopies, updateCopy,
++};
+--- /dev/null
++++ b/src/modules/library/library.module.ts
+@@ -0,0 +1,12 @@
++import type { AuditService } from '../audit/audit.service';
++import type { AuthModule } from '../auth/auth.module';
++import { staffRepository } from '../users/staff.repository';
++import { userRepository } from '../users/user.repository';
++import { bookRepository } from './book.repository';
++import { createLibraryRouter } from './library.routes';
++import { createLibraryService } from './library.service';
++
++export function createLibraryModule(deps: { audit: AuditService; auth: AuthModule }) {
++  const service = createLibraryService({ books: bookRepository, users: userRepository, staff: staffRepository, audit: deps.audit });
++  return { router: createLibraryRouter({ service, authenticate: deps.auth.middleware.authenticate }), service };
++}
+--- /dev/null
++++ b/src/modules/library/library.routes.ts
+@@ -0,0 +1,69 @@
++import { Router, type RequestHandler } from 'express';
++import { authorize, authorizeLibrarian } from '../../common/middleware/authorize';
++import { validate, type Validated } from '../../common/middleware/validate';
++import { buildPageMeta, sendCreated, sendSuccess } from '../../common/utils/apiResponse';
++import { contextOf, requireUser } from '../../common/utils/request';
++import {
++  addCopiesSchemas, bookIdSchemas, createBookSchemas, designateSchemas, listBooksSchemas, updateBookSchemas, updateCopySchemas,
++} from './library.schema';
++import type { LibraryService } from './library.service';
++
++export function createLibraryRouter(deps: { service: LibraryService; authenticate: RequestHandler }): Router {
++  const { service, authenticate: auth } = deps;
++  const router = Router();
++
++  // ---- the catalogue, for everyone who can borrow
++  router.get('/library/books', auth, authorize('library:read'), validate(listBooksSchemas), async (req, res) => {
++    const { query } = req.validated as Validated<typeof listBooksSchemas>;
++    const { items, total } = await service.listBooks(query, requireUser(req));
++    sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
++  });
++
++  router.get('/library/categories', auth, authorize('library:read'), async (_req, res) => {
++    sendSuccess(res, await service.listCategories());
++  });
++
++  router.get('/library/books/:id', auth, authorize('library:read'), validate(bookIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof bookIdSchemas>;
++    sendSuccess(res, await service.getBook(params.id, requireUser(req)));
++  });
++
++  // ---- the library desk: admins and designated teachers
++  router.post('/library/books', auth, authorizeLibrarian('library:manage'), validate(createBookSchemas), async (req, res) => {
++    const { body } = req.validated as Validated<typeof createBookSchemas>;
++    sendCreated(res, await service.createBook(body, requireUser(req), contextOf(req)));
++  });
++
++  router.patch('/library/books/:id', auth, authorizeLibrarian('library:manage'), validate(updateBookSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof updateBookSchemas>;
++    sendSuccess(res, await service.updateBook(params.id, body, requireUser(req), contextOf(req)));
++  });
++
++  router.delete('/library/books/:id', auth, authorizeLibrarian('library:manage'), validate(bookIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof bookIdSchemas>;
++    await service.deleteBook(params.id, requireUser(req), contextOf(req));
++    sendSuccess(res, null);
++  });
++
++  router.post('/library/books/:id/copies', auth, authorizeLibrarian('library:manage'), validate(addCopiesSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof addCopiesSchemas>;
++    sendCreated(res, await service.addCopies(params.id, body, requireUser(req), contextOf(req)));
++  });
++
++  router.patch('/library/copies/:id', auth, authorizeLibrarian('library:manage'), validate(updateCopySchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof updateCopySchemas>;
++    sendSuccess(res, await service.updateCopy(params.id, body, requireUser(req), contextOf(req)));
++  });
++
++  // ---- choosing the librarians: admins only
++  router.get('/library/librarians', auth, authorize('library:designate'), async (_req, res) => {
++    sendSuccess(res, await service.listLibrarians());
++  });
++
++  router.put('/library/librarians/:userId', auth, authorize('library:designate'), validate(designateSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof designateSchemas>;
++    sendSuccess(res, await service.setLibrarian(params.userId, body.isLibrarian, requireUser(req), contextOf(req)));
++  });
++
++  return router;
++}
+--- /dev/null
++++ b/src/modules/library/library.schema.ts
+@@ -0,0 +1,105 @@
++import { z } from 'zod';
++import { paginationShape } from '../../common/utils/pagination';
++import { PERMISSIONS } from '../../config/constants';
++import type { OpenApiRegistry } from '../../openapi/registry';
++
++const objectId = z.string().regex(/^[a-f0-9]{24}$/);
++const idParams = z.object({ id: objectId });
++const userParams = z.object({ userId: objectId });
++
++/** Strips hyphens and spaces, upper-cases, and checks the ISBN-10 or ISBN-13 check digit. Null when it is not a real ISBN. */
++export function normalizeIsbn(raw: string): string | null {
++  const text = raw.replace(/[\s-]/g, '').toUpperCase();
++  if (/^\d{9}[\dX]$/.test(text)) {
++    const sum = [...text].reduce((acc, ch, i) => acc + (ch === 'X' ? 10 : Number(ch)) * (10 - i), 0);
++    return sum % 11 === 0 ? text : null;
++  }
++  if (/^\d{13}$/.test(text)) {
++    const sum = [...text].reduce((acc, ch, i) => acc + Number(ch) * (i % 2 === 0 ? 1 : 3), 0);
++    return sum % 10 === 0 ? text : null;
++  }
++  return null;
++}
++
++const isbn = z.string().trim().max(30).transform((value, ctx) => {
++  const normal = normalizeIsbn(value);
++  if (normal === null) { ctx.addIssue({ code: 'custom', message: 'Not a valid ISBN-10 or ISBN-13' }); return z.NEVER; }
++  return normal;
++});
++
++const title = z.string().trim().min(1).max(200);
++const authors = z.array(z.string().trim().min(1).max(100)).min(1).max(5);
++const category = z.string().trim().min(1).max(60);
++const shelf = z.string().trim().min(1).max(50);
++const year = z.number().int().min(1400).max(2100);
++const price = z.number().int().min(0).max(100_000_000);
++
++export const bookIdSchemas = { params: idParams };
++export const copyIdSchemas = { params: idParams };
++
++export const listBooksSchemas = {
++  query: z.object({
++    ...paginationShape,
++    q: z.string().trim().min(1).max(50).optional(),
++    category: z.string().trim().min(1).max(60).optional(),
++    availableOnly: z.stringbool().optional(),
++  }),
++};
++
++const createBody = z.object({
++  title, authors, category, isbn: isbn.optional(),
++  publisher: z.string().trim().min(1).max(100).optional(), publishedYear: year.optional(),
++  description: z.string().trim().min(1).max(2000).optional(), priceKobo: price.optional(),
++  /** How many physical copies to add now. Each gets its own barcode. */
++  copies: z.number().int().min(0).max(100).default(0),
++  shelfLocation: shelf.optional(),
++}).strict();
++export const createBookSchemas = { body: createBody };
++
++const updateBody = z.object({
++  title: title.optional(), authors: authors.optional(), category: category.optional(), isbn: isbn.nullable().optional(),
++  publisher: z.string().trim().min(1).max(100).nullable().optional(), publishedYear: year.nullable().optional(),
++  description: z.string().trim().min(1).max(2000).nullable().optional(), priceKobo: price.nullable().optional(),
++}).strict().refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
++export const updateBookSchemas = { params: idParams, body: updateBody };
++
++const addCopiesBody = z.object({ count: z.number().int().min(1).max(100), shelfLocation: shelf.optional() }).strict();
++export const addCopiesSchemas = { params: idParams, body: addCopiesBody };
++
++const updateCopyBody = z.object({
++  /** A copy on loan or lost changes status through the loan flow, not here. */
++  status: z.enum(['AVAILABLE', 'DAMAGED', 'WITHDRAWN']).optional(),
++  shelfLocation: shelf.nullable().optional(),
++  note: z.string().trim().min(1).max(200).nullable().optional(),
++}).strict().refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
++export const updateCopySchemas = { params: idParams, body: updateCopyBody };
++
++const designateBody = z.object({ isLibrarian: z.boolean() }).strict();
++export const designateSchemas = { params: userParams, body: designateBody };
++
++export function registerLibraryOperations(registry: OpenApiRegistry): void {
++  const tags = ['library'];
++  const num = z.number().int();
++  const copies = z.object({ total: num, available: num });
++  const copy = z.object({ id: z.string(), bookId: z.string(), barcode: z.string(), status: z.enum(['AVAILABLE', 'ON_LOAN', 'LOST', 'DAMAGED', 'WITHDRAWN']), shelfLocation: z.string().nullable(), note: z.string().nullable() });
++  const book = z.object({
++    id: z.string(), title: z.string(), authors: z.array(z.string()), isbn: z.string().nullable(), category: z.string(),
++    publisher: z.string().nullable(), publishedYear: num.nullable(), description: z.string().nullable(), copies,
++    priceKobo: num.nullable().optional().describe('Only librarians and admins see this'),
++  });
++  const detail = book.extend({ copyList: z.array(copy).optional().describe('Only librarians and admins see the individual copies') });
++  const read = PERMISSIONS['library:read'];
++  const manage = PERMISSIONS['library:manage'];
++  const desk = ' A teacher needs to be designated a librarian first';
++
++  registry.register({ method: 'get', path: '/library/books', operationId: 'listLibraryBooks', summary: 'Search the catalogue by title, author or ISBN. Shows how many copies are free to borrow', tags, roles: read, request: { query: listBooksSchemas.query }, success: { status: 200, description: 'Books', data: z.array(book), paginated: true } });
++  registry.register({ method: 'get', path: '/library/categories', operationId: 'listLibraryCategories', summary: 'Every category in use, for a filter', tags, roles: read, success: { status: 200, description: 'Categories', data: z.array(z.string()) } });
++  registry.register({ method: 'get', path: '/library/books/{id}', operationId: 'getLibraryBook', summary: 'One book. Librarians and admins also see its price and every copy with its barcode', tags, roles: read, request: { params: idParams }, success: { status: 200, description: 'The book', data: detail }, errors: ['NOT_FOUND'] });
++  registry.register({ method: 'post', path: '/library/books', operationId: 'createLibraryBook', summary: `Add a book, optionally with its first copies. Barcodes are made automatically (LIB-000001...).${desk}`, tags, roles: manage, request: { body: createBody }, success: { status: 201, description: 'Created', data: detail }, errors: ['CONFLICT'] });
++  registry.register({ method: 'patch', path: '/library/books/{id}', operationId: 'updateLibraryBook', summary: `Edit a book. Send null to clear an optional field.${desk}`, tags, roles: manage, request: { params: idParams, body: updateBody }, success: { status: 200, description: 'Updated', data: detail }, errors: ['NOT_FOUND', 'CONFLICT', 'VALIDATION_ERROR'] });
++  registry.register({ method: 'delete', path: '/library/books/{id}', operationId: 'deleteLibraryBook', summary: `Remove a book and withdraw all its copies. Refused while a copy is out on loan.${desk}`, tags, roles: manage, request: { params: idParams }, success: { status: 200, description: 'Removed', data: z.null() }, errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/library/books/{id}/copies', operationId: 'addLibraryCopies', summary: `Add more physical copies of a book, each with its own barcode.${desk}`, tags, roles: manage, request: { params: idParams, body: addCopiesBody }, success: { status: 201, description: 'The new copies', data: z.array(copy) }, errors: ['NOT_FOUND'] });
++  registry.register({ method: 'patch', path: '/library/copies/{id}', operationId: 'updateLibraryCopy', summary: `Mark a copy AVAILABLE, DAMAGED or WITHDRAWN, or change its shelf and note. A copy out on loan cannot change status.${desk}`, tags, roles: manage, request: { params: idParams, body: updateCopyBody }, success: { status: 200, description: 'Updated', data: copy }, errors: ['NOT_FOUND', 'CONFLICT', 'VALIDATION_ERROR'] });
++  registry.register({ method: 'get', path: '/library/librarians', operationId: 'listLibrarians', summary: 'Teachers who run the library', tags, roles: PERMISSIONS['library:designate'], success: { status: 200, description: 'Librarians', data: z.array(z.object({ userId: z.string(), staffNo: z.string().nullable(), name: z.string() })) } });
++  registry.register({ method: 'put', path: '/library/librarians/{userId}', operationId: 'setLibrarian', summary: 'Make a teacher a librarian, or take it away. Takes effect on their next request. Admins already have library access', tags, roles: PERMISSIONS['library:designate'], request: { params: userParams, body: designateBody }, success: { status: 200, description: 'Saved', data: z.object({ userId: z.string(), isLibrarian: z.boolean() }) }, errors: ['VALIDATION_ERROR'] });
++}
+--- /dev/null
++++ b/src/modules/library/library.service.ts
+@@ -0,0 +1,121 @@
++import { AppError } from '../../common/errors/AppError';
++import { ROLES } from '../../config/constants';
++import { withTransaction } from '../../config/db';
++import type { AuditPort } from '../audit/audit.port';
++import type { staffRepository } from '../users/staff.repository';
++import type { userRepository } from '../users/user.repository';
++import type { bookRepository, BookInput, BookRecord, CopyCounts, CopyPatch, CopyRecord, ListBooksQuery } from './book.repository';
++
++interface Actor { id: string; role: string; isLibrarian: boolean }
++interface Context { ip: string; requestId: string }
++
++export interface BookView extends Omit<BookRecord, 'priceKobo'> {
++  copies: CopyCounts;
++  /** Only librarians and admins see what a book is worth. */
++  priceKobo?: number | null;
++}
++export interface BookDetail extends BookView { copyList?: CopyRecord[] }
++export interface LibrarianView { userId: string; staffNo: string | null; name: string }
++
++/** Admins and designated teachers. The same rule authorizeLibrarian applies to the routes. */
++export const isLibraryManager = (user: { role: string; isLibrarian: boolean }): boolean =>
++  user.role === ROLES.SUPER_ADMIN || user.role === ROLES.ADMIN || (user.role === ROLES.TEACHER && user.isLibrarian);
++
++export function createLibraryService(deps: {
++  books: typeof bookRepository;
++  users: Pick<typeof userRepository, 'setLibrarian' | 'listLibrarians'>;
++  staff: Pick<typeof staffRepository, 'findByUserId'>;
++  audit: AuditPort;
++}) {
++  const { books, users, staff, audit } = deps;
++  const invalid = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
++  const log = (action: string, actor: Actor, ctx: Context, entityType: string, entityId: string, metadata?: Record<string, unknown>): Promise<void> =>
++    audit.record({ action, actorId: actor.id, entityType, entityId, ip: ctx.ip, requestId: ctx.requestId, ...(metadata ? { metadata } : {}) });
++
++  const view = (book: BookRecord, copies: CopyCounts | undefined, manager: boolean): BookView => {
++    const { priceKobo, ...rest } = book;
++    return { ...rest, copies: copies ?? { total: 0, available: 0 }, ...(manager ? { priceKobo } : {}) };
++  };
++
++  return {
++    async listBooks(query: ListBooksQuery, user: Actor): Promise<{ items: BookView[]; total: number }> {
++      const { items, total } = await books.listBooks(query);
++      const counts = await books.copyCounts(items.map((b) => b.id));
++      const manager = isLibraryManager(user);
++      return { items: items.map((b) => view(b, counts.get(b.id), manager)), total };
++    },
++
++    async getBook(id: string, user: Actor): Promise<BookDetail> {
++      const book = await books.findBook(id);
++      if (!book) throw new AppError('NOT_FOUND');
++      const manager = isLibraryManager(user);
++      const counts = await books.copyCounts([id]);
++      const detail: BookDetail = view(book, counts.get(id), manager);
++      if (manager) detail.copyList = await books.copiesOf(id);
++      return detail;
++    },
++
++    listCategories: (): Promise<string[]> => books.listCategories(),
++
++    /** The book and its first copies are saved together, so a failure never leaves a book with no copies it was meant to have. */
++    async createBook(input: BookInput & { copies: number; shelfLocation?: string | null | undefined }, actor: Actor, ctx: Context): Promise<BookDetail> {
++      const { copies, shelfLocation, ...fields } = input;
++      const created = await withTransaction(async (tx) => {
++        const book = await books.createBook(fields, tx);
++        const made = copies > 0 ? await books.createCopies(book.id, copies, shelfLocation ?? null, tx) : [];
++        return { book, made };
++      });
++      await log('LIBRARY_BOOK_CREATED', actor, ctx, 'LibraryBook', created.book.id, { title: created.book.title, copies: created.made.length });
++      return { ...view(created.book, { total: created.made.length, available: created.made.length }, true), copyList: created.made };
++    },
++
++    async updateBook(id: string, patch: Partial<BookInput>, actor: Actor, ctx: Context): Promise<BookDetail> {
++      if (Object.values(patch).every((v) => v === undefined)) throw invalid('body', 'Nothing to update');
++      const updated = await books.updateBook(id, patch);
++      if (!updated) throw new AppError('NOT_FOUND');
++      await log('LIBRARY_BOOK_UPDATED', actor, ctx, 'LibraryBook', id, { fields: Object.keys(patch).filter((k) => patch[k as keyof BookInput] !== undefined) });
++      return this.getBook(id, actor);
++    },
++
++    async deleteBook(id: string, actor: Actor, ctx: Context): Promise<void> {
++      const result = await withTransaction((tx) => books.softDeleteBook(id, tx));
++      if (result === 'NOT_FOUND') throw new AppError('NOT_FOUND');
++      if (result === 'ON_LOAN') throw new AppError('CONFLICT', { details: [{ field: 'id', issue: 'A copy of this book is out on loan. Wait for it to come back' }] });
++      await log('LIBRARY_BOOK_DELETED', actor, ctx, 'LibraryBook', id);
++    },
++
++    async addCopies(bookId: string, input: { count: number; shelfLocation?: string | null | undefined }, actor: Actor, ctx: Context): Promise<CopyRecord[]> {
++      if (!(await books.findBook(bookId))) throw new AppError('NOT_FOUND');
++      const made = await withTransaction((tx) => books.createCopies(bookId, input.count, input.shelfLocation ?? null, tx));
++      await log('LIBRARY_COPIES_ADDED', actor, ctx, 'LibraryBook', bookId, { barcodes: made.map((c) => c.barcode) });
++      return made;
++    },
++
++    async updateCopy(id: string, patch: CopyPatch, actor: Actor, ctx: Context): Promise<CopyRecord> {
++      if (Object.values(patch).every((v) => v === undefined)) throw invalid('body', 'Nothing to update');
++      const result = await books.updateCopy(id, patch);
++      if (result === null) throw new AppError('NOT_FOUND');
++      if (result === 'ON_LOAN') throw new AppError('CONFLICT', { details: [{ field: 'status', issue: 'This copy is out on loan. Return it first' }] });
++      await log('LIBRARY_COPY_UPDATED', actor, ctx, 'LibraryCopy', id, { barcode: result.barcode, ...(patch.status ? { status: patch.status } : {}) });
++      return result;
++    },
++
++    async listLibrarians(): Promise<LibrarianView[]> {
++      const records = await users.listLibrarians();
++      const rows = await Promise.all(records.map(async (u): Promise<LibrarianView> => {
++        const profile = await staff.findByUserId(u.id);
++        return { userId: u.id, staffNo: profile?.staffNo ?? null, name: profile ? `${profile.firstName} ${profile.lastName}` : '' };
++      }));
++      return rows.sort((a, b) => a.name.localeCompare(b.name));
++    },
++
++    /** Only an active teacher can be made a librarian. Admins already have the access. */
++    async setLibrarian(userId: string, isLibrarian: boolean, actor: Actor, ctx: Context): Promise<{ userId: string; isLibrarian: boolean }> {
++      if (!(await users.setLibrarian(userId, isLibrarian))) throw invalid('userId', 'Only an active teacher can be made a librarian');
++      await log(isLibrarian ? 'LIBRARIAN_DESIGNATED' : 'LIBRARIAN_REMOVED', actor, ctx, 'User', userId);
++      return { userId, isLibrarian };
++    },
++  };
++}
++
++export type LibraryService = ReturnType<typeof createLibraryService>;
+--- a/src/modules/users/user.model.ts
++++ b/src/modules/users/user.model.ts
+@@ -13,6 +13,8 @@
+   mustChangePassword: boolean;
+   /** Graduates can look at their results but cannot change or start anything. */
+   readOnly: boolean;
++  /** A teacher the admin has allowed to run the school library. */
++  isLibrarian: boolean;
+   failedLoginCount: number;
+   lockedUntil?: Date | null;
+   lastLoginAt?: Date | null;
+@@ -51,6 +53,7 @@
+     },
+     mustChangePassword: { type: Boolean, default: false },
+     readOnly: { type: Boolean, default: false },
++    isLibrarian: { type: Boolean, default: false },
+     failedLoginCount: { type: Number, default: 0, min: 0 },
+     lockedUntil: { type: Date, default: null },
+     lastLoginAt: { type: Date, default: null },
+--- a/src/modules/users/user.repository.ts
++++ b/src/modules/users/user.repository.ts
+@@ -16,6 +16,7 @@
+   status: UserStatus;
+   mustChangePassword: boolean;
+   readOnly: boolean;
++  isLibrarian: boolean;
+   failedLoginCount: number;
+   lockedUntil: Date | null;
+   lastLoginAt: Date | null;
+@@ -59,6 +60,7 @@
+     status: doc.status,
+     mustChangePassword: doc.mustChangePassword,
+     readOnly: doc.readOnly === true,
++    isLibrarian: doc.isLibrarian === true,
+     failedLoginCount: doc.failedLoginCount,
+     lockedUntil: doc.lockedUntil ?? null,
+     lastLoginAt: doc.lastLoginAt ?? null,
+@@ -122,6 +124,18 @@
+   return result.matchedCount > 0;
+ }
+ 
++/** Only teachers can be librarians. Admins already can run the library. False means no active teacher has that id. */
++async function setLibrarian(id: string, isLibrarian: boolean): Promise<boolean> {
++  if (!OBJECT_ID.test(id)) return false;
++  const result = await UserModel.updateOne({ _id: id, role: 'TEACHER', deletedAt: null }, { $set: { isLibrarian } });
++  return result.matchedCount > 0;
++}
++
++async function listLibrarians(): Promise<UserRecord[]> {
++  const docs = await UserModel.find({ isLibrarian: true, deletedAt: null }).lean<Lean[]>();
++  return docs.map(toRecord);
++}
++
+ async function findById(id: string): Promise<UserRecord | null> {
+   if (!OBJECT_ID.test(id)) return null;
+   const doc = await UserModel.findOne({ _id: id, deletedAt: null }).lean<Lean>();
+@@ -343,6 +357,8 @@
+   clearMustChangePasswordForRole,
+   findById,
+   setReadOnly,
++  setLibrarian,
++  listLibrarians,
+   findAuth,
+   recordFailedLogin,
+   recordSuccessfulLogin,
+--- a/src/openapi/index.ts
++++ b/src/openapi/index.ts
+@@ -18,6 +18,7 @@
+ import { registerRequestOperations } from '../modules/requests/request.schema';
+ import { registerTaskOperations } from '../modules/tasks/task.schema';
+ import { registerSettingsOperations } from '../modules/settings/settings.schema';
++import { registerLibraryOperations } from '../modules/library/library.schema';
+ import { registerPromotionOperations } from '../modules/promotions/promotion.schema';
+ import { registerResultsOperations } from '../modules/results/results.schema';
+ import { registerCbtOperations } from '../modules/cbt/cbt.schema';
+@@ -54,6 +55,7 @@
+   registerSettingsOperations(registry);
+   registerResultsOperations(registry);
+   registerPromotionOperations(registry);
++  registerLibraryOperations(registry);
+   registerCbtOperations(registry);
+     registerTimetableOperations(registry);
+   registerCalendarOperations(registry);
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -16,6 +16,7 @@
+ import { createCommunicationModule } from './modules/communication/communication.module';
+ import { createHealthRouter, type HealthDependencies } from './modules/health/health.routes';
+ import { createPassportPhotosModule } from './modules/passport-photos/passportPhotos.module';
++import { createLibraryModule } from './modules/library/library.module';
+ import { createPromotionsModule } from './modules/promotions/promotions.module';
+ import { createPortalModule } from './modules/portal/portal.module';
+ import { createResultsModule } from './modules/results/results.module';
+@@ -99,6 +100,8 @@
+   // Promotion reads the yearly averages from results and what students owe from fees, so it comes after both.
+   router.use(createPromotionsModule({ audit, auth, settings: settings.service, annual: results.annual, notifier: communication.notifier }).router);
+ 
++  router.use(createLibraryModule({ audit, auth }).router);
++
+   const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs });
+   router.use(cbt.router);
+ 

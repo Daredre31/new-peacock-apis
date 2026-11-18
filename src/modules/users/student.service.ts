@@ -38,7 +38,7 @@ export type UpdateStudentInput = Partial<Omit<CreateStudentInput, 'delivery' | '
 };
 
 export interface StudentServiceDeps {
-  users: Pick<typeof userRepository, 'create' | 'findById' | 'findManyByIds' | 'updateContact' | 'softDelete'>;
+  users: Pick<typeof userRepository, 'create' | 'findById' | 'findManyByIds' | 'updateContact' | 'softDelete' | 'setReadOnly'>;
   students: typeof studentRepository;
   enrolments: Pick<typeof enrolmentRepository, 'upsert' | 'forStudents' | 'studentIdsInArms'>;
   sessions: Pick<typeof sessionRepository, 'findSession' | 'findCurrentSession'>;
@@ -251,6 +251,7 @@ export function createStudentService(deps: StudentServiceDeps) {
       await withTransaction(async (tx) => {
         if (Object.keys(contact).length > 0 && !(await users.updateContact(userId, contact, tx))) throw new AppError('NOT_FOUND');
         if (Object.keys(profile).length > 0) await students.update(userId, profile, tx);
+        if (patch.status !== undefined) await users.setReadOnly(userId, patch.status === 'GRADUATED', tx);
       });
 
       const after = await mustGet(userId);

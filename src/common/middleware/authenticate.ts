@@ -9,6 +9,8 @@ export interface AuthUserRecord {
   role: Role;
   status: UserStatus;
   mustChangePassword: boolean;
+  readOnly: boolean;
+  isLibrarian: boolean;
 }
 
 export interface AuthMiddlewareDeps {
@@ -54,6 +56,8 @@ export function createAuthMiddleware(deps: AuthMiddlewareDeps) {
         id: user.id,
         role: user.role,
         mustChangePassword: user.mustChangePassword,
+        readOnly: user.readOnly,
+        isLibrarian: user.isLibrarian,
         sessionId: claims.sessionId,
       };
       req.log = req.log.child({ userId: user.id, role: user.role });

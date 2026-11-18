@@ -26,6 +26,11 @@ const profileBody = z.object({
   shortName: nullableText(30), motto: nullableText(150), address: nullableText(250),
   phone: nullableText(30), email: nullableText(254), website: nullableText(200),
 }).strict();
+const brandingBody = z.object({ ...profileBody.shape, principalName: nullableText(100) }).strict();
+const assetParams = z.object({ asset: z.enum(['logo', 'signature', 'stamp']) });
+export const updateBrandingSchemas = { body: brandingBody };
+export const brandingAssetSchemas = { params: assetParams };
+
 const policyBody = z.object({
   withholdReportsIfOwing: z.boolean().optional(),
   teacherPostsNeedApproval: z.boolean().optional(),
@@ -43,6 +48,10 @@ const profileView = z.object({
   name: z.string(), shortName: z.string().nullable(), motto: z.string().nullable(), address: z.string().nullable(),
   phone: z.string().nullable(), email: z.string().nullable(), website: z.string().nullable(),
 });
+const brandingView = profileView.extend({
+  principalName: z.string().nullable(),
+  logoUrl: z.string().nullable(), principalSignatureUrl: z.string().nullable(), stampUrl: z.string().nullable(),
+});
 const policyView = z.object({
   withholdReportsIfOwing: z.boolean(), teacherPostsNeedApproval: z.boolean(),
   lowAttendancePercent: z.number().int(), lowScorePercent: z.number().int(),
@@ -56,4 +65,9 @@ export function registerSettingsOperations(registry: OpenApiRegistry): void {
   registry.register({ method: 'put', path: '/settings/grading-scale', operationId: 'setGradingScale', summary: 'Replace the scale. Component maximums must add up to 100. Components cannot change once scores exist', tags, roles: PERMISSIONS['grading-scale:write'], request: { body: assessmentBody }, success: { status: 200, description: 'Saved', data: assessmentBody }, errors: ['CONFLICT'] });
   registry.register({ method: 'get', path: '/settings', operationId: 'getSettings', summary: 'The school profile (everyone). The policy flags are returned to the super admin only, and are null for everyone else', tags, roles: PERMISSIONS['session:self'], success: { status: 200, description: 'Settings', data: z.object({ profile: profileView, policy: policyView.nullable() }) } });
   registry.register({ method: 'put', path: '/settings', operationId: 'updateSettings', summary: 'Change the school profile and/or the policy flags. Only the fields you send change; send null to clear an optional profile field. Sending policy.studentsMustChangePassword = false also clears the "must change password" flag on every existing student at once', tags, roles: [ROLES.SUPER_ADMIN], request: { body: updateSettingsBody }, success: { status: 200, description: 'Saved', data: z.object({ profile: profileView, policy: policyView }) } });
+  const brandingTags = ['settings'];
+  registry.register({ method: 'get', path: '/settings/branding', operationId: 'getBranding', summary: 'Everything printed documents carry about the school: name, motto, address, contacts, logo, principal name and signature, and the school stamp. The image URLs are null until uploaded', tags: brandingTags, roles: PERMISSIONS['session:self'], success: { status: 200, description: 'Branding', data: brandingView } });
+  registry.register({ method: 'put', path: '/settings/branding', operationId: 'updateBranding', summary: 'Change the text side of branding. Only the fields you send change; send null to clear an optional one. Images are uploaded with PUT /settings/branding/{asset}', tags: brandingTags, roles: PERMISSIONS['branding:write'], request: { body: brandingBody }, success: { status: 200, description: 'Saved', data: brandingView }, errors: ['VALIDATION_ERROR'] });
+  registry.register({ method: 'put', path: '/settings/branding/{asset}', operationId: 'setBrandingImage', summary: 'Upload the school logo, the principal signature or the school stamp (asset is logo, signature or stamp). Field "file", JPEG, PNG or WebP, max 2 MB. It is kept as a PNG no larger than 1000 px, so transparency survives and it prints sharply. Replaces any earlier upload', tags: brandingTags, roles: PERMISSIONS['branding:write'], request: { params: assetParams }, upload: true, success: { status: 200, description: 'Saved', data: brandingView }, errors: ['VALIDATION_ERROR', 'SERVICE_UNAVAILABLE'] });
+  registry.register({ method: 'delete', path: '/settings/branding/{asset}', operationId: 'removeBrandingImage', summary: 'Remove the logo, signature or stamp. Documents are then printed without it', tags: brandingTags, roles: PERMISSIONS['branding:write'], request: { params: assetParams }, success: { status: 200, description: 'Removed', data: brandingView }, errors: ['SERVICE_UNAVAILABLE'] });
 }
