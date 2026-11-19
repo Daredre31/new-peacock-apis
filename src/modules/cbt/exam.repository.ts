@@ -18,6 +18,7 @@ const settingsSchema = new mongoose.Schema(
     shuffleQuestions: Boolean, shuffleOptions: Boolean, showAnswers: Boolean,
     resultRelease: { type: String, enum: ['IMMEDIATE', 'MANUAL'] },
     passMarkPercent: Number, scoreComponent: { type: String, default: null },
+    questionsPerStudent: { type: Number, default: null },
   },
   { _id: false },
 );
@@ -62,7 +63,7 @@ const toRecord = (r: Row): ExamRecord => ({
   id: r._id.toString(), title: r.title, subjectId: r.subjectId.toString(), classArmIds: r.classArmIds.map(String),
   teacherId: r.teacherId.toString(), sessionId: r.sessionId.toString(), termId: r.termId.toString(), type: r.type,
   durationMin: r.durationMin, windowStart: r.windowStart, windowEnd: r.windowEnd, instructions: r.instructions ?? '',
-  settings: { shuffleQuestions: r.settings.shuffleQuestions, shuffleOptions: r.settings.shuffleOptions, resultRelease: r.settings.resultRelease, showAnswers: r.settings.showAnswers, passMarkPercent: r.settings.passMarkPercent, scoreComponent: r.settings.scoreComponent ?? null },
+  settings: { shuffleQuestions: r.settings.shuffleQuestions, shuffleOptions: r.settings.shuffleOptions, resultRelease: r.settings.resultRelease, showAnswers: r.settings.showAnswers, passMarkPercent: r.settings.passMarkPercent, scoreComponent: r.settings.scoreComponent ?? null, questionsPerStudent: r.settings.questionsPerStudent ?? null },
   status: r.status, rejectionReason: r.rejectionReason ?? null, resultsReleased: r.resultsReleased,
   resultsReleasedAt: r.resultsReleasedAt ?? null, questionCount: r.questionCount, maxScore: r.maxScore, createdAt: r.createdAt,
 });

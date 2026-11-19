@@ -20,12 +20,18 @@ export interface ExamSettings {
   passMarkPercent: number;
   /** A score component (for example EXAM) to copy each student's scaled score into when results are released. */
   scoreComponent: string | null;
+  /**
+   * null: every student sits every question. A number: each student is given that many questions, drawn at random
+   * from the exam's questions when they start. Needs equal marks on every question, so everyone is marked out of the same total.
+   */
+  questionsPerStudent: number | null;
 }
 
 export const DEFAULT_SETTINGS: ExamSettings = {
-  shuffleQuestions: true, shuffleOptions: true, resultRelease: 'MANUAL', showAnswers: false, passMarkPercent: 50, scoreComponent: null,
+  shuffleQuestions: true, shuffleOptions: true, resultRelease: 'MANUAL', showAnswers: false, passMarkPercent: 50, scoreComponent: null, questionsPerStudent: null,
 };
 
 /** A final save or submit is still accepted this long after the clock ends, to allow for network lag. */
 export const GRACE_MS = 5_000;
 export const MAX_QUESTIONS = 200;
+export const MAX_QUESTIONS_PER_STUDENT = 100;

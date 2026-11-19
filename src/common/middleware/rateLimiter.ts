@@ -123,10 +123,11 @@ export const createLoginRateLimiter = (redis: RedisLike | null): RequestHandler 
   });
 
 /** Global flood guard for app.ts. If Redis is down it falls back to per-instance memory. */
-export const createIpRateLimiter = (redis: RedisLike | null): RequestHandler =>
+export const createIpRateLimiter = (redis: RedisLike | null, limitPerMinute: number = RATE_LIMITS.ip.limit): RequestHandler =>
   createRateLimiter({
     name: 'ip',
     ...RATE_LIMITS.ip,
+    limit: limitPerMinute,
     key: clientIp,
     redis,
     onRedisFailure: 'use-memory',

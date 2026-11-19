@@ -4,6 +4,7 @@ import { AppError } from '../../common/errors/AppError';
 import { withTransaction } from '../../config/db';
 import { recordSafely, type AuditPort } from '../audit/audit.port';
 import type { KeyValueStore } from '../auth/keyValueStore';
+import { poolIssue } from './pool';
 import { DIFFICULTIES, EXAM_STATUS, MAX_QUESTIONS, OPTION_KEYS, QUESTION_TYPES, type Difficulty, type QuestionType } from './cbt.types';
 import type { ExamRecord, examRepository } from './exam.repository';
 import { normalizeAnswer } from './grading';
@@ -60,7 +61,7 @@ export function createQuestionImportService(deps: {
 
   return {
     async upload(actor: Actor, examId: string, fileName: string, buffer: Buffer) {
-      await editableExam(actor, examId);
+      const exam = await editableExam(actor, examId);
 
       let text: string;
       try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); }
@@ -166,7 +167,9 @@ export function createQuestionImportService(deps: {
         }
       });
 
-      const clear = errors.length === 0;
+      // Once every row is fine on its own, check the set works with the exam's "questions per student" setting.
+      const poolProblem = errors.length === 0 ? poolIssue(exam.settings.questionsPerStudent, questions.length, questions.map((q) => q.marks)) : null;
+      const clear = errors.length === 0 && poolProblem === null;
       let importToken: string | null = null;
       if (clear) {
         importToken = randomBytes(32).toString('base64url');
@@ -175,7 +178,7 @@ export function createQuestionImportService(deps: {
 
       return {
         rowCount: rows.length, validCount: clear ? questions.length : rows.length - new Set(errors.map((e) => e.row)).size,
-        errors: errors.slice(0, MAX_ERRORS), truncated: errors.length > MAX_ERRORS,
+        errors: [...(poolProblem ? [{ row: 0, field: poolProblem.field, issue: poolProblem.issue }] : []), ...errors].slice(0, MAX_ERRORS), truncated: errors.length > MAX_ERRORS,
         totalMarks: clear ? Math.round(questions.reduce((s, q) => s + q.marks, 0) * 10) / 10 : null,
         byType: clear ? Object.fromEntries(QUESTION_TYPES.map((t) => [t, questions.filter((q) => q.type === t).length])) : null,
         preview: questions.slice(0, PREVIEW_ROWS).map((q) => ({ type: q.type, text: q.text.slice(0, 120), marks: q.marks })),
@@ -185,13 +188,16 @@ export function createQuestionImportService(deps: {
 
     async confirm(actor: Actor, examId: string, token: string, ctx: Context) {
       if (!TOKEN.test(token)) throw new AppError('IMPORT_TOKEN_EXPIRED');
-      await editableExam(actor, examId);
+      const exam = await editableExam(actor, examId);
 
       const raw = await deps.store.getAndDelete(keyOf(token)); // works once
 let stored: StoredImport | null = null;
 try { stored = raw ? (JSON.parse(raw) as StoredImport) : null; } catch { stored = null; }
 if (!stored || stored.actorId !== actor.id || stored.examId !== examId) throw new AppError('IMPORT_TOKEN_EXPIRED');
 const upload = stored;
+      // Settings can change between the preview and now, so check again before anything is replaced.
+      const poolProblem = poolIssue(exam.settings.questionsPerStudent, upload.questions.length, upload.questions.map((q) => q.marks));
+      if (poolProblem) throw new AppError('VALIDATION_ERROR', { details: [poolProblem] });
       // The old questions, the new ones and the exam's totals change together or not at all.
       const result = await withTransaction(async (session) => {
         const saved = await deps.questions.replaceAll(examId, actor.id, upload.fileName, upload.questions, session);

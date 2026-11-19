@@ -42,6 +42,9 @@ const schema = z
     COOKIE_DOMAIN: z.string().optional(),
     // Number of reverse proxies in front of the API (needed for correct client IPs).
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
+    // Requests per minute allowed from one IP address across the whole API. A school sits behind ONE public
+    // address, so raise this before a big exam (each student sends a few requests a minute).
+    IP_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(100).max(100000).default(1000),
         // The API docs page. Defaults to on in development and test, off in production.
     DOCS_ENABLED: z
       .enum(['true', 'false'])

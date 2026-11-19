@@ -1,0 +1,49 @@
+--- a/src/config/env.ts
++++ b/src/config/env.ts
+@@ -42,6 +42,9 @@
+     COOKIE_DOMAIN: z.string().optional(),
+     // Number of reverse proxies in front of the API (needed for correct client IPs).
+     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
++    // Requests per minute allowed from one IP address across the whole API. A school sits behind ONE public
++    // address, so raise this before a big exam (each student sends a few requests a minute).
++    IP_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(100).max(100000).default(1000),
+         // The API docs page. Defaults to on in development and test, off in production.
+     DOCS_ENABLED: z
+       .enum(['true', 'false'])
+--- a/src/common/middleware/rateLimiter.ts
++++ b/src/common/middleware/rateLimiter.ts
+@@ -123,10 +123,11 @@
+   });
+ 
+ /** Global flood guard for app.ts. If Redis is down it falls back to per-instance memory. */
+-export const createIpRateLimiter = (redis: RedisLike | null): RequestHandler =>
++export const createIpRateLimiter = (redis: RedisLike | null, limitPerMinute: number = RATE_LIMITS.ip.limit): RequestHandler =>
+   createRateLimiter({
+     name: 'ip',
+     ...RATE_LIMITS.ip,
++    limit: limitPerMinute,
+     key: clientIp,
+     redis,
+     onRedisFailure: 'use-memory',
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -100,7 +100,7 @@
+     app.use('/api/docs', createDocsRouter(buildOpenApiDocument()));
+   }
+ 
+-  app.use(createIpRateLimiter(deps.rateLimitRedis));
++  app.use(createIpRateLimiter(deps.rateLimitRedis, env.IP_RATE_LIMIT_PER_MINUTE));
+ 
+   // Paystack calls this. It needs the raw bytes for the signature, so it comes BEFORE the JSON parser.
+   // It has no cookies, so CSRF never applies. The signature is the only authentication.
+--- a/.env.example
++++ b/.env.example
+@@ -10,6 +10,8 @@
+ CORS_ORIGIN=http://localhost:5173
+ # COOKIE_DOMAIN=.yourschool.com
+ TRUST_PROXY_HOPS=0
++# Requests per minute from one IP across the API. Raise it for exams: a whole school shares one address.
++# IP_RATE_LIMIT_PER_MINUTE=1000
+ 
+ # Generate each one separately (see command below)
+ ACCESS_TOKEN_SECRET=

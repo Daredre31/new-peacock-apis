@@ -78,9 +78,14 @@ async function paperOf(examId: string): Promise<PaperQuestion[]> {
   return (await forExamWithKey(examId)).map((q) => ({ id: q.id, type: q.type, text: q.text, options: q.options, marks: q.marks }));
 }
 
+/** The different mark values among an exam's questions. */
+async function distinctMarks(examId: string): Promise<number[]> {
+  return (await QuestionModel.distinct('marks', { examId })) as number[];
+}
+
 async function removeForExam(examId: string): Promise<void> {
   await QuestionModel.deleteMany({ examId });
   await BatchModel.deleteMany({ examId });
 }
 
-export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam };
+export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam, distinctMarks };

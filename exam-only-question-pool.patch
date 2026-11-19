@@ -1,0 +1,351 @@
+--- a/src/modules/cbt/analytics.service.ts
++++ b/src/modules/cbt/analytics.service.ts
+@@ -44,10 +44,13 @@
+       }
+ 
+       // How often each question was answered correctly, worked out from the saved answers.
++      // With a pool, each student sat only some of the questions, so every rate is out of the students who were given that question.
++      const dealt = done.map((a) => ({ a, given: new Set(a.questionOrder) }));
+       const stats = paper.map((q) => {
+-        const correct = done.filter((a) => isCorrect(q, a.answers[q.id])).length;
+-        const answered = done.filter((a) => a.answers[q.id] !== undefined).length;
+-        return { questionId: q.id, order: q.order + 1, text: q.text.slice(0, 200), type: q.type, topic: q.topic, difficulty: q.difficulty, marks: q.marks, answered, correct, percentCorrect: done.length === 0 ? null : round1((correct / done.length) * 100) };
++        const assigned = dealt.filter((d) => d.given.has(q.id));
++        const correct = assigned.filter(({ a }) => isCorrect(q, a.answers[q.id])).length;
++        const answered = assigned.filter(({ a }) => a.answers[q.id] !== undefined).length;
++        return { questionId: q.id, order: q.order + 1, text: q.text.slice(0, 200), type: q.type, topic: q.topic, difficulty: q.difficulty, marks: q.marks, assigned: assigned.length, answered, correct, percentCorrect: assigned.length === 0 ? null : round1((correct / assigned.length) * 100) };
+       });
+       const hardest = stats.filter((s) => s.percentCorrect !== null).sort((a, b) => (a.percentCorrect ?? 0) - (b.percentCorrect ?? 0)).slice(0, 10);
+ 
+--- a/src/modules/cbt/attempt.service.ts
++++ b/src/modules/cbt/attempt.service.ts
+@@ -14,6 +14,7 @@
+ import type { ExamRecord, examRepository } from './exam.repository';
+ import { cleanAnswer, gradeAttempt, shuffle, type PaperQuestion } from './grading';
+ import type { PaperCache } from './paper.cache';
++import { chooseQuestions } from './pool';
+ import type { questionRepository } from './question.repository';
+ 
+ interface Actor { id: string; role: Role }
+@@ -76,7 +77,9 @@
+       const target = claimed ?? (await attempts.findById(attemptId, session));
+       if (!target) return null;
+       if (target.graded) return target;
+-      return attempts.applyGrade(attemptId, gradeAttempt(keyed, target.answers), session);
++      // Only the questions this student was dealt count: the total they are marked out of is their own.
++      const given = new Set(target.questionOrder);
++      return attempts.applyGrade(attemptId, gradeAttempt(keyed.filter((q) => given.has(q.id)), target.answers), session);
+     });
+     if (done) await scheduler.cancel(attemptId);
+     return done;
+@@ -178,17 +181,21 @@
+ 
+       const questionsInPaper = await paper.get(exam);
+       if (questionsInPaper.length === 0) throw new AppError('EXAM_NOT_OPEN');
+-      const ids = questionsInPaper.map((q) => q.id);
++      // With a pool, this student is dealt their own random share of the questions, once, here. It is stored on the
++      // attempt, so a refresh or resume shows the same ones, and nothing the client sends can change it.
++      const questionOrder = chooseQuestions(questionsInPaper.map((q) => q.id), exam.settings.questionsPerStudent, exam.settings.shuffleQuestions);
++      const dealt = new Set(questionOrder);
++      const given = questionsInPaper.filter((q) => dealt.has(q.id));
+       const optionOrder: Record<string, string[]> = {};
+       if (exam.settings.shuffleOptions) {
+-        for (const q of questionsInPaper) if (q.type === 'MCQ' && q.options) optionOrder[q.id] = shuffle(q.options.map((o) => o.key));
++        for (const q of given) if (q.type === 'MCQ' && q.options) optionOrder[q.id] = shuffle(q.options.map((o) => o.key));
+       }
+ 
+       const endsAt = new Date(Math.min(now.getTime() + exam.durationMin * 60_000, exam.windowEnd.getTime()));
+       const created = await attempts.create({
+         examId, studentId: actor.id, startedAt: now, endsAt,
+-        questionOrder: exam.settings.shuffleQuestions ? shuffle(ids) : ids, optionOrder,
+-        maxScore: round1(questionsInPaper.reduce((s, q) => s + q.marks, 0)),
++        questionOrder, optionOrder,
++        maxScore: round1(given.reduce((s, q) => s + q.marks, 0)),
+       });
+       if (!created) {
+         const raced = await attempts.findByExamStudent(examId, actor.id); // a double click started it a moment ago
+@@ -305,7 +312,7 @@
+         return {
+           id: exam.id, title: exam.title, subjectName: subjects.get(exam.subjectId)?.name ?? '', type: exam.type,
+           durationMin: exam.durationMin, windowStart: exam.windowStart.toISOString(), windowEnd: exam.windowEnd.toISOString(),
+-          instructions: exam.instructions, questionCount: exam.questionCount, state,
++          instructions: exam.instructions, questionCount: Math.min(exam.questionCount, exam.settings.questionsPerStudent ?? exam.questionCount), state,
+           attempt: a ? { id: a.id, status: a.status, endsAt: a.endsAt.toISOString(), submittedAt: a.submittedAt ? a.submittedAt.toISOString() : null } : null,
+           result: visible && a.score !== null ? { score: a.score, maxScore: a.maxScore, percent, passed: percent !== null && percent >= exam.settings.passMarkPercent } : null,
+         };
+--- a/src/modules/cbt/cbt.schema.ts
++++ b/src/modules/cbt/cbt.schema.ts
+@@ -2,7 +2,7 @@
+ import { paginationShape } from '../../common/utils/pagination';
+ import { PERMISSIONS, ROLES } from '../../config/constants';
+ import type { OpenApiRegistry } from '../../openapi/registry';
+-import { DIFFICULTIES, EXAM_STATUS, EXAM_TYPES, QUESTION_TYPES, type ExamStatus } from './cbt.types';
++import { DIFFICULTIES, EXAM_STATUS, EXAM_TYPES, MAX_QUESTIONS_PER_STUDENT, QUESTION_TYPES, type ExamStatus } from './cbt.types';
+ 
+ const objectId = z.string().regex(/^[a-f0-9]{24}$/);
+ const idParams = z.object({ id: objectId });
+@@ -15,10 +15,12 @@
+   resultRelease: z.enum(['IMMEDIATE', 'MANUAL']).optional(), showAnswers: z.boolean().optional(),
+   passMarkPercent: z.number().int().min(0).max(100).optional(),
+   scoreComponent: z.string().regex(/^[A-Z][A-Z0-9]{0,7}$/).nullable().optional(),
++  /** Give each student this many questions, drawn at random from the exam's questions. null: everyone sits all of them. */
++  questionsPerStudent: z.number().int().min(1).max(MAX_QUESTIONS_PER_STUDENT).nullable().optional(),
+ });
+ const settingsView = z.object({
+   shuffleQuestions: z.boolean(), shuffleOptions: z.boolean(), resultRelease: z.enum(['IMMEDIATE', 'MANUAL']),
+-  showAnswers: z.boolean(), passMarkPercent: num, scoreComponent: z.string().nullable(),
++  showAnswers: z.boolean(), passMarkPercent: num, scoreComponent: z.string().nullable(), questionsPerStudent: num.nullable(),
+ });
+ 
+ const examFields = {
+@@ -61,7 +63,7 @@
+   classArms: z.array(z.object({ id: z.string(), name: z.string() })), teacherId: z.string(), teacherName: z.string(),
+   sessionId: z.string(), termId: z.string(), type: z.enum(EXAM_TYPES), durationMin: num, windowStart: iso, windowEnd: iso,
+   instructions: z.string(), settings: settingsView, status: z.enum(statusValues), rejectionReason: z.string().nullable(),
+-  resultsReleased: z.boolean(), questionCount: num, maxScore: z.number(), createdAt: iso,
++  resultsReleased: z.boolean(), questionCount: num, maxScore: z.number(), maxScorePerStudent: z.number(), createdAt: iso,
+ });
+ const paperQuestion = z.object({ id: z.string(), type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number(), options: z.array(z.object({ key: z.string(), text: z.string() })).nullable() });
+ const attemptView = z.object({
+@@ -105,7 +107,7 @@
+   registry.register({ method: 'get', path: '/cbt/schedule', operationId: 'getExamSchedule', summary: 'Read-only exam schedule for a student, or for a parent\'s children (optionally one child)', tags, roles: [ROLES.PARENT, ROLES.STUDENT], request: { query: scheduleSchemas.query }, success: done(z.array(z.object({ examId: z.string(), title: z.string(), subjectName: z.string(), type: z.enum(EXAM_TYPES), windowStart: iso, windowEnd: iso, durationMin: num, studentId: z.string(), studentName: z.string(), classArmName: z.string() })), 'The schedule'), errors: ['NOT_FOUND'] });
+   registry.register({ method: 'get', path: '/cbt/time', operationId: 'getServerTime', summary: 'Server time, for the connection check and the clock offset', tags, roles: PERMISSIONS['cbt:take'], success: done(z.object({ serverTime: iso }), 'Now') });
+   registry.register({ method: 'get', path: '/cbt/my-exams', operationId: 'listMyExams', summary: 'My exams: upcoming, open, in progress, completed or missed', tags, roles: PERMISSIONS['cbt:take'], success: done(z.array(z.object({ id: z.string(), title: z.string(), subjectName: z.string(), type: z.enum(EXAM_TYPES), durationMin: num, windowStart: iso, windowEnd: iso, instructions: z.string(), questionCount: num, state: z.enum(['UPCOMING', 'OPEN', 'IN_PROGRESS', 'COMPLETED', 'MISSED']), attempt: z.object({ id: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), endsAt: iso, submittedAt: iso.nullable() }).nullable(), result: z.object({ score: z.number(), maxScore: z.number(), percent: z.number().nullable(), passed: z.boolean() }).nullable() })), 'My exams') });
+-  registry.register({ method: 'post', path: '/cbt/exams/{id}/start', operationId: 'startExam', summary: 'Start the exam, or resume it. Returns the shuffled questions without answers, endsAt and serverTime', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'Started'), errors: ['NOT_FOUND', 'EXAM_NOT_OPEN', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/start', operationId: 'startExam', summary: 'Start the exam, or resume it. Returns the shuffled questions without answers, endsAt and serverTime. If the exam gives each student a share of its questions (settings.questionsPerStudent), the student is dealt a random selection when they start, fixed for the whole attempt and identical on every refresh or resume', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'Started'), errors: ['NOT_FOUND', 'EXAM_NOT_OPEN', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
+   registry.register({ method: 'get', path: '/cbt/attempts/{id}', operationId: 'getAttempt', summary: 'Resume after a refresh: the paper, the saved answers and the time left', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'The attempt'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
+   registry.register({ method: 'put', path: '/cbt/attempts/{id}/answers', operationId: 'saveAnswers', summary: 'Autosave (debounced). Send only changed answers; null clears one. MCQ: the option key. TRUE_FALSE: TRUE or FALSE. SHORT_ANSWER: text', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: saveAnswersBody }, success: done(z.object({ saved: num, serverTime: iso, remainingSeconds: num }), 'Saved'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
+   registry.register({ method: 'post', path: '/cbt/attempts/{id}/submit', operationId: 'submitAttempt', summary: 'Submit, with optional final answers. Safe to repeat. ATTEMPT_EXPIRED means the server already submitted it', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: submitBody }, success: done(z.object({ attemptId: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), submittedAt: iso.nullable(), resultAvailable: z.boolean(), score: z.number().nullable(), maxScore: z.number().nullable(), percent: z.number().nullable() }), 'Submitted'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED'] });
+--- a/src/modules/cbt/cbt.types.ts
++++ b/src/modules/cbt/cbt.types.ts
+@@ -20,12 +20,18 @@
+   passMarkPercent: number;
+   /** A score component (for example EXAM) to copy each student's scaled score into when results are released. */
+   scoreComponent: string | null;
++  /**
++   * null: every student sits every question. A number: each student is given that many questions, drawn at random
++   * from the exam's questions when they start. Needs equal marks on every question, so everyone is marked out of the same total.
++   */
++  questionsPerStudent: number | null;
+ }
+ 
+ export const DEFAULT_SETTINGS: ExamSettings = {
+-  shuffleQuestions: true, shuffleOptions: true, resultRelease: 'MANUAL', showAnswers: false, passMarkPercent: 50, scoreComponent: null,
++  shuffleQuestions: true, shuffleOptions: true, resultRelease: 'MANUAL', showAnswers: false, passMarkPercent: 50, scoreComponent: null, questionsPerStudent: null,
+ };
+ 
+ /** A final save or submit is still accepted this long after the clock ends, to allow for network lag. */
+ export const GRACE_MS = 5_000;
+-export const MAX_QUESTIONS = 200;
+\ No newline at end of file
++export const MAX_QUESTIONS = 200;
++export const MAX_QUESTIONS_PER_STUDENT = 100;
+\ No newline at end of file
+--- a/src/modules/cbt/exam.repository.ts
++++ b/src/modules/cbt/exam.repository.ts
+@@ -18,6 +18,7 @@
+     shuffleQuestions: Boolean, shuffleOptions: Boolean, showAnswers: Boolean,
+     resultRelease: { type: String, enum: ['IMMEDIATE', 'MANUAL'] },
+     passMarkPercent: Number, scoreComponent: { type: String, default: null },
++    questionsPerStudent: { type: Number, default: null },
+   },
+   { _id: false },
+ );
+@@ -62,7 +63,7 @@
+   id: r._id.toString(), title: r.title, subjectId: r.subjectId.toString(), classArmIds: r.classArmIds.map(String),
+   teacherId: r.teacherId.toString(), sessionId: r.sessionId.toString(), termId: r.termId.toString(), type: r.type,
+   durationMin: r.durationMin, windowStart: r.windowStart, windowEnd: r.windowEnd, instructions: r.instructions ?? '',
+-  settings: { shuffleQuestions: r.settings.shuffleQuestions, shuffleOptions: r.settings.shuffleOptions, resultRelease: r.settings.resultRelease, showAnswers: r.settings.showAnswers, passMarkPercent: r.settings.passMarkPercent, scoreComponent: r.settings.scoreComponent ?? null },
++  settings: { shuffleQuestions: r.settings.shuffleQuestions, shuffleOptions: r.settings.shuffleOptions, resultRelease: r.settings.resultRelease, showAnswers: r.settings.showAnswers, passMarkPercent: r.settings.passMarkPercent, scoreComponent: r.settings.scoreComponent ?? null, questionsPerStudent: r.settings.questionsPerStudent ?? null },
+   status: r.status, rejectionReason: r.rejectionReason ?? null, resultsReleased: r.resultsReleased,
+   resultsReleasedAt: r.resultsReleasedAt ?? null, questionCount: r.questionCount, maxScore: r.maxScore, createdAt: r.createdAt,
+ });
+--- a/src/modules/cbt/exam.service.ts
++++ b/src/modules/cbt/exam.service.ts
+@@ -18,6 +18,7 @@
+ import { DEFAULT_SETTINGS, EXAM_STATUS, type ExamSettings, type ExamStatus, type ExamType } from './cbt.types';
+ import type { ExamFields, ExamRecord, examRepository } from './exam.repository';
+ import type { PaperCache } from './paper.cache';
++import { poolIssue } from './pool';
+ import type { questionRepository } from './question.repository';
+ 
+ interface Actor { id: string; role: Role }
+@@ -30,7 +31,7 @@
+ 
+ export interface ExamServiceDeps {
+   exams: typeof examRepository;
+-  questions: Pick<typeof questionRepository, 'forExamWithKey' | 'removeForExam'>;
++  questions: Pick<typeof questionRepository, 'forExamWithKey' | 'removeForExam' | 'distinctMarks'>;
+   attempts: Pick<typeof attemptRepository, 'allForExam' | 'countForExam'>;
+   enrolments: Pick<typeof enrolmentRepository, 'studentIdsInArms'>;
+   sessions: Pick<typeof sessionRepository, 'findCurrentSession' | 'findTermByDate'>;
+@@ -46,6 +47,13 @@
+   audit: AuditPort;
+ }
+ 
++const round1 = (n: number): number => Math.round(n * 10) / 10;
++/** What one student can score. With a pool it is the share they are dealt, not the whole bank. */
++const maxScorePerStudent = (e: ExamRecord): number => {
++  const n = e.settings.questionsPerStudent;
++  return n !== null && e.questionCount > 0 && n < e.questionCount ? round1((e.maxScore * n) / e.questionCount) : e.maxScore;
++};
++
+ const fail = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
+ const EDITABLE: ExamStatus[] = [EXAM_STATUS.DRAFT, EXAM_STATUS.REJECTED];
+ const isStaff = (role: Role): boolean => role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
+@@ -69,7 +77,7 @@
+       teacherId: e.teacherId, teacherName: teachers.get(e.teacherId) ?? '', sessionId: e.sessionId, termId: e.termId, type: e.type,
+       durationMin: e.durationMin, windowStart: e.windowStart.toISOString(), windowEnd: e.windowEnd.toISOString(),
+       instructions: e.instructions, settings: e.settings, status: e.status, rejectionReason: e.rejectionReason,
+-      resultsReleased: e.resultsReleased, questionCount: e.questionCount, maxScore: e.maxScore, createdAt: e.createdAt.toISOString(),
++      resultsReleased: e.resultsReleased, questionCount: e.questionCount, maxScore: e.maxScore, maxScorePerStudent: maxScorePerStudent(e), createdAt: e.createdAt.toISOString(),
+     }));
+   }
+   const viewOf = async (e: ExamRecord) => {
+@@ -162,7 +170,8 @@
+       for (const a of submitted) {
+         if (!enrolled.has(a.studentId) || a.score === null) continue;
+         if (teacherCanEdit(existing.get(scoreKey(a.studentId, exam.subjectId))) !== 'OK') { skipped += 1; continue; }
+-        const scaled = Math.min(component.max, Math.round((a.score / exam.maxScore) * component.max * 10) / 10);
++        if (a.maxScore <= 0) { skipped += 1; continue; }
++        const scaled = Math.min(component.max, Math.round((a.score / a.maxScore) * component.max * 10) / 10);
+         entries.push({ studentId: a.studentId, subjectId: exam.subjectId, components: { [key]: scaled } });
+       }
+       if (entries.length === 0) continue;
+@@ -193,8 +202,11 @@
+         windowStart: patch.windowStart ?? before.windowStart.toISOString(), windowEnd: patch.windowEnd ?? before.windowEnd.toISOString(),
+         instructions: patch.instructions ?? before.instructions, settings: { ...before.settings, ...patch.settings },
+       };
+-    const fields = await validate(actor, merged);
+-      
++      const fields = await validate(actor, merged);
++      if (before.questionCount > 0) {
++        const issue = poolIssue(merged.settings.questionsPerStudent, before.questionCount, await questions.distinctMarks(id));
++        if (issue) throw fail(issue.field, issue.issue);
++      }
+ 
+       const updated = await exams.updateEditable(id, actor.id, fields);
+       if (!updated) throw new AppError('CONFLICT', { message: 'This exam was just changed. Reload it.' });
+@@ -243,6 +255,8 @@
+       const exam = await owned(actor, id);
+       if (!EDITABLE.includes(exam.status)) throw new AppError('CONFLICT', { message: 'This exam has already been submitted' });
+       if (exam.questionCount === 0) throw fail('questions', 'Upload and confirm the questions first');
++      const poolProblem = poolIssue(exam.settings.questionsPerStudent, exam.questionCount, await questions.distinctMarks(id));
++      if (poolProblem) throw fail(poolProblem.field, poolProblem.issue);
+       if (exam.windowEnd <= new Date()) throw fail('windowEnd', 'The exam window has already passed. Change the dates first');
+ 
+       const to = exam.type === 'CLASS_TEST' ? EXAM_STATUS.PUBLISHED : EXAM_STATUS.PENDING_APPROVAL;
+--- /dev/null
++++ b/src/modules/cbt/pool.ts
+@@ -0,0 +1,34 @@
++import { shuffle } from './grading';
++
++export interface PoolIssue { field: string; issue: string }
++
++/**
++ * Checks that "each student gets N of the exam's questions" can work. Nothing to check until questions exist.
++ * When students get only some of the questions, every question must carry the same marks: that is what makes
++ * every student's paper worth the same total, so scores stay comparable.
++ */
++export function poolIssue(perStudent: number | null, questionCount: number, marks: readonly number[]): PoolIssue | null {
++  if (perStudent === null || questionCount === 0) return null;
++  if (perStudent > questionCount) {
++    return { field: 'settings.questionsPerStudent', issue: `Students cannot be given ${perStudent} questions when the exam has only ${questionCount}` };
++  }
++  if (perStudent < questionCount && new Set(marks).size > 1) {
++    return { field: 'marks', issue: 'When students get a random selection, every question must carry the same marks, so every student is marked out of the same total' };
++  }
++  return null;
++}
++
++/**
++ * The questions one student will sit, in the order they will see them. With a pool, a uniformly random
++ * subset is drawn from the whole bank using the server's cryptographic randomness. Without one, the student gets all of them.
++ * Turning shuffleOrder off keeps the teacher's order, with the drawn questions in their original places.
++ */
++export function chooseQuestions(ids: readonly string[], perStudent: number | null, shuffleOrder: boolean): string[] {
++  const sampling = perStudent !== null && perStudent < ids.length;
++  const chosen = sampling ? shuffle(ids).slice(0, perStudent) : [...ids];
++  if (!shuffleOrder) {
++    const position = new Map(ids.map((id, i) => [id, i]));
++    return chosen.sort((a, b) => (position.get(a) ?? 0) - (position.get(b) ?? 0));
++  }
++  return sampling ? chosen : shuffle(chosen);
++}
+--- a/src/modules/cbt/question.import.ts
++++ b/src/modules/cbt/question.import.ts
+@@ -4,6 +4,7 @@
+ import { withTransaction } from '../../config/db';
+ import { recordSafely, type AuditPort } from '../audit/audit.port';
+ import type { KeyValueStore } from '../auth/keyValueStore';
++import { poolIssue } from './pool';
+ import { DIFFICULTIES, EXAM_STATUS, MAX_QUESTIONS, OPTION_KEYS, QUESTION_TYPES, type Difficulty, type QuestionType } from './cbt.types';
+ import type { ExamRecord, examRepository } from './exam.repository';
+ import { normalizeAnswer } from './grading';
+@@ -60,7 +61,7 @@
+ 
+   return {
+     async upload(actor: Actor, examId: string, fileName: string, buffer: Buffer) {
+-      await editableExam(actor, examId);
++      const exam = await editableExam(actor, examId);
+ 
+       let text: string;
+       try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); }
+@@ -166,7 +167,9 @@
+         }
+       });
+ 
+-      const clear = errors.length === 0;
++      // Once every row is fine on its own, check the set works with the exam's "questions per student" setting.
++      const poolProblem = errors.length === 0 ? poolIssue(exam.settings.questionsPerStudent, questions.length, questions.map((q) => q.marks)) : null;
++      const clear = errors.length === 0 && poolProblem === null;
+       let importToken: string | null = null;
+       if (clear) {
+         importToken = randomBytes(32).toString('base64url');
+@@ -175,7 +178,7 @@
+ 
+       return {
+         rowCount: rows.length, validCount: clear ? questions.length : rows.length - new Set(errors.map((e) => e.row)).size,
+-        errors: errors.slice(0, MAX_ERRORS), truncated: errors.length > MAX_ERRORS,
++        errors: [...(poolProblem ? [{ row: 0, field: poolProblem.field, issue: poolProblem.issue }] : []), ...errors].slice(0, MAX_ERRORS), truncated: errors.length > MAX_ERRORS,
+         totalMarks: clear ? Math.round(questions.reduce((s, q) => s + q.marks, 0) * 10) / 10 : null,
+         byType: clear ? Object.fromEntries(QUESTION_TYPES.map((t) => [t, questions.filter((q) => q.type === t).length])) : null,
+         preview: questions.slice(0, PREVIEW_ROWS).map((q) => ({ type: q.type, text: q.text.slice(0, 120), marks: q.marks })),
+@@ -185,13 +188,16 @@
+ 
+     async confirm(actor: Actor, examId: string, token: string, ctx: Context) {
+       if (!TOKEN.test(token)) throw new AppError('IMPORT_TOKEN_EXPIRED');
+-      await editableExam(actor, examId);
++      const exam = await editableExam(actor, examId);
+ 
+       const raw = await deps.store.getAndDelete(keyOf(token)); // works once
+ let stored: StoredImport | null = null;
+ try { stored = raw ? (JSON.parse(raw) as StoredImport) : null; } catch { stored = null; }
+ if (!stored || stored.actorId !== actor.id || stored.examId !== examId) throw new AppError('IMPORT_TOKEN_EXPIRED');
+ const upload = stored;
++      // Settings can change between the preview and now, so check again before anything is replaced.
++      const poolProblem = poolIssue(exam.settings.questionsPerStudent, upload.questions.length, upload.questions.map((q) => q.marks));
++      if (poolProblem) throw new AppError('VALIDATION_ERROR', { details: [poolProblem] });
+       // The old questions, the new ones and the exam's totals change together or not at all.
+       const result = await withTransaction(async (session) => {
+         const saved = await deps.questions.replaceAll(examId, actor.id, upload.fileName, upload.questions, session);
+--- a/src/modules/cbt/question.repository.ts
++++ b/src/modules/cbt/question.repository.ts
+@@ -78,9 +78,14 @@
+   return (await forExamWithKey(examId)).map((q) => ({ id: q.id, type: q.type, text: q.text, options: q.options, marks: q.marks }));
+ }
+ 
++/** The different mark values among an exam's questions. */
++async function distinctMarks(examId: string): Promise<number[]> {
++  return (await QuestionModel.distinct('marks', { examId })) as number[];
++}
++
+ async function removeForExam(examId: string): Promise<void> {
+   await QuestionModel.deleteMany({ examId });
+   await BatchModel.deleteMany({ examId });
+ }
+ 
+-export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam };
+\ No newline at end of file
++export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam, distinctMarks };
+\ No newline at end of file

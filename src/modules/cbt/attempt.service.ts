@@ -14,6 +14,7 @@ import { GRACE_MS } from './cbt.types';
 import type { ExamRecord, examRepository } from './exam.repository';
 import { cleanAnswer, gradeAttempt, shuffle, type PaperQuestion } from './grading';
 import type { PaperCache } from './paper.cache';
+import { chooseQuestions } from './pool';
 import type { questionRepository } from './question.repository';
 
 interface Actor { id: string; role: Role }
@@ -76,7 +77,9 @@ export function createAttemptService(deps: AttemptServiceDeps) {
       const target = claimed ?? (await attempts.findById(attemptId, session));
       if (!target) return null;
       if (target.graded) return target;
-      return attempts.applyGrade(attemptId, gradeAttempt(keyed, target.answers), session);
+      // Only the questions this student was dealt count: the total they are marked out of is their own.
+      const given = new Set(target.questionOrder);
+      return attempts.applyGrade(attemptId, gradeAttempt(keyed.filter((q) => given.has(q.id)), target.answers), session);
     });
     if (done) await scheduler.cancel(attemptId);
     return done;
@@ -178,17 +181,21 @@ export function createAttemptService(deps: AttemptServiceDeps) {
 
       const questionsInPaper = await paper.get(exam);
       if (questionsInPaper.length === 0) throw new AppError('EXAM_NOT_OPEN');
-      const ids = questionsInPaper.map((q) => q.id);
+      // With a pool, this student is dealt their own random share of the questions, once, here. It is stored on the
+      // attempt, so a refresh or resume shows the same ones, and nothing the client sends can change it.
+      const questionOrder = chooseQuestions(questionsInPaper.map((q) => q.id), exam.settings.questionsPerStudent, exam.settings.shuffleQuestions);
+      const dealt = new Set(questionOrder);
+      const given = questionsInPaper.filter((q) => dealt.has(q.id));
       const optionOrder: Record<string, string[]> = {};
       if (exam.settings.shuffleOptions) {
-        for (const q of questionsInPaper) if (q.type === 'MCQ' && q.options) optionOrder[q.id] = shuffle(q.options.map((o) => o.key));
+        for (const q of given) if (q.type === 'MCQ' && q.options) optionOrder[q.id] = shuffle(q.options.map((o) => o.key));
       }
 
       const endsAt = new Date(Math.min(now.getTime() + exam.durationMin * 60_000, exam.windowEnd.getTime()));
       const created = await attempts.create({
         examId, studentId: actor.id, startedAt: now, endsAt,
-        questionOrder: exam.settings.shuffleQuestions ? shuffle(ids) : ids, optionOrder,
-        maxScore: round1(questionsInPaper.reduce((s, q) => s + q.marks, 0)),
+        questionOrder, optionOrder,
+        maxScore: round1(given.reduce((s, q) => s + q.marks, 0)),
       });
       if (!created) {
         const raced = await attempts.findByExamStudent(examId, actor.id); // a double click started it a moment ago
@@ -305,7 +312,7 @@ export function createAttemptService(deps: AttemptServiceDeps) {
         return {
           id: exam.id, title: exam.title, subjectName: subjects.get(exam.subjectId)?.name ?? '', type: exam.type,
           durationMin: exam.durationMin, windowStart: exam.windowStart.toISOString(), windowEnd: exam.windowEnd.toISOString(),
-          instructions: exam.instructions, questionCount: exam.questionCount, state,
+          instructions: exam.instructions, questionCount: Math.min(exam.questionCount, exam.settings.questionsPerStudent ?? exam.questionCount), state,
           attempt: a ? { id: a.id, status: a.status, endsAt: a.endsAt.toISOString(), submittedAt: a.submittedAt ? a.submittedAt.toISOString() : null } : null,
           result: visible && a.score !== null ? { score: a.score, maxScore: a.maxScore, percent, passed: percent !== null && percent >= exam.settings.passMarkPercent } : null,
         };

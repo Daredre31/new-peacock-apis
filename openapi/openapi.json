@@ -8564,6 +8564,18 @@
                                   "string",
                                   "null"
                                 ]
+                              },
+                              "questionsPerStudent": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
                               }
                             },
                             "required": [
@@ -8572,7 +8584,8 @@
                               "resultRelease",
                               "showAnswers",
                               "passMarkPercent",
-                              "scoreComponent"
+                              "scoreComponent",
+                              "questionsPerStudent"
                             ],
                             "additionalProperties": false
                           },
@@ -8602,6 +8615,9 @@
                           "maxScore": {
                             "type": "number"
                           },
+                          "maxScorePerStudent": {
+                            "type": "number"
+                          },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time",
@@ -8629,6 +8645,7 @@
                           "resultsReleased",
                           "questionCount",
                           "maxScore",
+                          "maxScorePerStudent",
                           "createdAt"
                         ],
                         "additionalProperties": false
@@ -8788,6 +8805,18 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "questionsPerStudent": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     }
                   }
@@ -8920,6 +8949,18 @@
                                 "string",
                                 "null"
                               ]
+                            },
+                            "questionsPerStudent": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -8928,7 +8969,8 @@
                             "resultRelease",
                             "showAnswers",
                             "passMarkPercent",
-                            "scoreComponent"
+                            "scoreComponent",
+                            "questionsPerStudent"
                           ],
                           "additionalProperties": false
                         },
@@ -8958,6 +9000,9 @@
                         "maxScore": {
                           "type": "number"
                         },
+                        "maxScorePerStudent": {
+                          "type": "number"
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time",
@@ -8985,6 +9030,7 @@
                         "resultsReleased",
                         "questionCount",
                         "maxScore",
+                        "maxScorePerStudent",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -9311,6 +9357,18 @@
                                 "string",
                                 "null"
                               ]
+                            },
+                            "questionsPerStudent": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -9319,7 +9377,8 @@
                             "resultRelease",
                             "showAnswers",
                             "passMarkPercent",
-                            "scoreComponent"
+                            "scoreComponent",
+                            "questionsPerStudent"
                           ],
                           "additionalProperties": false
                         },
@@ -9349,6 +9408,9 @@
                         "maxScore": {
                           "type": "number"
                         },
+                        "maxScorePerStudent": {
+                          "type": "number"
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time",
@@ -9376,6 +9438,7 @@
                         "resultsReleased",
                         "questionCount",
                         "maxScore",
+                        "maxScorePerStudent",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -9552,6 +9615,18 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "questionsPerStudent": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     }
                   }
@@ -9675,6 +9750,18 @@
                                 "string",
                                 "null"
                               ]
+                            },
+                            "questionsPerStudent": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -9683,7 +9770,8 @@
                             "resultRelease",
                             "showAnswers",
                             "passMarkPercent",
-                            "scoreComponent"
+                            "scoreComponent",
+                            "questionsPerStudent"
                           ],
                           "additionalProperties": false
                         },
@@ -9713,6 +9801,9 @@
                         "maxScore": {
                           "type": "number"
                         },
+                        "maxScorePerStudent": {
+                          "type": "number"
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time",
@@ -9740,6 +9831,7 @@
                         "resultsReleased",
                         "questionCount",
                         "maxScore",
+                        "maxScorePerStudent",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -10221,6 +10313,18 @@
                                 "string",
                                 "null"
                               ]
+                            },
+                            "questionsPerStudent": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -10229,7 +10333,8 @@
                             "resultRelease",
                             "showAnswers",
                             "passMarkPercent",
-                            "scoreComponent"
+                            "scoreComponent",
+                            "questionsPerStudent"
                           ],
                           "additionalProperties": false
                         },
@@ -10259,6 +10364,9 @@
                         "maxScore": {
                           "type": "number"
                         },
+                        "maxScorePerStudent": {
+                          "type": "number"
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time",
@@ -10286,6 +10394,7 @@
                         "resultsReleased",
                         "questionCount",
                         "maxScore",
+                        "maxScorePerStudent",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -11357,6 +11466,18 @@
                                 "string",
                                 "null"
                               ]
+                            },
+                            "questionsPerStudent": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -11365,7 +11486,8 @@
                             "resultRelease",
                             "showAnswers",
                             "passMarkPercent",
-                            "scoreComponent"
+                            "scoreComponent",
+                            "questionsPerStudent"
                           ],
                           "additionalProperties": false
                         },
@@ -11395,6 +11517,9 @@
                         "maxScore": {
                           "type": "number"
                         },
+                        "maxScorePerStudent": {
+                          "type": "number"
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time",
@@ -11422,6 +11547,7 @@
                         "resultsReleased",
                         "questionCount",
                         "maxScore",
+                        "maxScorePerStudent",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -11649,7 +11775,7 @@
     "/cbt/exams/{id}/start": {
       "post": {
         "operationId": "startExam",
-        "summary": "Start the exam, or resume it. Returns the shuffled questions without answers, endsAt and serverTime",
+        "summary": "Start the exam, or resume it. Returns the shuffled questions without answers, endsAt and serverTime. If the exam gives each student a share of its questions (settings.questionsPerStudent), the student is dealt a random selection when they start, fixed for the whole attempt and identical on every refresh or resume",
         "tags": [
           "cbt"
         ],
@@ -12028,6 +12154,18 @@
                                 "string",
                                 "null"
                               ]
+                            },
+                            "questionsPerStudent": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -12036,7 +12174,8 @@
                             "resultRelease",
                             "showAnswers",
                             "passMarkPercent",
-                            "scoreComponent"
+                            "scoreComponent",
+                            "questionsPerStudent"
                           ],
                           "additionalProperties": false
                         },
@@ -12066,6 +12205,9 @@
                         "maxScore": {
                           "type": "number"
                         },
+                        "maxScorePerStudent": {
+                          "type": "number"
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time",
@@ -12093,6 +12235,7 @@
                         "resultsReleased",
                         "questionCount",
                         "maxScore",
+                        "maxScorePerStudent",
                         "createdAt"
                       ],
                       "additionalProperties": false

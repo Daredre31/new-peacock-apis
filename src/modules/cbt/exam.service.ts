@@ -18,6 +18,7 @@ import type { attemptRepository } from './attempt.repository';
 import { DEFAULT_SETTINGS, EXAM_STATUS, type ExamSettings, type ExamStatus, type ExamType } from './cbt.types';
 import type { ExamFields, ExamRecord, examRepository } from './exam.repository';
 import type { PaperCache } from './paper.cache';
+import { poolIssue } from './pool';
 import type { questionRepository } from './question.repository';
 
 interface Actor { id: string; role: Role }
@@ -30,7 +31,7 @@ export interface ExamInput {
 
 export interface ExamServiceDeps {
   exams: typeof examRepository;
-  questions: Pick<typeof questionRepository, 'forExamWithKey' | 'removeForExam'>;
+  questions: Pick<typeof questionRepository, 'forExamWithKey' | 'removeForExam' | 'distinctMarks'>;
   attempts: Pick<typeof attemptRepository, 'allForExam' | 'countForExam'>;
   enrolments: Pick<typeof enrolmentRepository, 'studentIdsInArms'>;
   sessions: Pick<typeof sessionRepository, 'findCurrentSession' | 'findTermByDate'>;
@@ -45,6 +46,13 @@ export interface ExamServiceDeps {
   finalizeOverdueFor: (examId: string) => Promise<number>;
   audit: AuditPort;
 }
+
+const round1 = (n: number): number => Math.round(n * 10) / 10;
+/** What one student can score. With a pool it is the share they are dealt, not the whole bank. */
+const maxScorePerStudent = (e: ExamRecord): number => {
+  const n = e.settings.questionsPerStudent;
+  return n !== null && e.questionCount > 0 && n < e.questionCount ? round1((e.maxScore * n) / e.questionCount) : e.maxScore;
+};
 
 const fail = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
 const EDITABLE: ExamStatus[] = [EXAM_STATUS.DRAFT, EXAM_STATUS.REJECTED];
@@ -69,7 +77,7 @@ export function createExamService(deps: ExamServiceDeps) {
       teacherId: e.teacherId, teacherName: teachers.get(e.teacherId) ?? '', sessionId: e.sessionId, termId: e.termId, type: e.type,
       durationMin: e.durationMin, windowStart: e.windowStart.toISOString(), windowEnd: e.windowEnd.toISOString(),
       instructions: e.instructions, settings: e.settings, status: e.status, rejectionReason: e.rejectionReason,
-      resultsReleased: e.resultsReleased, questionCount: e.questionCount, maxScore: e.maxScore, createdAt: e.createdAt.toISOString(),
+      resultsReleased: e.resultsReleased, questionCount: e.questionCount, maxScore: e.maxScore, maxScorePerStudent: maxScorePerStudent(e), createdAt: e.createdAt.toISOString(),
     }));
   }
   const viewOf = async (e: ExamRecord) => {
@@ -162,7 +170,8 @@ export function createExamService(deps: ExamServiceDeps) {
       for (const a of submitted) {
         if (!enrolled.has(a.studentId) || a.score === null) continue;
         if (teacherCanEdit(existing.get(scoreKey(a.studentId, exam.subjectId))) !== 'OK') { skipped += 1; continue; }
-        const scaled = Math.min(component.max, Math.round((a.score / exam.maxScore) * component.max * 10) / 10);
+        if (a.maxScore <= 0) { skipped += 1; continue; }
+        const scaled = Math.min(component.max, Math.round((a.score / a.maxScore) * component.max * 10) / 10);
         entries.push({ studentId: a.studentId, subjectId: exam.subjectId, components: { [key]: scaled } });
       }
       if (entries.length === 0) continue;
@@ -193,8 +202,11 @@ export function createExamService(deps: ExamServiceDeps) {
         windowStart: patch.windowStart ?? before.windowStart.toISOString(), windowEnd: patch.windowEnd ?? before.windowEnd.toISOString(),
         instructions: patch.instructions ?? before.instructions, settings: { ...before.settings, ...patch.settings },
       };
-    const fields = await validate(actor, merged);
-      
+      const fields = await validate(actor, merged);
+      if (before.questionCount > 0) {
+        const issue = poolIssue(merged.settings.questionsPerStudent, before.questionCount, await questions.distinctMarks(id));
+        if (issue) throw fail(issue.field, issue.issue);
+      }
 
       const updated = await exams.updateEditable(id, actor.id, fields);
       if (!updated) throw new AppError('CONFLICT', { message: 'This exam was just changed. Reload it.' });
@@ -243,6 +255,8 @@ export function createExamService(deps: ExamServiceDeps) {
       const exam = await owned(actor, id);
       if (!EDITABLE.includes(exam.status)) throw new AppError('CONFLICT', { message: 'This exam has already been submitted' });
       if (exam.questionCount === 0) throw fail('questions', 'Upload and confirm the questions first');
+      const poolProblem = poolIssue(exam.settings.questionsPerStudent, exam.questionCount, await questions.distinctMarks(id));
+      if (poolProblem) throw fail(poolProblem.field, poolProblem.issue);
       if (exam.windowEnd <= new Date()) throw fail('windowEnd', 'The exam window has already passed. Change the dates first');
 
       const to = exam.type === 'CLASS_TEST' ? EXAM_STATUS.PUBLISHED : EXAM_STATUS.PENDING_APPROVAL;

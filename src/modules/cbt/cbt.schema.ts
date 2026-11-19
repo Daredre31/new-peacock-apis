@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { paginationShape } from '../../common/utils/pagination';
 import { PERMISSIONS, ROLES } from '../../config/constants';
 import type { OpenApiRegistry } from '../../openapi/registry';
-import { DIFFICULTIES, EXAM_STATUS, EXAM_TYPES, QUESTION_TYPES, type ExamStatus } from './cbt.types';
+import { DIFFICULTIES, EXAM_STATUS, EXAM_TYPES, MAX_QUESTIONS_PER_STUDENT, QUESTION_TYPES, type ExamStatus } from './cbt.types';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/);
 const idParams = z.object({ id: objectId });
@@ -15,10 +15,12 @@ const settingsInput = z.object({
   resultRelease: z.enum(['IMMEDIATE', 'MANUAL']).optional(), showAnswers: z.boolean().optional(),
   passMarkPercent: z.number().int().min(0).max(100).optional(),
   scoreComponent: z.string().regex(/^[A-Z][A-Z0-9]{0,7}$/).nullable().optional(),
+  /** Give each student this many questions, drawn at random from the exam's questions. null: everyone sits all of them. */
+  questionsPerStudent: z.number().int().min(1).max(MAX_QUESTIONS_PER_STUDENT).nullable().optional(),
 });
 const settingsView = z.object({
   shuffleQuestions: z.boolean(), shuffleOptions: z.boolean(), resultRelease: z.enum(['IMMEDIATE', 'MANUAL']),
-  showAnswers: z.boolean(), passMarkPercent: num, scoreComponent: z.string().nullable(),
+  showAnswers: z.boolean(), passMarkPercent: num, scoreComponent: z.string().nullable(), questionsPerStudent: num.nullable(),
 });
 
 const examFields = {
@@ -61,7 +63,7 @@ const examView = z.object({
   classArms: z.array(z.object({ id: z.string(), name: z.string() })), teacherId: z.string(), teacherName: z.string(),
   sessionId: z.string(), termId: z.string(), type: z.enum(EXAM_TYPES), durationMin: num, windowStart: iso, windowEnd: iso,
   instructions: z.string(), settings: settingsView, status: z.enum(statusValues), rejectionReason: z.string().nullable(),
-  resultsReleased: z.boolean(), questionCount: num, maxScore: z.number(), createdAt: iso,
+  resultsReleased: z.boolean(), questionCount: num, maxScore: z.number(), maxScorePerStudent: z.number(), createdAt: iso,
 });
 const paperQuestion = z.object({ id: z.string(), type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number(), options: z.array(z.object({ key: z.string(), text: z.string() })).nullable() });
 const attemptView = z.object({
@@ -105,7 +107,7 @@ export function registerCbtOperations(registry: OpenApiRegistry): void {
   registry.register({ method: 'get', path: '/cbt/schedule', operationId: 'getExamSchedule', summary: 'Read-only exam schedule for a student, or for a parent\'s children (optionally one child)', tags, roles: [ROLES.PARENT, ROLES.STUDENT], request: { query: scheduleSchemas.query }, success: done(z.array(z.object({ examId: z.string(), title: z.string(), subjectName: z.string(), type: z.enum(EXAM_TYPES), windowStart: iso, windowEnd: iso, durationMin: num, studentId: z.string(), studentName: z.string(), classArmName: z.string() })), 'The schedule'), errors: ['NOT_FOUND'] });
   registry.register({ method: 'get', path: '/cbt/time', operationId: 'getServerTime', summary: 'Server time, for the connection check and the clock offset', tags, roles: PERMISSIONS['cbt:take'], success: done(z.object({ serverTime: iso }), 'Now') });
   registry.register({ method: 'get', path: '/cbt/my-exams', operationId: 'listMyExams', summary: 'My exams: upcoming, open, in progress, completed or missed', tags, roles: PERMISSIONS['cbt:take'], success: done(z.array(z.object({ id: z.string(), title: z.string(), subjectName: z.string(), type: z.enum(EXAM_TYPES), durationMin: num, windowStart: iso, windowEnd: iso, instructions: z.string(), questionCount: num, state: z.enum(['UPCOMING', 'OPEN', 'IN_PROGRESS', 'COMPLETED', 'MISSED']), attempt: z.object({ id: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), endsAt: iso, submittedAt: iso.nullable() }).nullable(), result: z.object({ score: z.number(), maxScore: z.number(), percent: z.number().nullable(), passed: z.boolean() }).nullable() })), 'My exams') });
-  registry.register({ method: 'post', path: '/cbt/exams/{id}/start', operationId: 'startExam', summary: 'Start the exam, or resume it. Returns the shuffled questions without answers, endsAt and serverTime', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'Started'), errors: ['NOT_FOUND', 'EXAM_NOT_OPEN', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
+  registry.register({ method: 'post', path: '/cbt/exams/{id}/start', operationId: 'startExam', summary: 'Start the exam, or resume it. Returns the shuffled questions without answers, endsAt and serverTime. If the exam gives each student a share of its questions (settings.questionsPerStudent), the student is dealt a random selection when they start, fixed for the whole attempt and identical on every refresh or resume', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'Started'), errors: ['NOT_FOUND', 'EXAM_NOT_OPEN', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
   registry.register({ method: 'get', path: '/cbt/attempts/{id}', operationId: 'getAttempt', summary: 'Resume after a refresh: the paper, the saved answers and the time left', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'The attempt'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
   registry.register({ method: 'put', path: '/cbt/attempts/{id}/answers', operationId: 'saveAnswers', summary: 'Autosave (debounced). Send only changed answers; null clears one. MCQ: the option key. TRUE_FALSE: TRUE or FALSE. SHORT_ANSWER: text', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: saveAnswersBody }, success: done(z.object({ saved: num, serverTime: iso, remainingSeconds: num }), 'Saved'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
   registry.register({ method: 'post', path: '/cbt/attempts/{id}/submit', operationId: 'submitAttempt', summary: 'Submit, with optional final answers. Safe to repeat. ATTEMPT_EXPIRED means the server already submitted it', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: submitBody }, success: done(z.object({ attemptId: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), submittedAt: iso.nullable(), resultAvailable: z.boolean(), score: z.number().nullable(), maxScore: z.number().nullable(), percent: z.number().nullable() }), 'Submitted'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED'] });

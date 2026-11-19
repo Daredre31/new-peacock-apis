@@ -100,7 +100,7 @@ export function createApp(deps: AppDependencies): Express {
     app.use('/api/docs', createDocsRouter(buildOpenApiDocument()));
   }
 
-  app.use(createIpRateLimiter(deps.rateLimitRedis));
+  app.use(createIpRateLimiter(deps.rateLimitRedis, env.IP_RATE_LIMIT_PER_MINUTE));
 
   // Paystack calls this. It needs the raw bytes for the signature, so it comes BEFORE the JSON parser.
   // It has no cookies, so CSRF never applies. The signature is the only authentication.

@@ -44,10 +44,13 @@ export function createAnalyticsService(deps: {
       }
 
       // How often each question was answered correctly, worked out from the saved answers.
+      // With a pool, each student sat only some of the questions, so every rate is out of the students who were given that question.
+      const dealt = done.map((a) => ({ a, given: new Set(a.questionOrder) }));
       const stats = paper.map((q) => {
-        const correct = done.filter((a) => isCorrect(q, a.answers[q.id])).length;
-        const answered = done.filter((a) => a.answers[q.id] !== undefined).length;
-        return { questionId: q.id, order: q.order + 1, text: q.text.slice(0, 200), type: q.type, topic: q.topic, difficulty: q.difficulty, marks: q.marks, answered, correct, percentCorrect: done.length === 0 ? null : round1((correct / done.length) * 100) };
+        const assigned = dealt.filter((d) => d.given.has(q.id));
+        const correct = assigned.filter(({ a }) => isCorrect(q, a.answers[q.id])).length;
+        const answered = assigned.filter(({ a }) => a.answers[q.id] !== undefined).length;
+        return { questionId: q.id, order: q.order + 1, text: q.text.slice(0, 200), type: q.type, topic: q.topic, difficulty: q.difficulty, marks: q.marks, assigned: assigned.length, answered, correct, percentCorrect: assigned.length === 0 ? null : round1((correct / assigned.length) * 100) };
       });
       const hardest = stats.filter((s) => s.percentCorrect !== null).sort((a, b) => (a.percentCorrect ?? 0) - (b.percentCorrect ?? 0)).slice(0, 10);
 
