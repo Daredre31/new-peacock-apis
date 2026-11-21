@@ -6,10 +6,13 @@ import { env } from '../config/env';
 export interface StoredImage {
   /** HTTPS delivery URL. This is the only thing we keep in our database. */
   url: string;
+  /** Pixel size of the stored picture, when the store reports it. */
+  width?: number;
+  height?: number;
 }
 
 /** PASSPORT crops a face to 3:4. BRANDING keeps the whole picture, never enlarges it, and stores a PNG so transparency survives and a PDF can embed it. */
-export type ImagePreset = 'passport' | 'branding';
+export type ImagePreset = 'passport' | 'branding' | 'question';
 
 export interface ImageStore {
   /**
@@ -25,6 +28,8 @@ export interface ImageStore {
 /** Passport framing: 600x800 (3:4), cropped around the face, and capped in size. */
 const PASSPORT_TRANSFORMATION = [{ width: 600, height: 800, crop: 'fill', gravity: 'face' }, { quality: 'auto', fetch_format: 'auto' }];
 /** At most 1000 px on the longest side: sharp at print size, still a small download. */
+/** Exam diagrams keep their file type (PNG stays sharp for line art) and are only ever shrunk, to 1600 px on the longest side. */
+const QUESTION_OPTIONS = { transformation: [{ width: 1600, height: 1600, crop: 'limit' }] } as const;
 const BRANDING_OPTIONS = { transformation: [{ width: 1000, height: 1000, crop: 'limit' }], format: 'png' } as const;
 
 export function createCloudinaryImageStore(config: { cloudName: string; apiKey: string; apiSecret: string }): ImageStore {
@@ -34,14 +39,14 @@ export function createCloudinaryImageStore(config: { cloudName: string; apiKey: 
     upload: (buffer, publicId, preset = 'passport') =>
       new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-          { public_id: publicId, overwrite: true, invalidate: true, resource_type: 'image', ...(preset === 'branding' ? BRANDING_OPTIONS : { transformation: PASSPORT_TRANSFORMATION }) },
+          { public_id: publicId, overwrite: true, invalidate: true, resource_type: 'image', ...(preset === 'branding' ? BRANDING_OPTIONS : preset === 'question' ? QUESTION_OPTIONS : { transformation: PASSPORT_TRANSFORMATION }) },
           (error, result) => {
             if (error || !result) {
               logger.error({ err: error }, 'cloudinary upload failed');
               reject(new AppError('SERVICE_UNAVAILABLE'));
               return;
             }
-            resolve({ url: result.secure_url });
+            resolve({ url: result.secure_url, width: result.width, height: result.height });
           },
         );
         stream.end(buffer);

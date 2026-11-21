@@ -4,11 +4,13 @@ import { AppError } from '../../common/errors/AppError';
 import { withTransaction } from '../../config/db';
 import { recordSafely, type AuditPort } from '../audit/audit.port';
 import type { KeyValueStore } from '../auth/keyValueStore';
+import { normalizeImageFileName } from '../../common/utils/image';
 import { poolIssue } from './pool';
 import { DIFFICULTIES, EXAM_STATUS, MAX_QUESTIONS, OPTION_KEYS, QUESTION_TYPES, type Difficulty, type QuestionType } from './cbt.types';
 import type { ExamRecord, examRepository } from './exam.repository';
 import { normalizeAnswer } from './grading';
 import type { PaperCache } from './paper.cache';
+import type { ImageRecord } from './question.image.repository';
 import type { NewQuestion, questionRepository } from './question.repository';
 
 const MAX_ERRORS = 500;
@@ -20,16 +22,17 @@ const FORMULA_START = /^[=@]/;
 const CONTROL = /[\u0000-\u001f\u007f]/g;
 
 export const QUESTION_TEMPLATE_CSV = [
-  'type,question,option_a,option_b,option_c,option_d,option_e,correct,marks,topic,difficulty,explanation',
-  'MCQ,Which gas do plants absorb?,Oxygen,Carbon dioxide,Nitrogen,Helium,,B,1,Photosynthesis,EASY,Plants take in CO2',
-  'TRUE_FALSE,The sun is a star.,,,,,,TRUE,1,Space,EASY,',
-  'SHORT_ANSWER,Capital of Nigeria?,,,,,,Abuja|abuja,2,Geography,EASY,',
+  'type,question,option_a,option_b,option_c,option_d,option_e,correct,marks,topic,difficulty,explanation,image',
+  'MCQ,Which gas do plants absorb?,Oxygen,Carbon dioxide,Nitrogen,Helium,,B,1,Photosynthesis,EASY,Plants take in CO2,',
+  'TRUE_FALSE,The sun is a star.,,,,,,TRUE,1,Space,EASY,,',
+  'SHORT_ANSWER,Capital of Nigeria?,,,,,,Abuja|abuja,2,Geography,EASY,,',
+  'SHORT_ANSWER,What is the area of the triangle shown?,,,,,,24|24 cm2,2,Geometry,MEDIUM,,triangle.png',
   '',
 ].join('\r\n');
 
 const COLUMNS: Record<string, string> = {
   type: 'type', question: 'question', optiona: 'optionA', optionb: 'optionB', optionc: 'optionC', optiond: 'optionD', optione: 'optionE',
-  correct: 'correct', marks: 'marks', topic: 'topic', difficulty: 'difficulty', explanation: 'explanation',
+  correct: 'correct', marks: 'marks', topic: 'topic', difficulty: 'difficulty', explanation: 'explanation', image: 'image',
 };
 const REQUIRED = ['type', 'question', 'correct'];
 
@@ -46,6 +49,8 @@ export function createQuestionImportService(deps: {
   store: KeyValueStore; secret: string;
   exams: Pick<typeof examRepository, 'findById' | 'setQuestionStats'>;
   questions: Pick<typeof questionRepository, 'replaceAll'>;
+  /** The exam's uploaded pictures by file name, so an image column can be matched. */
+  pictures: { byName(examId: string): Promise<Map<string, ImageRecord>> };
   paper: PaperCache; audit: AuditPort;
 }) {
   const keyOf = (token: string): string => `import:questions:${createHmac('sha256', deps.secret).update(`import:${token}`).digest('hex')}`;
@@ -88,6 +93,8 @@ export function createQuestionImportService(deps: {
       const errors: RowError[] = [];
       const questions: NewQuestion[] = [];
       const hashes = new Map<string, number>();
+      /** For each accepted question, the row it came from and the picture it asked for. */
+      const asked: { row: number; imageFile: string | null }[] = [];
 
       rows.forEach((cells, index) => {
         const row = index + 2;
@@ -153,16 +160,23 @@ export function createQuestionImportService(deps: {
           else problem('difficulty', 'Use EASY, MEDIUM or HARD');
         }
         const explanation = text_('explanation', 500, false);
+        const rawImage = get('image');
+        let imageFile: string | null = null;
+        if (rawImage) {
+          imageFile = normalizeImageFileName(rawImage);
+          if (!imageFile) problem('image', 'Use the picture\'s file name, like triangle.png (letters, numbers, dots and dashes; .png, .jpg or .jpeg)');
+        }
 
-        const hash = createHash('sha256').update([type, normalizeAnswer(questionText), ...options.map((o) => normalizeAnswer(o.text))].join('\u0001')).digest('hex');
+        const hash = createHash('sha256').update([type, normalizeAnswer(questionText), ...options.map((o) => normalizeAnswer(o.text)), imageFile ?? ''].join('\u0001')).digest('hex');
         if (errors.length === before) {
           if (hashes.has(hash)) problem('question', `Same question as row ${hashes.get(hash)}`);
           else {
             hashes.set(hash, row);
             questions.push({
               type: type as QuestionType, text: questionText, options: type === 'MCQ' ? options : null, correctAnswer, marks,
-              topic: topic || null, difficulty, explanation: explanation || null, hash,
+              topic: topic || null, difficulty, explanation: explanation || null, hash, imageFile,
             });
+            asked.push({ row, imageFile });
           }
         }
       });
@@ -170,6 +184,11 @@ export function createQuestionImportService(deps: {
       // Once every row is fine on its own, check the set works with the exam's "questions per student" setting.
       const poolProblem = errors.length === 0 ? poolIssue(exam.settings.questionsPerStudent, questions.length, questions.map((q) => q.marks)) : null;
       const clear = errors.length === 0 && poolProblem === null;
+      // A picture that has not been uploaded is a warning, not an error: it can still be uploaded before confirming.
+      const library = await deps.pictures.byName(examId);
+      const warnings = asked.flatMap((a) => (a.imageFile && !library.has(a.imageFile)
+        ? [{ row: a.row, field: 'image', issue: `No picture named "${a.imageFile}" has been uploaded to this exam yet. Upload it before confirming, or the question will have no picture` }]
+        : [])).slice(0, MAX_ERRORS);
       let importToken: string | null = null;
       if (clear) {
         importToken = randomBytes(32).toString('base64url');
@@ -178,6 +197,7 @@ export function createQuestionImportService(deps: {
 
       return {
         rowCount: rows.length, validCount: clear ? questions.length : rows.length - new Set(errors.map((e) => e.row)).size,
+        warnings,
         errors: [...(poolProblem ? [{ row: 0, field: poolProblem.field, issue: poolProblem.issue }] : []), ...errors].slice(0, MAX_ERRORS), truncated: errors.length > MAX_ERRORS,
         totalMarks: clear ? Math.round(questions.reduce((s, q) => s + q.marks, 0) * 10) / 10 : null,
         byType: clear ? Object.fromEntries(QUESTION_TYPES.map((t) => [t, questions.filter((q) => q.type === t).length])) : null,
@@ -198,9 +218,15 @@ const upload = stored;
       // Settings can change between the preview and now, so check again before anything is replaced.
       const poolProblem = poolIssue(exam.settings.questionsPerStudent, upload.questions.length, upload.questions.map((q) => q.marks));
       if (poolProblem) throw new AppError('VALIDATION_ERROR', { details: [poolProblem] });
+      // Pictures are matched by file name at this moment, so one uploaded after the preview is picked up.
+      const library = await deps.pictures.byName(examId);
+      const questions = upload.questions.map((q) => {
+        const picture = q.imageFile ? library.get(q.imageFile) : undefined;
+        return picture ? { ...q, imageFileName: picture.fileName, imageUrl: picture.url, imageWidth: picture.width, imageHeight: picture.height } : q;
+      });
       // The old questions, the new ones and the exam's totals change together or not at all.
       const result = await withTransaction(async (session) => {
-        const saved = await deps.questions.replaceAll(examId, actor.id, upload.fileName, upload.questions, session);
+        const saved = await deps.questions.replaceAll(examId, actor.id, upload.fileName, questions, session);
         if (!(await deps.exams.setQuestionStats(examId, saved.count, saved.maxScore, session))) {
           throw new AppError('CONFLICT', { message: 'This exam was submitted while you were uploading' });
         }
@@ -210,7 +236,7 @@ const upload = stored;
       await deps.paper.invalidate(examId);
       await recordSafely(deps.audit, {
         action: 'EXAM_QUESTIONS_IMPORTED', actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId,
-        metadata: { questions: result.count, maxScore: result.maxScore, fileName: upload.fileName },
+        metadata: { questions: result.count, maxScore: result.maxScore, fileName: upload.fileName, withPictures: questions.filter((q) => q.imageUrl).length },
       });
       return { questions: result.count, maxScore: result.maxScore };
     },

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { paginationShape } from '../../common/utils/pagination';
 import { PERMISSIONS, ROLES } from '../../config/constants';
 import type { OpenApiRegistry } from '../../openapi/registry';
-import { DIFFICULTIES, EXAM_STATUS, EXAM_TYPES, MAX_QUESTIONS_PER_STUDENT, QUESTION_TYPES, type ExamStatus } from './cbt.types';
+import { DIFFICULTIES, EXAM_STATUS, EXAM_TYPES, MAX_ANSWER_CHARS, MAX_ANSWER_CHARS_PER_REQUEST, MAX_QUESTIONS_PER_STUDENT, QUESTION_TYPES, type ExamStatus } from './cbt.types';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/);
 const idParams = z.object({ id: objectId });
@@ -49,10 +49,28 @@ export const attemptsListSchemas = { params: idParams, query: z.object({ ...pagi
 
 const confirmBody = z.object({ importToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
 export const confirmQuestionsSchemas = { params: idParams, body: confirmBody };
+
+const uploadImageBody = z.object({ questionId: objectId.optional() }).strict();
+export const uploadImageSchemas = { params: idParams, body: uploadImageBody };
+export const removeImageSchemas = { params: z.object({ id: objectId, fileName: z.string().trim().min(1).max(100) }) };
 const rejectBody = z.object({ reason: z.string().trim().min(3).max(500) });
 export const rejectSchemas = { params: idParams, body: rejectBody };
 
-const answersMap = z.record(objectId, z.string().max(200).nullable());
+const fmt = (n: number): string => n.toLocaleString('en-US');
+/** One answer is limited in length, and so is the whole request. Each message says what was sent and what is allowed. */
+const answersMap = z.record(objectId, z.string().nullable()).superRefine((answers, ctx) => {
+  let total = 0;
+  for (const [questionId, value] of Object.entries(answers)) {
+    if (value === null) continue;
+    total += value.length;
+    if (value.length > MAX_ANSWER_CHARS) {
+      ctx.addIssue({ code: 'custom', path: [questionId], message: `This answer is ${fmt(value.length)} characters. The limit is ${fmt(MAX_ANSWER_CHARS)}` });
+    }
+  }
+  if (total > MAX_ANSWER_CHARS_PER_REQUEST) {
+    ctx.addIssue({ code: 'custom', message: `This request carries ${fmt(total)} characters of answers. The limit is ${fmt(MAX_ANSWER_CHARS_PER_REQUEST)}. Save fewer answers at a time` });
+  }
+});
 const saveAnswersBody = z.object({ answers: answersMap.refine((a) => Object.keys(a).length <= 200, 'Too many answers in one request') });
 export const saveAnswersSchemas = { params: idParams, body: saveAnswersBody };
 const submitBody = z.object({ answers: answersMap.optional() });
@@ -65,7 +83,8 @@ const examView = z.object({
   instructions: z.string(), settings: settingsView, status: z.enum(statusValues), rejectionReason: z.string().nullable(),
   resultsReleased: z.boolean(), questionCount: num, maxScore: z.number(), maxScorePerStudent: z.number(), createdAt: iso,
 });
-const paperQuestion = z.object({ id: z.string(), type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number(), options: z.array(z.object({ key: z.string(), text: z.string() })).nullable() });
+const paperQuestion = z.object({ id: z.string(), type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number(), options: z.array(z.object({ key: z.string(), text: z.string() })).nullable(),
+  imageUrl: z.string().nullable(), imageWidth: num.nullable(), imageHeight: num.nullable() });
 const attemptView = z.object({
   attemptId: z.string(), examId: z.string(), title: z.string(), instructions: z.string(), durationMin: num,
   status: z.enum(['IN_PROGRESS', 'SUBMITTED']), startedAt: iso, endsAt: iso, serverTime: iso, remainingSeconds: num,
@@ -74,9 +93,11 @@ const attemptView = z.object({
 const staffQuestion = z.object({
   id: z.string(), order: num, type: z.enum(QUESTION_TYPES), text: z.string(), options: z.array(z.object({ key: z.string(), text: z.string() })).nullable(),
   correctAnswer: z.union([z.string(), z.array(z.string())]), marks: z.number(), topic: z.string().nullable(), difficulty: z.enum(DIFFICULTIES), explanation: z.string().nullable(),
+  imageFileName: z.string().nullable(), imageUrl: z.string().nullable(), imageWidth: num.nullable(), imageHeight: num.nullable(),
 });
 const importReport = z.object({
   rowCount: num, validCount: num, errors: z.array(z.object({ row: num, field: z.string(), issue: z.string() })), truncated: z.boolean(),
+  warnings: z.array(z.object({ row: num, field: z.string(), issue: z.string() })).describe('Pictures named in the image column that have not been uploaded yet. They do not block the import'),
   totalMarks: z.number().nullable(), byType: z.record(z.string(), num).nullable(),
   preview: z.array(z.object({ type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number() })), importToken: z.string().nullable(),
 });
@@ -95,8 +116,12 @@ export function registerCbtOperations(registry: OpenApiRegistry): void {
   registry.register({ method: 'patch', path: '/cbt/exams/{id}', operationId: 'updateExam', summary: 'Change a draft or rejected exam (owner only)', tags, roles: manage, request: { params: idParams, body: updateBody }, success: done(examView, 'Updated'), errors: ['NOT_FOUND', 'CONFLICT'] });
   registry.register({ method: 'delete', path: '/cbt/exams/{id}', operationId: 'deleteExam', summary: 'Delete an exam nobody has started (the owner or an admin)', tags, roles: [ROLES.ADMIN, ROLES.TEACHER], request: { params: idParams }, success: done(z.null(), 'Deleted'), errors: ['NOT_FOUND', 'CONFLICT'] });
   registry.register({ method: 'get', path: '/cbt/exams/{id}/questions', operationId: 'listExamQuestions', summary: 'The questions with their correct answers, for the owner and admins to review', tags, roles: PERMISSIONS['cbt:analytics'], request: { params: idParams }, success: done(z.array(staffQuestion), 'Questions'), errors: ['NOT_FOUND'] });
-  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import', operationId: 'importExamQuestions', summary: 'Upload the question CSV (field "file", max 2 MB, 200 questions). Validates every row; saves nothing', tags, roles: manage, request: { params: idParams }, upload: true, success: done(importReport, 'Validation report'), errors: ['IMPORT_INVALID', 'NOT_FOUND', 'CONFLICT'] });
+  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import', operationId: 'importExamQuestions', summary: 'Upload the question CSV (field "file", max 2 MB, 200 questions). An optional image column names a picture uploaded with POST /cbt/exams/{id}/question-images. Validates every row; saves nothing', tags, roles: manage, request: { params: idParams }, upload: true, success: done(importReport, 'Validation report'), errors: ['IMPORT_INVALID', 'NOT_FOUND', 'CONFLICT'] });
   registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import/confirm', operationId: 'confirmExamQuestions', summary: 'Save a clean upload as the exam\'s questions, replacing any earlier ones', tags, roles: manage, request: { params: idParams, body: confirmBody }, success: done(z.object({ questions: num, maxScore: z.number() }), 'Saved'), errors: ['IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
+  const imageView = z.object({ fileName: z.string(), url: z.string(), width: num, height: num, bytes: num, questionIds: z.array(z.string()), uploadedAt: iso });
+  registry.register({ method: 'get', path: '/cbt/exams/{id}/question-images', operationId: 'listQuestionImages', summary: 'The pictures uploaded to this exam, each with the questions that show it. A picture with no questions is waiting to be matched by an import', tags, roles: manage, request: { params: idParams }, success: done(z.array(imageView), 'Pictures'), errors: ['NOT_FOUND'] });
+  registry.register({ method: 'post', path: '/cbt/exams/{id}/question-images', operationId: 'uploadQuestionImage', summary: 'Upload a diagram (field "file", PNG or JPG, max 2 MB, checked by its content). The file name matters: a spreadsheet\'s image column finds pictures by it, and uploading the same name again replaces the picture everywhere it is used. Send questionId to attach it to one question straight away. Shown at most 1600 px wide with its width and height returned. Only while the exam is a draft or rejected', tags, roles: manage, request: { params: idParams, body: uploadImageBody }, upload: true, success: done(imageView, 'Uploaded', 201), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT', 'SERVICE_UNAVAILABLE'] });
+  registry.register({ method: 'delete', path: '/cbt/exams/{id}/question-images/{fileName}', operationId: 'removeQuestionImage', summary: 'Delete a picture. Every question that showed it loses its picture, and the file is removed from the image store. Only while the exam is a draft or rejected', tags, roles: manage, request: { params: removeImageSchemas.params }, success: done(z.null(), 'Removed'), errors: ['NOT_FOUND', 'CONFLICT', 'SERVICE_UNAVAILABLE'] });
   registry.register({ method: 'post', path: '/cbt/exams/{id}/submit-for-approval', operationId: 'submitExam', summary: 'A class test goes live; a term exam goes to an admin for approval', tags, roles: manage, request: { params: idParams }, success: done(examView, 'Submitted'), errors: ['NOT_FOUND', 'CONFLICT'] });
   registry.register({ method: 'post', path: '/cbt/exams/{id}/approve', operationId: 'approveExam', summary: 'Approve a term exam. It becomes live and students are notified', tags, roles: PERMISSIONS['cbt:approve'], request: { params: idParams }, success: done(examView, 'Approved'), errors: ['NOT_FOUND', 'CONFLICT'] });
   registry.register({ method: 'post', path: '/cbt/exams/{id}/reject', operationId: 'rejectExam', summary: 'Send a term exam back to the teacher with a reason', tags, roles: PERMISSIONS['cbt:approve'], request: { params: idParams, body: rejectBody }, success: done(examView, 'Rejected'), errors: ['NOT_FOUND', 'CONFLICT'] });
@@ -109,7 +134,7 @@ export function registerCbtOperations(registry: OpenApiRegistry): void {
   registry.register({ method: 'get', path: '/cbt/my-exams', operationId: 'listMyExams', summary: 'My exams: upcoming, open, in progress, completed or missed', tags, roles: PERMISSIONS['cbt:take'], success: done(z.array(z.object({ id: z.string(), title: z.string(), subjectName: z.string(), type: z.enum(EXAM_TYPES), durationMin: num, windowStart: iso, windowEnd: iso, instructions: z.string(), questionCount: num, state: z.enum(['UPCOMING', 'OPEN', 'IN_PROGRESS', 'COMPLETED', 'MISSED']), attempt: z.object({ id: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), endsAt: iso, submittedAt: iso.nullable() }).nullable(), result: z.object({ score: z.number(), maxScore: z.number(), percent: z.number().nullable(), passed: z.boolean() }).nullable() })), 'My exams') });
   registry.register({ method: 'post', path: '/cbt/exams/{id}/start', operationId: 'startExam', summary: 'Start the exam, or resume it. Returns the shuffled questions without answers, endsAt and serverTime. If the exam gives each student a share of its questions (settings.questionsPerStudent), the student is dealt a random selection when they start, fixed for the whole attempt and identical on every refresh or resume', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'Started'), errors: ['NOT_FOUND', 'EXAM_NOT_OPEN', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
   registry.register({ method: 'get', path: '/cbt/attempts/{id}', operationId: 'getAttempt', summary: 'Resume after a refresh: the paper, the saved answers and the time left', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'The attempt'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
-  registry.register({ method: 'put', path: '/cbt/attempts/{id}/answers', operationId: 'saveAnswers', summary: 'Autosave (debounced). Send only changed answers; null clears one. MCQ: the option key. TRUE_FALSE: TRUE or FALSE. SHORT_ANSWER: text', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: saveAnswersBody }, success: done(z.object({ saved: num, serverTime: iso, remainingSeconds: num }), 'Saved'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
-  registry.register({ method: 'post', path: '/cbt/attempts/{id}/submit', operationId: 'submitAttempt', summary: 'Submit, with optional final answers. Safe to repeat. ATTEMPT_EXPIRED means the server already submitted it', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: submitBody }, success: done(z.object({ attemptId: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), submittedAt: iso.nullable(), resultAvailable: z.boolean(), score: z.number().nullable(), maxScore: z.number().nullable(), percent: z.number().nullable() }), 'Submitted'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED'] });
+  registry.register({ method: 'put', path: '/cbt/attempts/{id}/answers', operationId: 'saveAnswers', summary: 'Autosave (debounced). Send only changed answers; null clears one. MCQ: the option key. TRUE_FALSE: TRUE or FALSE. SHORT_ANSWER: text, up to 2,000 characters, line breaks kept. One request may carry at most 100,000 characters of answers in total (the body may be up to 512 KB). Over the limit returns VALIDATION_ERROR saying how long the answer was and what is allowed. Send a few long answers at a time, not all at once', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: saveAnswersBody }, success: done(z.object({ saved: num, serverTime: iso, remainingSeconds: num }), 'Saved'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
+  registry.register({ method: 'post', path: '/cbt/attempts/{id}/submit', operationId: 'submitAttempt', summary: 'Submit, with optional final answers (same length limits as saving). If answers were already saved, submit without them. Safe to repeat. ATTEMPT_EXPIRED means the server already submitted it', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: submitBody }, success: done(z.object({ attemptId: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), submittedAt: iso.nullable(), resultAvailable: z.boolean(), score: z.number().nullable(), maxScore: z.number().nullable(), percent: z.number().nullable() }), 'Submitted'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED'] });
   registry.register({ method: 'get', path: '/cbt/attempts/{id}/result', operationId: 'getAttemptResult', summary: 'My score, and the answer review if the teacher allowed it. Only once results are visible', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(z.object({ attemptId: z.string(), examId: z.string(), title: z.string(), score: z.number(), maxScore: z.number(), percent: z.number().nullable(), passed: z.boolean(), passMarkPercent: num, correctCount: num, questionCount: num, submittedAt: iso.nullable(), autoSubmitted: z.boolean(), review: z.array(z.record(z.string(), z.unknown())).nullable() }), 'The result'), errors: ['NOT_FOUND', 'CONFLICT'] });
 }

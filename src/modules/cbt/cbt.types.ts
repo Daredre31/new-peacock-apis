@@ -34,4 +34,8 @@ export const DEFAULT_SETTINGS: ExamSettings = {
 /** A final save or submit is still accepted this long after the clock ends, to allow for network lag. */
 export const GRACE_MS = 5_000;
 export const MAX_QUESTIONS = 200;
+/** The longest a single written answer may be, in characters: about 300 words. */
+export const MAX_ANSWER_CHARS = 2000;
+/** The most text one save or submit may carry in total, across all its answers. */
+export const MAX_ANSWER_CHARS_PER_REQUEST = 100_000;
 export const MAX_QUESTIONS_PER_STUDENT = 100;

@@ -57,7 +57,7 @@ export function createAttemptService(deps: AttemptServiceDeps) {
         if (!q) return [];
         const order = attempt.optionOrder[id];
         const options = q.options && order ? order.flatMap((key) => { const o = q.options?.find((x) => x.key === key); return o ? [o] : []; }) : q.options;
-        return [{ id: q.id, type: q.type, text: q.text, marks: q.marks, options }];
+        return [{ id: q.id, type: q.type, text: q.text, marks: q.marks, options, imageUrl: q.imageUrl ?? null, imageWidth: q.imageWidth ?? null, imageHeight: q.imageHeight ?? null }];
       }),
     };
   }
@@ -284,7 +284,7 @@ export function createAttemptService(deps: AttemptServiceDeps) {
         const yours = attempt.answers[id] ?? null;
         const correct = yours !== null && gradeAttempt([q], { [id]: yours }).score > 0;
         return [{
-          questionId: id, type: q.type, text: q.text, options, yourAnswer: yours, correctAnswer: q.correctAnswer,
+          questionId: id, type: q.type, text: q.text, imageUrl: q.imageUrl ?? null, imageWidth: q.imageWidth ?? null, imageHeight: q.imageHeight ?? null, options, yourAnswer: yours, correctAnswer: q.correctAnswer,
           correct, marks: q.marks, marksAwarded: correct ? q.marks : 0, explanation: q.explanation,
         }];
       });

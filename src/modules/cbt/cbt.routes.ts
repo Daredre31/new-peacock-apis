@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from 'express';
 import multer from 'multer';
 import { AppError } from '../../common/errors/AppError';
 import { authorize } from '../../common/middleware/authorize';
+import { longAnswerBody } from '../../common/middleware/bodyLimits';
 import { validate, type Validated } from '../../common/middleware/validate';
 import { buildPageMeta, sendCreated, sendSuccess } from '../../common/utils/apiResponse';
 import { contextOf, requireUser } from '../../common/utils/request';
@@ -9,19 +10,22 @@ import { ROLES } from '../../config/constants';
 import type { AnalyticsService } from './analytics.service';
 import type { AttemptService } from './attempt.service';
 import {
-  attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, examIdSchemas, listExamsSchemas, rejectSchemas,
-  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas,
+  attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, examIdSchemas, listExamsSchemas, rejectSchemas, removeImageSchemas,
+  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas, uploadImageSchemas,
 } from './cbt.schema';
 import type { ExamService } from './exam.service';
 import { QUESTION_TEMPLATE_CSV, type QuestionImportService } from './question.import';
+import type { QuestionImageService } from './question.image.service';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
+/** One picture and, optionally, the question it belongs to. The picture's real type is checked from its bytes. */
+const uploadPicture = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 1 } });
 const CSV_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain']);
 
 export function createCbtRouter(deps: {
-  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; authenticate: RequestHandler;
+  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; authenticate: RequestHandler;
 }): Router {
-  const { exams, attempts, analytics, importService, authenticate: auth } = deps;
+  const { exams, attempts, analytics, importService, pictures, authenticate: auth } = deps;
   const router = Router();
 
   // Parents and students have their own routes. The staff routes refuse them.
@@ -89,6 +93,24 @@ export function createCbtRouter(deps: {
     sendSuccess(res, await importService.confirm(requireUser(req), params.id, body.importToken, contextOf(req)));
   });
 
+  router.get('/cbt/exams/:id/question-images', auth, authorize('cbt:manage'), validate(examIdSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof examIdSchemas>;
+    sendSuccess(res, await pictures.list(requireUser(req), params.id));
+  });
+
+  router.post('/cbt/exams/:id/question-images', auth, authorize('cbt:manage'), uploadPicture.single('file'), validate(uploadImageSchemas), async (req, res) => {
+    const { params, body } = req.validated as Validated<typeof uploadImageSchemas>;
+    const file = req.file;
+    if (!file) throw new AppError('VALIDATION_ERROR', { details: [{ field: 'file', issue: 'Attach a PNG or JPG picture in the "file" field' }] });
+    sendCreated(res, await pictures.upload(requireUser(req), params.id, { originalName: file.originalname, buffer: file.buffer, questionId: body.questionId }, contextOf(req)));
+  });
+
+  router.delete('/cbt/exams/:id/question-images/:fileName', auth, authorize('cbt:manage'), validate(removeImageSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof removeImageSchemas>;
+    await pictures.remove(requireUser(req), params.id, params.fileName, contextOf(req));
+    sendSuccess(res, null);
+  });
+
   router.post('/cbt/exams/:id/submit-for-approval', auth, authorize('cbt:manage'), validate(examIdSchemas), async (req, res) => {
     const { params } = req.validated as Validated<typeof examIdSchemas>;
     sendSuccess(res, await exams.submitForApproval(requireUser(req), params.id, contextOf(req)));
@@ -147,12 +169,12 @@ export function createCbtRouter(deps: {
     sendSuccess(res, await attempts.resume(requireUser(req), params.id));
   });
 
-  router.put('/cbt/attempts/:id/answers', auth, authorize('cbt:take'), validate(saveAnswersSchemas), async (req, res) => {
+  router.put('/cbt/attempts/:id/answers', auth, authorize('cbt:take'), longAnswerBody, validate(saveAnswersSchemas), async (req, res) => {
     const { params, body } = req.validated as Validated<typeof saveAnswersSchemas>;
     sendSuccess(res, await attempts.saveAnswers(requireUser(req), params.id, body.answers));
   });
 
-  router.post('/cbt/attempts/:id/submit', auth, authorize('cbt:take'), validate(submitAttemptSchemas), async (req, res) => {
+  router.post('/cbt/attempts/:id/submit', auth, authorize('cbt:take'), longAnswerBody, validate(submitAttemptSchemas), async (req, res) => {
     const { params, body } = req.validated as Validated<typeof submitAttemptSchemas>;
     sendSuccess(res, await attempts.submit(requireUser(req), params.id, body.answers));
   });

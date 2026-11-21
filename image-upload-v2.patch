@@ -1,0 +1,769 @@
+--- a/src/common/utils/image.ts
++++ b/src/common/utils/image.ts
+@@ -10,3 +10,43 @@
+   if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'webp';
+   return null;
+ }
++
++/** Pixel size read from the file's own header, without decoding it. Null if the header is unreadable. */
++export function readDimensions(buf: Buffer): { width: number; height: number } | null {
++  if (detectImageType(buf) === 'png') {
++    return buf.length >= 24 ? { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) } : null;
++  }
++  if (detectImageType(buf) === 'jpeg') {
++    let i = 2;
++    while (i + 9 < buf.length) {
++      if (buf[i] !== 0xff) { i += 1; continue; }
++      const marker = buf[i + 1] as number;
++      if (marker === 0xff) { i += 1; continue; }
++      // Start-of-frame markers carry the size. C4, C8 and CC share the range but are not frames.
++      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
++        return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
++      }
++      if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) { i += 2; continue; }
++      i += 2 + buf.readUInt16BE(i + 2);
++    }
++  }
++  return null;
++}
++
++/** Shrinks a size to fit within a square of `max` pixels, keeping its proportions. Never enlarges. */
++export function fitWithin(width: number, height: number, max: number): { width: number; height: number } {
++  const scale = Math.min(1, max / Math.max(width, height));
++  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
++}
++
++const IMAGE_FILE_NAME = /^[a-z0-9][a-z0-9._-]{0,76}\.(png|jpe?g)$/;
++
++/**
++ * The one spelling of an image's file name used everywhere: no folders, lower case, spaces become dashes.
++ * Null when it is not a plain name ending in .png, .jpg or .jpeg, so an upload and a spreadsheet cell can be matched exactly.
++ */
++export function normalizeImageFileName(raw: string): string | null {
++  const base = raw.replace(/\\/g, '/').split('/').pop() ?? '';
++  const name = base.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, '-');
++  return IMAGE_FILE_NAME.test(name) ? name : null;
++}
+--- a/src/integrations/imageStore.ts
++++ b/src/integrations/imageStore.ts
+@@ -6,10 +6,13 @@
+ export interface StoredImage {
+   /** HTTPS delivery URL. This is the only thing we keep in our database. */
+   url: string;
++  /** Pixel size of the stored picture, when the store reports it. */
++  width?: number;
++  height?: number;
+ }
+ 
+ /** PASSPORT crops a face to 3:4. BRANDING keeps the whole picture, never enlarges it, and stores a PNG so transparency survives and a PDF can embed it. */
+-export type ImagePreset = 'passport' | 'branding';
++export type ImagePreset = 'passport' | 'branding' | 'question';
+ 
+ export interface ImageStore {
+   /**
+@@ -25,6 +28,8 @@
+ /** Passport framing: 600x800 (3:4), cropped around the face, and capped in size. */
+ const PASSPORT_TRANSFORMATION = [{ width: 600, height: 800, crop: 'fill', gravity: 'face' }, { quality: 'auto', fetch_format: 'auto' }];
+ /** At most 1000 px on the longest side: sharp at print size, still a small download. */
++/** Exam diagrams keep their file type (PNG stays sharp for line art) and are only ever shrunk, to 1600 px on the longest side. */
++const QUESTION_OPTIONS = { transformation: [{ width: 1600, height: 1600, crop: 'limit' }] } as const;
+ const BRANDING_OPTIONS = { transformation: [{ width: 1000, height: 1000, crop: 'limit' }], format: 'png' } as const;
+ 
+ export function createCloudinaryImageStore(config: { cloudName: string; apiKey: string; apiSecret: string }): ImageStore {
+@@ -34,14 +39,14 @@
+     upload: (buffer, publicId, preset = 'passport') =>
+       new Promise((resolve, reject) => {
+         const stream = cloudinary.uploader.upload_stream(
+-          { public_id: publicId, overwrite: true, invalidate: true, resource_type: 'image', ...(preset === 'branding' ? BRANDING_OPTIONS : { transformation: PASSPORT_TRANSFORMATION }) },
++          { public_id: publicId, overwrite: true, invalidate: true, resource_type: 'image', ...(preset === 'branding' ? BRANDING_OPTIONS : preset === 'question' ? QUESTION_OPTIONS : { transformation: PASSPORT_TRANSFORMATION }) },
+           (error, result) => {
+             if (error || !result) {
+               logger.error({ err: error }, 'cloudinary upload failed');
+               reject(new AppError('SERVICE_UNAVAILABLE'));
+               return;
+             }
+-            resolve({ url: result.secure_url });
++            resolve({ url: result.secure_url, width: result.width, height: result.height });
+           },
+         );
+         stream.end(buffer);
+--- a/src/modules/cbt/attempt.service.ts
++++ b/src/modules/cbt/attempt.service.ts
+@@ -57,7 +57,7 @@
+         if (!q) return [];
+         const order = attempt.optionOrder[id];
+         const options = q.options && order ? order.flatMap((key) => { const o = q.options?.find((x) => x.key === key); return o ? [o] : []; }) : q.options;
+-        return [{ id: q.id, type: q.type, text: q.text, marks: q.marks, options }];
++        return [{ id: q.id, type: q.type, text: q.text, marks: q.marks, options, imageUrl: q.imageUrl ?? null, imageWidth: q.imageWidth ?? null, imageHeight: q.imageHeight ?? null }];
+       }),
+     };
+   }
+@@ -284,7 +284,7 @@
+         const yours = attempt.answers[id] ?? null;
+         const correct = yours !== null && gradeAttempt([q], { [id]: yours }).score > 0;
+         return [{
+-          questionId: id, type: q.type, text: q.text, options, yourAnswer: yours, correctAnswer: q.correctAnswer,
++          questionId: id, type: q.type, text: q.text, imageUrl: q.imageUrl ?? null, imageWidth: q.imageWidth ?? null, imageHeight: q.imageHeight ?? null, options, yourAnswer: yours, correctAnswer: q.correctAnswer,
+           correct, marks: q.marks, marksAwarded: correct ? q.marks : 0, explanation: q.explanation,
+         }];
+       });
+--- a/src/modules/cbt/cbt.module.ts
++++ b/src/modules/cbt/cbt.module.ts
+@@ -21,15 +21,19 @@
+ import { createCbtRouter } from './cbt.routes';
+ import { examRepository } from './exam.repository';
+ import { createExamService } from './exam.service';
++import type { ImageStore } from '../../integrations/imageStore';
+ import { createPaperCache } from './paper.cache';
++import { questionImageRepository } from './question.image.repository';
++import { createQuestionImageService } from './question.image.service';
+ import { createQuestionImportService } from './question.import';
+ import { questionRepository } from './question.repository';
+ 
+ export function createCbtModule(deps: {
+   audit: AuditService; auth: AuthModule; scope: ScopeService; notifier: NotificationService;
+-  settings: SettingsService; store: KeyValueStore; jobs: ExamJobs;
++  settings: SettingsService; store: KeyValueStore; jobs: ExamJobs; images: ImageStore;
+ }) {
+   const paper = createPaperCache({ store: deps.store, questions: questionRepository });
++  const pictures = createQuestionImageService({ images: deps.images, library: questionImageRepository, questions: questionRepository, exams: examRepository, paper, audit: deps.audit });
+ 
+   const attemptService = createAttemptService({
+     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository,
+@@ -43,17 +47,17 @@
+     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository,
+     sessions: sessionRepository, structure: structureRepository, assignments: assignmentRepository, staff: staffRepository,
+     settings: deps.settings, scores: scoreRepository, users: userRepository, notifier: deps.notifier, paper,
+-    finalizeOverdueFor: (examId) => attemptService.finalizeOverdueFor(examId), audit: deps.audit,
++    finalizeOverdueFor: (examId) => attemptService.finalizeOverdueFor(examId), audit: deps.audit, pictures,
+   });
+   const importService = createQuestionImportService({
+-    store: deps.store, secret: env.REFRESH_TOKEN_SECRET, exams: examRepository, questions: questionRepository, paper, audit: deps.audit,
++    store: deps.store, secret: env.REFRESH_TOKEN_SECRET, exams: examRepository, questions: questionRepository, pictures, paper, audit: deps.audit,
+   });
+   const analytics = createAnalyticsService({
+     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository, students: studentRepository,
+   });
+ 
+     return {
+-    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, authenticate: deps.auth.middleware.authenticate }),
++    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, authenticate: deps.auth.middleware.authenticate }),
+     attempts: attemptService,
+     exams: examService,
+   };
+--- a/src/modules/cbt/cbt.routes.ts
++++ b/src/modules/cbt/cbt.routes.ts
+@@ -9,19 +9,22 @@
+ import type { AnalyticsService } from './analytics.service';
+ import type { AttemptService } from './attempt.service';
+ import {
+-  attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, examIdSchemas, listExamsSchemas, rejectSchemas,
+-  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas,
++  attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, examIdSchemas, listExamsSchemas, rejectSchemas, removeImageSchemas,
++  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas, uploadImageSchemas,
+ } from './cbt.schema';
+ import type { ExamService } from './exam.service';
+ import { QUESTION_TEMPLATE_CSV, type QuestionImportService } from './question.import';
++import type { QuestionImageService } from './question.image.service';
+ 
+ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
++/** One picture and, optionally, the question it belongs to. The picture's real type is checked from its bytes. */
++const uploadPicture = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 1 } });
+ const CSV_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain']);
+ 
+ export function createCbtRouter(deps: {
+-  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; authenticate: RequestHandler;
++  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; authenticate: RequestHandler;
+ }): Router {
+-  const { exams, attempts, analytics, importService, authenticate: auth } = deps;
++  const { exams, attempts, analytics, importService, pictures, authenticate: auth } = deps;
+   const router = Router();
+ 
+   // Parents and students have their own routes. The staff routes refuse them.
+@@ -89,6 +92,24 @@
+     sendSuccess(res, await importService.confirm(requireUser(req), params.id, body.importToken, contextOf(req)));
+   });
+ 
++  router.get('/cbt/exams/:id/question-images', auth, authorize('cbt:manage'), validate(examIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof examIdSchemas>;
++    sendSuccess(res, await pictures.list(requireUser(req), params.id));
++  });
++
++  router.post('/cbt/exams/:id/question-images', auth, authorize('cbt:manage'), uploadPicture.single('file'), validate(uploadImageSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof uploadImageSchemas>;
++    const file = req.file;
++    if (!file) throw new AppError('VALIDATION_ERROR', { details: [{ field: 'file', issue: 'Attach a PNG or JPG picture in the "file" field' }] });
++    sendCreated(res, await pictures.upload(requireUser(req), params.id, { originalName: file.originalname, buffer: file.buffer, questionId: body.questionId }, contextOf(req)));
++  });
++
++  router.delete('/cbt/exams/:id/question-images/:fileName', auth, authorize('cbt:manage'), validate(removeImageSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof removeImageSchemas>;
++    await pictures.remove(requireUser(req), params.id, params.fileName, contextOf(req));
++    sendSuccess(res, null);
++  });
++
+   router.post('/cbt/exams/:id/submit-for-approval', auth, authorize('cbt:manage'), validate(examIdSchemas), async (req, res) => {
+     const { params } = req.validated as Validated<typeof examIdSchemas>;
+     sendSuccess(res, await exams.submitForApproval(requireUser(req), params.id, contextOf(req)));
+--- a/src/modules/cbt/cbt.schema.ts
++++ b/src/modules/cbt/cbt.schema.ts
+@@ -49,6 +49,10 @@
+ 
+ const confirmBody = z.object({ importToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
+ export const confirmQuestionsSchemas = { params: idParams, body: confirmBody };
++
++const uploadImageBody = z.object({ questionId: objectId.optional() }).strict();
++export const uploadImageSchemas = { params: idParams, body: uploadImageBody };
++export const removeImageSchemas = { params: z.object({ id: objectId, fileName: z.string().trim().min(1).max(100) }) };
+ const rejectBody = z.object({ reason: z.string().trim().min(3).max(500) });
+ export const rejectSchemas = { params: idParams, body: rejectBody };
+ 
+@@ -65,7 +69,8 @@
+   instructions: z.string(), settings: settingsView, status: z.enum(statusValues), rejectionReason: z.string().nullable(),
+   resultsReleased: z.boolean(), questionCount: num, maxScore: z.number(), maxScorePerStudent: z.number(), createdAt: iso,
+ });
+-const paperQuestion = z.object({ id: z.string(), type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number(), options: z.array(z.object({ key: z.string(), text: z.string() })).nullable() });
++const paperQuestion = z.object({ id: z.string(), type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number(), options: z.array(z.object({ key: z.string(), text: z.string() })).nullable(),
++  imageUrl: z.string().nullable(), imageWidth: num.nullable(), imageHeight: num.nullable() });
+ const attemptView = z.object({
+   attemptId: z.string(), examId: z.string(), title: z.string(), instructions: z.string(), durationMin: num,
+   status: z.enum(['IN_PROGRESS', 'SUBMITTED']), startedAt: iso, endsAt: iso, serverTime: iso, remainingSeconds: num,
+@@ -74,9 +79,11 @@
+ const staffQuestion = z.object({
+   id: z.string(), order: num, type: z.enum(QUESTION_TYPES), text: z.string(), options: z.array(z.object({ key: z.string(), text: z.string() })).nullable(),
+   correctAnswer: z.union([z.string(), z.array(z.string())]), marks: z.number(), topic: z.string().nullable(), difficulty: z.enum(DIFFICULTIES), explanation: z.string().nullable(),
++  imageFileName: z.string().nullable(), imageUrl: z.string().nullable(), imageWidth: num.nullable(), imageHeight: num.nullable(),
+ });
+ const importReport = z.object({
+   rowCount: num, validCount: num, errors: z.array(z.object({ row: num, field: z.string(), issue: z.string() })), truncated: z.boolean(),
++  warnings: z.array(z.object({ row: num, field: z.string(), issue: z.string() })).describe('Pictures named in the image column that have not been uploaded yet. They do not block the import'),
+   totalMarks: z.number().nullable(), byType: z.record(z.string(), num).nullable(),
+   preview: z.array(z.object({ type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number() })), importToken: z.string().nullable(),
+ });
+@@ -95,8 +102,12 @@
+   registry.register({ method: 'patch', path: '/cbt/exams/{id}', operationId: 'updateExam', summary: 'Change a draft or rejected exam (owner only)', tags, roles: manage, request: { params: idParams, body: updateBody }, success: done(examView, 'Updated'), errors: ['NOT_FOUND', 'CONFLICT'] });
+   registry.register({ method: 'delete', path: '/cbt/exams/{id}', operationId: 'deleteExam', summary: 'Delete an exam nobody has started (the owner or an admin)', tags, roles: [ROLES.ADMIN, ROLES.TEACHER], request: { params: idParams }, success: done(z.null(), 'Deleted'), errors: ['NOT_FOUND', 'CONFLICT'] });
+   registry.register({ method: 'get', path: '/cbt/exams/{id}/questions', operationId: 'listExamQuestions', summary: 'The questions with their correct answers, for the owner and admins to review', tags, roles: PERMISSIONS['cbt:analytics'], request: { params: idParams }, success: done(z.array(staffQuestion), 'Questions'), errors: ['NOT_FOUND'] });
+-  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import', operationId: 'importExamQuestions', summary: 'Upload the question CSV (field "file", max 2 MB, 200 questions). Validates every row; saves nothing', tags, roles: manage, request: { params: idParams }, upload: true, success: done(importReport, 'Validation report'), errors: ['IMPORT_INVALID', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import', operationId: 'importExamQuestions', summary: 'Upload the question CSV (field "file", max 2 MB, 200 questions). An optional image column names a picture uploaded with POST /cbt/exams/{id}/question-images. Validates every row; saves nothing', tags, roles: manage, request: { params: idParams }, upload: true, success: done(importReport, 'Validation report'), errors: ['IMPORT_INVALID', 'NOT_FOUND', 'CONFLICT'] });
+   registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import/confirm', operationId: 'confirmExamQuestions', summary: 'Save a clean upload as the exam\'s questions, replacing any earlier ones', tags, roles: manage, request: { params: idParams, body: confirmBody }, success: done(z.object({ questions: num, maxScore: z.number() }), 'Saved'), errors: ['IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
++  const imageView = z.object({ fileName: z.string(), url: z.string(), width: num, height: num, bytes: num, questionIds: z.array(z.string()), uploadedAt: iso });
++  registry.register({ method: 'get', path: '/cbt/exams/{id}/question-images', operationId: 'listQuestionImages', summary: 'The pictures uploaded to this exam, each with the questions that show it. A picture with no questions is waiting to be matched by an import', tags, roles: manage, request: { params: idParams }, success: done(z.array(imageView), 'Pictures'), errors: ['NOT_FOUND'] });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/question-images', operationId: 'uploadQuestionImage', summary: 'Upload a diagram (field "file", PNG or JPG, max 2 MB, checked by its content). The file name matters: a spreadsheet\'s image column finds pictures by it, and uploading the same name again replaces the picture everywhere it is used. Send questionId to attach it to one question straight away. Shown at most 1600 px wide with its width and height returned. Only while the exam is a draft or rejected', tags, roles: manage, request: { params: idParams, body: uploadImageBody }, upload: true, success: done(imageView, 'Uploaded', 201), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT', 'SERVICE_UNAVAILABLE'] });
++  registry.register({ method: 'delete', path: '/cbt/exams/{id}/question-images/{fileName}', operationId: 'removeQuestionImage', summary: 'Delete a picture. Every question that showed it loses its picture, and the file is removed from the image store. Only while the exam is a draft or rejected', tags, roles: manage, request: { params: removeImageSchemas.params }, success: done(z.null(), 'Removed'), errors: ['NOT_FOUND', 'CONFLICT', 'SERVICE_UNAVAILABLE'] });
+   registry.register({ method: 'post', path: '/cbt/exams/{id}/submit-for-approval', operationId: 'submitExam', summary: 'A class test goes live; a term exam goes to an admin for approval', tags, roles: manage, request: { params: idParams }, success: done(examView, 'Submitted'), errors: ['NOT_FOUND', 'CONFLICT'] });
+   registry.register({ method: 'post', path: '/cbt/exams/{id}/approve', operationId: 'approveExam', summary: 'Approve a term exam. It becomes live and students are notified', tags, roles: PERMISSIONS['cbt:approve'], request: { params: idParams }, success: done(examView, 'Approved'), errors: ['NOT_FOUND', 'CONFLICT'] });
+   registry.register({ method: 'post', path: '/cbt/exams/{id}/reject', operationId: 'rejectExam', summary: 'Send a term exam back to the teacher with a reason', tags, roles: PERMISSIONS['cbt:approve'], request: { params: idParams, body: rejectBody }, success: done(examView, 'Rejected'), errors: ['NOT_FOUND', 'CONFLICT'] });
+--- a/src/modules/cbt/exam.service.ts
++++ b/src/modules/cbt/exam.service.ts
+@@ -32,6 +32,8 @@
+ export interface ExamServiceDeps {
+   exams: typeof examRepository;
+   questions: Pick<typeof questionRepository, 'forExamWithKey' | 'removeForExam' | 'distinctMarks'>;
++  /** Removes an exam's pictures from the image store when the exam is deleted. */
++  pictures?: { purgeExam(examId: string): Promise<void> };
+   attempts: Pick<typeof attemptRepository, 'allForExam' | 'countForExam'>;
+   enrolments: Pick<typeof enrolmentRepository, 'studentIdsInArms'>;
+   sessions: Pick<typeof sessionRepository, 'findCurrentSession' | 'findTermByDate'>;
+@@ -221,6 +223,7 @@
+       if ((await attempts.countForExam(id)) > 0) throw new AppError('CONFLICT', { message: 'Students have already started this exam, so it cannot be deleted' });
+ 
+       await questions.removeForExam(id);
++      await deps.pictures?.purgeExam(id);
+       await exams.remove(id);
+       await paper.invalidate(id);
+       await log('EXAM_DELETED', actor, ctx, id, { title: exam.title, status: exam.status });
+@@ -247,6 +250,7 @@
+       return (await questions.forExamWithKey(id)).map((q) => ({
+         id: q.id, order: q.order, type: q.type, text: q.text, options: q.options, correctAnswer: q.correctAnswer,
+         marks: q.marks, topic: q.topic, difficulty: q.difficulty, explanation: q.explanation,
++        imageFileName: q.imageFileName ?? null, imageUrl: q.imageUrl ?? null, imageWidth: q.imageWidth ?? null, imageHeight: q.imageHeight ?? null,
+       }));
+     },
+ 
+--- a/src/modules/cbt/grading.ts
++++ b/src/modules/cbt/grading.ts
+@@ -1,9 +1,13 @@
+ import { randomInt } from 'node:crypto';
+ import type { Difficulty, QuestionType } from './cbt.types';
+ 
+-export interface PaperQuestion { id: string; type: QuestionType; text: string; options: { key: string; text: string }[] | null; marks: number }
++export interface PaperQuestion {
++  id: string; type: QuestionType; text: string; options: { key: string; text: string }[] | null; marks: number;
++  /** The diagram, if the teacher attached one. Optional so a paper cached before pictures existed still reads. */
++  imageUrl?: string | null; imageWidth?: number | null; imageHeight?: number | null;
++}
+ export interface KeyedQuestion extends PaperQuestion { correctAnswer: string | string[] }
+-export interface StoredQuestion extends KeyedQuestion { order: number; topic: string | null; difficulty: Difficulty; explanation: string | null }
++export interface StoredQuestion extends KeyedQuestion { imageFileName?: string | null; order: number; topic: string | null; difficulty: Difficulty; explanation: string | null }
+ 
+ const round1 = (n: number): number => Math.round(n * 10) / 10;
+ const CONTROL = /[\u0000-\u001f\u007f]/g;
+--- /dev/null
++++ b/src/modules/cbt/question.image.repository.ts
+@@ -0,0 +1,77 @@
++import mongoose, { type ClientSession, type Model, type Types } from 'mongoose';
++
++interface ImageDocument {
++  examId: Types.ObjectId;
++  /** Lower-case file name as the teacher uploaded it. A spreadsheet cell names the picture by this. */
++  fileName: string;
++  publicId: string;
++  url: string;
++  width: number;
++  height: number;
++  bytes: number;
++  uploadedBy: Types.ObjectId;
++  createdAt: Date;
++  updatedAt: Date;
++}
++type Row = ImageDocument & { _id: Types.ObjectId };
++
++const imageSchema = new mongoose.Schema<ImageDocument>(
++  {
++    examId: { type: mongoose.Schema.Types.ObjectId, ref: 'Exam', required: true },
++    fileName: { type: String, required: true, maxlength: 80 },
++    publicId: { type: String, required: true },
++    url: { type: String, required: true },
++    width: { type: Number, required: true },
++    height: { type: Number, required: true },
++    bytes: { type: Number, required: true },
++    uploadedBy: { type: mongoose.Schema.Types.ObjectId, required: true },
++  },
++  { timestamps: true, versionKey: false },
++);
++imageSchema.index({ examId: 1, fileName: 1 }, { unique: true });
++
++const ImageModel: Model<ImageDocument> =
++  (mongoose.models.QuestionImage as Model<ImageDocument> | undefined) ?? mongoose.model<ImageDocument>('QuestionImage', imageSchema);
++
++export interface ImageRecord {
++  fileName: string; publicId: string; url: string; width: number; height: number; bytes: number; uploadedAt: Date;
++}
++const toRecord = (r: Row): ImageRecord => ({
++  fileName: r.fileName, publicId: r.publicId, url: r.url, width: r.width, height: r.height, bytes: r.bytes, uploadedAt: r.updatedAt,
++});
++
++async function find(examId: string, fileName: string): Promise<ImageRecord | null> {
++  const row = await ImageModel.findOne({ examId, fileName }).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++async function listForExam(examId: string): Promise<ImageRecord[]> {
++  const rows = await ImageModel.find({ examId }).sort({ fileName: 1 }).lean<Row[]>();
++  return rows.map(toRecord);
++}
++
++const count = (examId: string): Promise<number> => ImageModel.countDocuments({ examId });
++
++/** Saves a picture under its file name. Uploading the same name again replaces it. */
++async function save(
++  input: { examId: string; fileName: string; publicId: string; url: string; width: number; height: number; bytes: number; uploadedBy: string },
++  session: ClientSession,
++): Promise<ImageRecord> {
++  const { examId, fileName, ...rest } = input;
++  const row = await ImageModel.findOneAndUpdate({ examId, fileName }, { $set: rest }, { upsert: true, new: true, session }).lean<Row>();
++  if (!row) throw new Error('Image was not saved');
++  return toRecord(row);
++}
++
++async function remove(examId: string, fileName: string, session: ClientSession): Promise<void> {
++  await ImageModel.deleteOne({ examId, fileName }, { session });
++}
++
++/** Every stored picture of an exam, so its Cloudinary copies can be removed when the exam is deleted. */
++async function takeAllForExam(examId: string): Promise<ImageRecord[]> {
++  const rows = await ImageModel.find({ examId }).lean<Row[]>();
++  await ImageModel.deleteMany({ examId });
++  return rows.map(toRecord);
++}
++
++export const questionImageRepository = { find, listForExam, count, save, remove, takeAllForExam };
+--- /dev/null
++++ b/src/modules/cbt/question.image.service.ts
+@@ -0,0 +1,150 @@
++import { AppError } from '../../common/errors/AppError';
++import { detectImageType, fitWithin, normalizeImageFileName, readDimensions } from '../../common/utils/image';
++import { logger } from '../../common/utils/logger';
++import { withTransaction } from '../../config/db';
++import type { ImageStore } from '../../integrations/imageStore';
++import { recordSafely, type AuditPort } from '../audit/audit.port';
++import { EXAM_STATUS } from './cbt.types';
++import type { ExamRecord, examRepository } from './exam.repository';
++import type { PaperCache } from './paper.cache';
++import type { questionImageRepository, ImageRecord } from './question.image.repository';
++import type { questionRepository } from './question.repository';
++
++export const MAX_IMAGES_PER_EXAM = 200;
++/** What a picture may measure before it is refused: stops a tiny speck or a huge pixel-bomb reaching the image store. */
++const MIN_SIDE = 20;
++const MAX_SIDE = 10_000;
++const MAX_PIXELS = 40_000_000;
++const DELIVERED_MAX_SIDE = 1600;
++
++interface Actor { id: string }
++interface Context { ip: string; requestId: string }
++
++export interface ImageView {
++  fileName: string; url: string; width: number; height: number; bytes: number;
++  /** The questions showing this picture. Empty until it is attached to one. */
++  questionIds: string[];
++  uploadedAt: string;
++}
++
++const invalid = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
++const publicIdOf = (examId: string, fileName: string): string => `cbt/${examId}/${fileName.replace(/\./g, '-')}`;
++
++export function createQuestionImageService(deps: {
++  images: ImageStore;
++  library: typeof questionImageRepository;
++  questions: Pick<typeof questionRepository, 'hasQuestion' | 'attachImage' | 'refreshImage' | 'clearImage' | 'imageLinks'>;
++  exams: Pick<typeof examRepository, 'findById'>;
++  paper: PaperCache;
++  audit: AuditPort;
++}) {
++  const { images, library, questions, exams, paper, audit } = deps;
++
++  /** The teacher's own exam. Changing pictures is only allowed while questions can still be changed. */
++  async function ownedExam(actor: Actor, examId: string, mustBeEditable: boolean): Promise<ExamRecord> {
++    const exam = await exams.findById(examId);
++    if (!exam || exam.teacherId !== actor.id) throw new AppError('NOT_FOUND');
++    if (mustBeEditable && exam.status !== EXAM_STATUS.DRAFT && exam.status !== EXAM_STATUS.REJECTED) {
++      throw new AppError('CONFLICT', { message: 'Only a draft or a rejected exam can have its pictures changed' });
++    }
++    return exam;
++  }
++
++  const toView = (record: ImageRecord, links: Map<string, string[]>): ImageView => ({
++    fileName: record.fileName, url: record.url, width: record.width, height: record.height, bytes: record.bytes,
++    questionIds: links.get(record.fileName) ?? [], uploadedAt: record.uploadedAt.toISOString(),
++  });
++
++  return {
++    async list(actor: Actor, examId: string): Promise<ImageView[]> {
++      await ownedExam(actor, examId, false);
++      const [records, links] = await Promise.all([library.listForExam(examId), questions.imageLinks(examId)]);
++      return records.map((r) => toView(r, links));
++    },
++
++    /**
++     * Adds a picture to the exam's library, and ties it to a question if questionId is given. Uploading the same file name
++     * again replaces the picture everywhere it is used. A spreadsheet's image column finds pictures by this name.
++     */
++    async upload(actor: Actor, examId: string, input: { originalName: string; buffer: Buffer; questionId?: string | undefined }, ctx: Context): Promise<ImageView> {
++      await ownedExam(actor, examId, true);
++
++      const fileName = normalizeImageFileName(input.originalName);
++      if (!fileName) throw invalid('file', 'Name the file with letters, numbers, dots or dashes, ending in .png, .jpg or .jpeg. For example triangle.png');
++      // The type comes from the file's own bytes: the name and the Content-Type header are only what the client claims.
++      const type = detectImageType(input.buffer);
++      if (type !== 'png' && type !== 'jpeg') throw invalid('file', 'Only PNG and JPG pictures are accepted');
++      const size = readDimensions(input.buffer);
++      if (!size) throw invalid('file', 'This picture could not be read. Save it again as a PNG or JPG');
++      if (size.width < MIN_SIDE || size.height < MIN_SIDE) throw invalid('file', `The picture is too small. Each side must be at least ${MIN_SIDE} pixels`);
++      if (size.width > MAX_SIDE || size.height > MAX_SIDE || size.width * size.height > MAX_PIXELS) throw invalid('file', 'The picture is too large. Reduce its size and try again');
++
++      if (input.questionId !== undefined && !(await questions.hasQuestion(examId, input.questionId))) {
++        throw invalid('questionId', 'This exam has no such question');
++      }
++      const existing = await library.find(examId, fileName);
++      if (!existing && (await library.count(examId)) >= MAX_IMAGES_PER_EXAM) {
++        throw new AppError('CONFLICT', { details: [{ field: 'file', issue: `An exam can have at most ${MAX_IMAGES_PER_EXAM} pictures` }] });
++      }
++
++      const publicId = publicIdOf(examId, fileName);
++      const stored = await images.upload(input.buffer, publicId, 'question');
++      // The store reports the delivered size. If it does not, work it out: the same shrink rule applies.
++      const delivered = stored.width && stored.height ? { width: stored.width, height: stored.height } : fitWithin(size.width, size.height, DELIVERED_MAX_SIDE);
++
++      const saved = await withTransaction(async (tx) => {
++        const record = await library.save({ examId, fileName, publicId, url: stored.url, width: delivered.width, height: delivered.height, bytes: input.buffer.length, uploadedBy: actor.id }, tx);
++        const fields = { fileName, url: record.url, width: record.width, height: record.height };
++        if (existing) await questions.refreshImage(examId, fields, tx);
++        if (input.questionId !== undefined && !(await questions.attachImage(examId, input.questionId, fields, tx))) {
++          throw invalid('questionId', 'This exam has no such question');
++        }
++        return record;
++      });
++
++      await paper.invalidate(examId);
++      await recordSafely(audit, {
++        action: 'EXAM_IMAGE_UPLOADED', actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId,
++        metadata: { fileName, bytes: input.buffer.length, questionId: input.questionId ?? null, replaced: existing !== null },
++      });
++      return toView(saved, await questions.imageLinks(examId));
++    },
++
++    /**
++     * Removes the picture from the image store first. If the store is down nothing changes, so the exam never points at a
++     * picture that still exists. Then every question that showed it is cleared.
++     */
++    async remove(actor: Actor, examId: string, rawFileName: string, ctx: Context): Promise<void> {
++      await ownedExam(actor, examId, true);
++      const fileName = normalizeImageFileName(rawFileName);
++      const record = fileName ? await library.find(examId, fileName) : null;
++      if (!fileName || !record) throw new AppError('NOT_FOUND');
++
++      await images.remove(record.publicId);
++      await withTransaction(async (tx) => {
++        await library.remove(examId, fileName, tx);
++        await questions.clearImage(examId, fileName, tx);
++      });
++      await paper.invalidate(examId);
++      await recordSafely(audit, { action: 'EXAM_IMAGE_REMOVED', actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId, metadata: { fileName } });
++    },
++
++    /** For the spreadsheet import: this exam's pictures by file name. */
++    async byName(examId: string): Promise<Map<string, ImageRecord>> {
++      return new Map((await library.listForExam(examId)).map((r) => [r.fileName, r]));
++    },
++
++    /** When an exam is deleted its pictures go too. Best effort: a store outage must not stop the deletion. */
++    async purgeExam(examId: string): Promise<void> {
++      try {
++        for (const record of await library.takeAllForExam(examId)) {
++          await images.remove(record.publicId).catch((err: unknown) => logger.error({ err, examId, fileName: record.fileName }, 'exam picture could not be removed'));
++        }
++      } catch (err) {
++        logger.error({ err, examId }, 'exam pictures could not be cleaned up');
++      }
++    },
++  };
++}
++
++export type QuestionImageService = ReturnType<typeof createQuestionImageService>;
+--- a/src/modules/cbt/question.import.ts
++++ b/src/modules/cbt/question.import.ts
+@@ -4,11 +4,13 @@
+ import { withTransaction } from '../../config/db';
+ import { recordSafely, type AuditPort } from '../audit/audit.port';
+ import type { KeyValueStore } from '../auth/keyValueStore';
++import { normalizeImageFileName } from '../../common/utils/image';
+ import { poolIssue } from './pool';
+ import { DIFFICULTIES, EXAM_STATUS, MAX_QUESTIONS, OPTION_KEYS, QUESTION_TYPES, type Difficulty, type QuestionType } from './cbt.types';
+ import type { ExamRecord, examRepository } from './exam.repository';
+ import { normalizeAnswer } from './grading';
+ import type { PaperCache } from './paper.cache';
++import type { ImageRecord } from './question.image.repository';
+ import type { NewQuestion, questionRepository } from './question.repository';
+ 
+ const MAX_ERRORS = 500;
+@@ -20,16 +22,17 @@
+ const CONTROL = /[\u0000-\u001f\u007f]/g;
+ 
+ export const QUESTION_TEMPLATE_CSV = [
+-  'type,question,option_a,option_b,option_c,option_d,option_e,correct,marks,topic,difficulty,explanation',
+-  'MCQ,Which gas do plants absorb?,Oxygen,Carbon dioxide,Nitrogen,Helium,,B,1,Photosynthesis,EASY,Plants take in CO2',
+-  'TRUE_FALSE,The sun is a star.,,,,,,TRUE,1,Space,EASY,',
+-  'SHORT_ANSWER,Capital of Nigeria?,,,,,,Abuja|abuja,2,Geography,EASY,',
++  'type,question,option_a,option_b,option_c,option_d,option_e,correct,marks,topic,difficulty,explanation,image',
++  'MCQ,Which gas do plants absorb?,Oxygen,Carbon dioxide,Nitrogen,Helium,,B,1,Photosynthesis,EASY,Plants take in CO2,',
++  'TRUE_FALSE,The sun is a star.,,,,,,TRUE,1,Space,EASY,,',
++  'SHORT_ANSWER,Capital of Nigeria?,,,,,,Abuja|abuja,2,Geography,EASY,,',
++  'SHORT_ANSWER,What is the area of the triangle shown?,,,,,,24|24 cm2,2,Geometry,MEDIUM,,triangle.png',
+   '',
+ ].join('\r\n');
+ 
+ const COLUMNS: Record<string, string> = {
+   type: 'type', question: 'question', optiona: 'optionA', optionb: 'optionB', optionc: 'optionC', optiond: 'optionD', optione: 'optionE',
+-  correct: 'correct', marks: 'marks', topic: 'topic', difficulty: 'difficulty', explanation: 'explanation',
++  correct: 'correct', marks: 'marks', topic: 'topic', difficulty: 'difficulty', explanation: 'explanation', image: 'image',
+ };
+ const REQUIRED = ['type', 'question', 'correct'];
+ 
+@@ -46,6 +49,8 @@
+   store: KeyValueStore; secret: string;
+   exams: Pick<typeof examRepository, 'findById' | 'setQuestionStats'>;
+   questions: Pick<typeof questionRepository, 'replaceAll'>;
++  /** The exam's uploaded pictures by file name, so an image column can be matched. */
++  pictures: { byName(examId: string): Promise<Map<string, ImageRecord>> };
+   paper: PaperCache; audit: AuditPort;
+ }) {
+   const keyOf = (token: string): string => `import:questions:${createHmac('sha256', deps.secret).update(`import:${token}`).digest('hex')}`;
+@@ -88,6 +93,8 @@
+       const errors: RowError[] = [];
+       const questions: NewQuestion[] = [];
+       const hashes = new Map<string, number>();
++      /** For each accepted question, the row it came from and the picture it asked for. */
++      const asked: { row: number; imageFile: string | null }[] = [];
+ 
+       rows.forEach((cells, index) => {
+         const row = index + 2;
+@@ -153,16 +160,23 @@
+           else problem('difficulty', 'Use EASY, MEDIUM or HARD');
+         }
+         const explanation = text_('explanation', 500, false);
++        const rawImage = get('image');
++        let imageFile: string | null = null;
++        if (rawImage) {
++          imageFile = normalizeImageFileName(rawImage);
++          if (!imageFile) problem('image', 'Use the picture\'s file name, like triangle.png (letters, numbers, dots and dashes; .png, .jpg or .jpeg)');
++        }
+ 
+-        const hash = createHash('sha256').update([type, normalizeAnswer(questionText), ...options.map((o) => normalizeAnswer(o.text))].join('\u0001')).digest('hex');
++        const hash = createHash('sha256').update([type, normalizeAnswer(questionText), ...options.map((o) => normalizeAnswer(o.text)), imageFile ?? ''].join('\u0001')).digest('hex');
+         if (errors.length === before) {
+           if (hashes.has(hash)) problem('question', `Same question as row ${hashes.get(hash)}`);
+           else {
+             hashes.set(hash, row);
+             questions.push({
+               type: type as QuestionType, text: questionText, options: type === 'MCQ' ? options : null, correctAnswer, marks,
+-              topic: topic || null, difficulty, explanation: explanation || null, hash,
++              topic: topic || null, difficulty, explanation: explanation || null, hash, imageFile,
+             });
++            asked.push({ row, imageFile });
+           }
+         }
+       });
+@@ -170,6 +184,11 @@
+       // Once every row is fine on its own, check the set works with the exam's "questions per student" setting.
+       const poolProblem = errors.length === 0 ? poolIssue(exam.settings.questionsPerStudent, questions.length, questions.map((q) => q.marks)) : null;
+       const clear = errors.length === 0 && poolProblem === null;
++      // A picture that has not been uploaded is a warning, not an error: it can still be uploaded before confirming.
++      const library = await deps.pictures.byName(examId);
++      const warnings = asked.flatMap((a) => (a.imageFile && !library.has(a.imageFile)
++        ? [{ row: a.row, field: 'image', issue: `No picture named "${a.imageFile}" has been uploaded to this exam yet. Upload it before confirming, or the question will have no picture` }]
++        : [])).slice(0, MAX_ERRORS);
+       let importToken: string | null = null;
+       if (clear) {
+         importToken = randomBytes(32).toString('base64url');
+@@ -178,6 +197,7 @@
+ 
+       return {
+         rowCount: rows.length, validCount: clear ? questions.length : rows.length - new Set(errors.map((e) => e.row)).size,
++        warnings,
+         errors: [...(poolProblem ? [{ row: 0, field: poolProblem.field, issue: poolProblem.issue }] : []), ...errors].slice(0, MAX_ERRORS), truncated: errors.length > MAX_ERRORS,
+         totalMarks: clear ? Math.round(questions.reduce((s, q) => s + q.marks, 0) * 10) / 10 : null,
+         byType: clear ? Object.fromEntries(QUESTION_TYPES.map((t) => [t, questions.filter((q) => q.type === t).length])) : null,
+@@ -198,9 +218,15 @@
+       // Settings can change between the preview and now, so check again before anything is replaced.
+       const poolProblem = poolIssue(exam.settings.questionsPerStudent, upload.questions.length, upload.questions.map((q) => q.marks));
+       if (poolProblem) throw new AppError('VALIDATION_ERROR', { details: [poolProblem] });
++      // Pictures are matched by file name at this moment, so one uploaded after the preview is picked up.
++      const library = await deps.pictures.byName(examId);
++      const questions = upload.questions.map((q) => {
++        const picture = q.imageFile ? library.get(q.imageFile) : undefined;
++        return picture ? { ...q, imageFileName: picture.fileName, imageUrl: picture.url, imageWidth: picture.width, imageHeight: picture.height } : q;
++      });
+       // The old questions, the new ones and the exam's totals change together or not at all.
+       const result = await withTransaction(async (session) => {
+-        const saved = await deps.questions.replaceAll(examId, actor.id, upload.fileName, upload.questions, session);
++        const saved = await deps.questions.replaceAll(examId, actor.id, upload.fileName, questions, session);
+         if (!(await deps.exams.setQuestionStats(examId, saved.count, saved.maxScore, session))) {
+           throw new AppError('CONFLICT', { message: 'This exam was submitted while you were uploading' });
+         }
+@@ -210,7 +236,7 @@
+       await deps.paper.invalidate(examId);
+       await recordSafely(deps.audit, {
+         action: 'EXAM_QUESTIONS_IMPORTED', actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId,
+-        metadata: { questions: result.count, maxScore: result.maxScore, fileName: upload.fileName },
++        metadata: { questions: result.count, maxScore: result.maxScore, fileName: upload.fileName, withPictures: questions.filter((q) => q.imageUrl).length },
+       });
+       return { questions: result.count, maxScore: result.maxScore };
+     },
+--- a/src/modules/cbt/question.repository.ts
++++ b/src/modules/cbt/question.repository.ts
+@@ -6,6 +6,7 @@
+   examId: Types.ObjectId; importBatchId: Types.ObjectId; order: number; type: QuestionType; text: string;
+   options: { key: string; text: string }[]; correctAnswer: string | string[]; marks: number;
+   topic: string | null; difficulty: Difficulty; explanation: string | null; hash: string;
++  image?: { fileName: string; url: string; width: number; height: number } | null;
+ }
+ type Row = QuestionDocument & { _id: Types.ObjectId };
+ 
+@@ -21,6 +22,7 @@
+     marks: { type: Number, required: true },
+     topic: { type: String, default: null }, difficulty: { type: String, enum: DIFFICULTIES, default: 'MEDIUM' },
+     explanation: { type: String, default: null }, hash: { type: String, required: true },
++    image: { type: { fileName: String, url: String, width: Number, height: Number, _id: false }, default: null },
+   },
+   { versionKey: false, minimize: false },
+ );
+@@ -44,11 +46,13 @@
+ const BatchModel: Model<BatchDocument> =
+   (mongoose.models.ImportBatch as Model<BatchDocument> | undefined) ?? mongoose.model<BatchDocument>('ImportBatch', batchSchema);
+ 
+-export type NewQuestion = Omit<StoredQuestion, 'id' | 'order'> & { hash: string };
++/** `imageFile` is the file name a spreadsheet row asked for. It is resolved to a stored picture when the import is confirmed. */
++export type NewQuestion = Omit<StoredQuestion, 'id' | 'order'> & { hash: string; imageFile?: string | null };
+ 
+ const toStored = (r: Row): StoredQuestion => ({
+   id: r._id.toString(), order: r.order, type: r.type, text: r.text, options: r.options.length > 0 ? r.options : null,
+   correctAnswer: r.correctAnswer, marks: r.marks, topic: r.topic ?? null, difficulty: r.difficulty, explanation: r.explanation ?? null,
++  imageFileName: r.image?.fileName ?? null, imageUrl: r.image?.url ?? null, imageWidth: r.image?.width ?? null, imageHeight: r.image?.height ?? null,
+ });
+ 
+ /** Replaces the exam's whole question set with one new batch. Runs inside the caller's transaction. */
+@@ -62,6 +66,7 @@
+     questions.map((q, order) => ({
+       examId, importBatchId: batch._id, order, type: q.type, text: q.text, options: q.options ?? [],
+       correctAnswer: q.correctAnswer, marks: q.marks, topic: q.topic, difficulty: q.difficulty, explanation: q.explanation, hash: q.hash,
++      image: q.imageUrl && q.imageFileName ? { fileName: q.imageFileName, url: q.imageUrl, width: q.imageWidth ?? 0, height: q.imageHeight ?? 0 } : null,
+     })),
+     { session },
+   );
+@@ -75,7 +80,10 @@
+ 
+ /** The paper as students see it: no correct answers, no explanations. */
+ async function paperOf(examId: string): Promise<PaperQuestion[]> {
+-  return (await forExamWithKey(examId)).map((q) => ({ id: q.id, type: q.type, text: q.text, options: q.options, marks: q.marks }));
++  return (await forExamWithKey(examId)).map((q) => ({
++    id: q.id, type: q.type, text: q.text, options: q.options, marks: q.marks,
++    imageUrl: q.imageUrl ?? null, imageWidth: q.imageWidth ?? null, imageHeight: q.imageHeight ?? null,
++  }));
+ }
+ 
+ /** The different mark values among an exam's questions. */
+@@ -83,9 +91,38 @@
+   return (await QuestionModel.distinct('marks', { examId })) as number[];
+ }
+ 
++type ImageFields = { fileName: string; url: string; width: number; height: number };
++
++/** Does this question belong to this exam? Guards against attaching a picture to someone else's question. */
++async function hasQuestion(examId: string, questionId: string): Promise<boolean> {
++  if (!/^[a-f0-9]{24}$/.test(questionId)) return false;
++  return (await QuestionModel.exists({ _id: questionId, examId })) !== null;
++}
++async function attachImage(examId: string, questionId: string, image: ImageFields, session: ClientSession): Promise<boolean> {
++  const result = await QuestionModel.updateOne({ _id: questionId, examId }, { $set: { image } }, { session });
++  return result.matchedCount > 0;
++}
++/** A picture was uploaded again under the same name: every question using it gets the new address and size. */
++async function refreshImage(examId: string, image: ImageFields, session: ClientSession): Promise<void> {
++  await QuestionModel.updateMany({ examId, 'image.fileName': image.fileName }, { $set: { image } }, { session });
++}
++async function clearImage(examId: string, fileName: string, session: ClientSession): Promise<void> {
++  await QuestionModel.updateMany({ examId, 'image.fileName': fileName }, { $set: { image: null } }, { session });
++}
++/** Which questions use which picture, by file name. */
++async function imageLinks(examId: string): Promise<Map<string, string[]>> {
++  const rows = await QuestionModel.find({ examId, 'image.fileName': { $exists: true, $ne: null } }, { image: 1 }).sort({ order: 1 }).lean<Row[]>();
++  const links = new Map<string, string[]>();
++  for (const r of rows) {
++    const name = r.image?.fileName;
++    if (name) links.set(name, [...(links.get(name) ?? []), r._id.toString()]);
++  }
++  return links;
++}
++
+ async function removeForExam(examId: string): Promise<void> {
+   await QuestionModel.deleteMany({ examId });
+   await BatchModel.deleteMany({ examId });
+ }
+ 
+-export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam, distinctMarks };
+\ No newline at end of file
++export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam, distinctMarks, hasQuestion, attachImage, refreshImage, clearImage, imageLinks };
+\ No newline at end of file
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -102,7 +102,7 @@
+ 
+   router.use(createLibraryModule({ audit, auth }).router);
+ 
+-  const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs });
++  const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs, images });
+   router.use(cbt.router);
+ 
+   router.use(

@@ -1,15 +1,24 @@
 import { randomInt } from 'node:crypto';
-import type { Difficulty, QuestionType } from './cbt.types';
+import { MAX_ANSWER_CHARS, type Difficulty, type QuestionType } from './cbt.types';
 
-export interface PaperQuestion { id: string; type: QuestionType; text: string; options: { key: string; text: string }[] | null; marks: number }
+export interface PaperQuestion {
+  id: string; type: QuestionType; text: string; options: { key: string; text: string }[] | null; marks: number;
+  /** The diagram, if the teacher attached one. Optional so a paper cached before pictures existed still reads. */
+  imageUrl?: string | null; imageWidth?: number | null; imageHeight?: number | null;
+}
 export interface KeyedQuestion extends PaperQuestion { correctAnswer: string | string[] }
-export interface StoredQuestion extends KeyedQuestion { order: number; topic: string | null; difficulty: Difficulty; explanation: string | null }
+export interface StoredQuestion extends KeyedQuestion { imageFileName?: string | null; order: number; topic: string | null; difficulty: Difficulty; explanation: string | null }
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
-const CONTROL = /[\u0000-\u001f\u007f]/g;
+/** Every control character except the line break, so a paragraph keeps its paragraphs. */
+const CONTROL_KEEP_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f]/g;
 
 export function normalizeAnswer(value: string): string {
-  return value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
+  const text = value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+  // Cut trailing full stops and spaces with a plain loop: a regex for this is slow on long text full of dots and spaces.
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === '.' || text[end - 1] === ' ')) end -= 1;
+  return text.slice(0, end);
 }
 
 export function isCorrect(q: KeyedQuestion, answer: string | undefined): boolean {
@@ -54,6 +63,6 @@ export function cleanAnswer(q: PaperQuestion, value: string | null): string | nu
     const v = value.trim().toUpperCase();
     return v === 'TRUE' || v === 'FALSE' ? v : undefined;
   }
-  const text = value.replace(CONTROL, '').trim();
-  return text.length > 0 && text.length <= 200 ? text : undefined;
+  const text = value.replace(/\r\n?/g, '\n').replace(CONTROL_KEEP_NEWLINE, '').trim();
+  return text.length > 0 && text.length <= MAX_ANSWER_CHARS ? text : undefined;
 }

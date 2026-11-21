@@ -32,6 +32,8 @@ export interface ExamInput {
 export interface ExamServiceDeps {
   exams: typeof examRepository;
   questions: Pick<typeof questionRepository, 'forExamWithKey' | 'removeForExam' | 'distinctMarks'>;
+  /** Removes an exam's pictures from the image store when the exam is deleted. */
+  pictures?: { purgeExam(examId: string): Promise<void> };
   attempts: Pick<typeof attemptRepository, 'allForExam' | 'countForExam'>;
   enrolments: Pick<typeof enrolmentRepository, 'studentIdsInArms'>;
   sessions: Pick<typeof sessionRepository, 'findCurrentSession' | 'findTermByDate'>;
@@ -221,6 +223,7 @@ export function createExamService(deps: ExamServiceDeps) {
       if ((await attempts.countForExam(id)) > 0) throw new AppError('CONFLICT', { message: 'Students have already started this exam, so it cannot be deleted' });
 
       await questions.removeForExam(id);
+      await deps.pictures?.purgeExam(id);
       await exams.remove(id);
       await paper.invalidate(id);
       await log('EXAM_DELETED', actor, ctx, id, { title: exam.title, status: exam.status });
@@ -247,6 +250,7 @@ export function createExamService(deps: ExamServiceDeps) {
       return (await questions.forExamWithKey(id)).map((q) => ({
         id: q.id, order: q.order, type: q.type, text: q.text, options: q.options, correctAnswer: q.correctAnswer,
         marks: q.marks, topic: q.topic, difficulty: q.difficulty, explanation: q.explanation,
+        imageFileName: q.imageFileName ?? null, imageUrl: q.imageUrl ?? null, imageWidth: q.imageWidth ?? null, imageHeight: q.imageHeight ?? null,
       }));
     },
 

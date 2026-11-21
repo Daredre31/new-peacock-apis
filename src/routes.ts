@@ -102,7 +102,7 @@ export function createRoutes({ health, auth, audit, store, rateLimitRedis, maile
 
   router.use(createLibraryModule({ audit, auth }).router);
 
-  const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs });
+  const cbt = createCbtModule({ audit, auth, scope: users.scope, notifier: communication.notifier, settings: settings.service, store, jobs: examJobs, images });
   router.use(cbt.router);
 
   router.use(

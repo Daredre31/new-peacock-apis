@@ -21,15 +21,19 @@ import { createAttemptService } from './attempt.service';
 import { createCbtRouter } from './cbt.routes';
 import { examRepository } from './exam.repository';
 import { createExamService } from './exam.service';
+import type { ImageStore } from '../../integrations/imageStore';
 import { createPaperCache } from './paper.cache';
+import { questionImageRepository } from './question.image.repository';
+import { createQuestionImageService } from './question.image.service';
 import { createQuestionImportService } from './question.import';
 import { questionRepository } from './question.repository';
 
 export function createCbtModule(deps: {
   audit: AuditService; auth: AuthModule; scope: ScopeService; notifier: NotificationService;
-  settings: SettingsService; store: KeyValueStore; jobs: ExamJobs;
+  settings: SettingsService; store: KeyValueStore; jobs: ExamJobs; images: ImageStore;
 }) {
   const paper = createPaperCache({ store: deps.store, questions: questionRepository });
+  const pictures = createQuestionImageService({ images: deps.images, library: questionImageRepository, questions: questionRepository, exams: examRepository, paper, audit: deps.audit });
 
   const attemptService = createAttemptService({
     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository,
@@ -43,17 +47,17 @@ export function createCbtModule(deps: {
     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository,
     sessions: sessionRepository, structure: structureRepository, assignments: assignmentRepository, staff: staffRepository,
     settings: deps.settings, scores: scoreRepository, users: userRepository, notifier: deps.notifier, paper,
-    finalizeOverdueFor: (examId) => attemptService.finalizeOverdueFor(examId), audit: deps.audit,
+    finalizeOverdueFor: (examId) => attemptService.finalizeOverdueFor(examId), audit: deps.audit, pictures,
   });
   const importService = createQuestionImportService({
-    store: deps.store, secret: env.REFRESH_TOKEN_SECRET, exams: examRepository, questions: questionRepository, paper, audit: deps.audit,
+    store: deps.store, secret: env.REFRESH_TOKEN_SECRET, exams: examRepository, questions: questionRepository, pictures, paper, audit: deps.audit,
   });
   const analytics = createAnalyticsService({
     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository, students: studentRepository,
   });
 
     return {
-    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, authenticate: deps.auth.middleware.authenticate }),
+    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, authenticate: deps.auth.middleware.authenticate }),
     attempts: attemptService,
     exams: examService,
   };

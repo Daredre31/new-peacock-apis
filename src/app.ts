@@ -11,6 +11,7 @@ import type { HealthDependencies } from './modules/health/health.routes';
 import { createRoutes } from './routes';
 import { buildOpenApiDocument } from './openapi';
 import { createDocsRouter } from './openapi/docs.routes';
+import { jsonBody } from './common/middleware/bodyLimits';
 import { createCsrfMiddleware } from './common/middleware/csrf';
 import { createAuthModule } from './modules/auth/auth.module';
 import type { KeyValueStore } from './modules/auth/keyValueStore';
@@ -106,7 +107,7 @@ export function createApp(deps: AppDependencies): Express {
   // It has no cookies, so CSRF never applies. The signature is the only authentication.
   app.post('/api/v1/payments/webhook/paystack', express.raw({ type: '*/*', limit: '100kb' }), api.paystackWebhook);
 
-  app.use(express.json({ limit: '100kb' }));
+  app.use(jsonBody);
   app.use(cookieParser());
 
     app.use(createCsrfMiddleware(auth.csrf));
