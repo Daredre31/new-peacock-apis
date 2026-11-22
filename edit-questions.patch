@@ -1,0 +1,514 @@
+--- a/src/modules/cbt/cbt.module.ts
++++ b/src/modules/cbt/cbt.module.ts
+@@ -24,6 +24,7 @@
+ import type { ImageStore } from '../../integrations/imageStore';
+ import { createPaperCache } from './paper.cache';
+ import { questionImageRepository } from './question.image.repository';
++import { createQuestionEditorService } from './question.editor.service';
+ import { createQuestionImageService } from './question.image.service';
+ import { createQuestionImportService } from './question.import';
+ import { questionRepository } from './question.repository';
+@@ -52,12 +53,13 @@
+   const importService = createQuestionImportService({
+     store: deps.store, secret: env.REFRESH_TOKEN_SECRET, exams: examRepository, questions: questionRepository, pictures, paper, audit: deps.audit,
+   });
++  const editor = createQuestionEditorService({ questions: questionRepository, exams: examRepository, pictures, paper, audit: deps.audit });
+   const analytics = createAnalyticsService({
+     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository, students: studentRepository,
+   });
+ 
+     return {
+-    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, authenticate: deps.auth.middleware.authenticate }),
++    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, editor, authenticate: deps.auth.middleware.authenticate }),
+     attempts: attemptService,
+     exams: examService,
+   };
+--- a/src/modules/cbt/cbt.routes.ts
++++ b/src/modules/cbt/cbt.routes.ts
+@@ -10,11 +10,12 @@
+ import type { AnalyticsService } from './analytics.service';
+ import type { AttemptService } from './attempt.service';
+ import {
+-  attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, examIdSchemas, listExamsSchemas, rejectSchemas, removeImageSchemas,
+-  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas, uploadImageSchemas,
++  addQuestionSchemas, attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, deleteQuestionSchemas, examIdSchemas, listExamsSchemas, rejectSchemas, removeImageSchemas,
++  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas, updateQuestionSchemas, uploadImageSchemas,
+ } from './cbt.schema';
+ import type { ExamService } from './exam.service';
+ import { QUESTION_TEMPLATE_CSV, type QuestionImportService } from './question.import';
++import type { QuestionEditorService } from './question.editor.service';
+ import type { QuestionImageService } from './question.image.service';
+ 
+ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
+@@ -23,9 +24,9 @@
+ const CSV_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain']);
+ 
+ export function createCbtRouter(deps: {
+-  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; authenticate: RequestHandler;
++  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; editor: QuestionEditorService; authenticate: RequestHandler;
+ }): Router {
+-  const { exams, attempts, analytics, importService, pictures, authenticate: auth } = deps;
++  const { exams, attempts, analytics, importService, pictures, editor, authenticate: auth } = deps;
+   const router = Router();
+ 
+   // Parents and students have their own routes. The staff routes refuse them.
+@@ -93,6 +94,21 @@
+     sendSuccess(res, await importService.confirm(requireUser(req), params.id, body.importToken, contextOf(req)));
+   });
+ 
++  router.post('/cbt/exams/:id/questions', auth, authorize('cbt:manage'), validate(addQuestionSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof addQuestionSchemas>;
++    sendCreated(res, await editor.add(requireUser(req), params.id, body, contextOf(req)));
++  });
++
++  router.patch('/cbt/exams/:id/questions/:questionId', auth, authorize('cbt:manage'), validate(updateQuestionSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof updateQuestionSchemas>;
++    sendSuccess(res, await editor.update(requireUser(req), params.id, params.questionId, body, contextOf(req)));
++  });
++
++  router.delete('/cbt/exams/:id/questions/:questionId', auth, authorize('cbt:manage'), validate(deleteQuestionSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof deleteQuestionSchemas>;
++    sendSuccess(res, await editor.remove(requireUser(req), params.id, params.questionId, contextOf(req)));
++  });
++
+   router.get('/cbt/exams/:id/question-images', auth, authorize('cbt:manage'), validate(examIdSchemas), async (req, res) => {
+     const { params } = req.validated as Validated<typeof examIdSchemas>;
+     sendSuccess(res, await pictures.list(requireUser(req), params.id));
+--- a/src/modules/cbt/cbt.schema.ts
++++ b/src/modules/cbt/cbt.schema.ts
+@@ -50,6 +50,29 @@
+ const confirmBody = z.object({ importToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
+ export const confirmQuestionsSchemas = { params: idParams, body: confirmBody };
+ 
++/** Loose size limits only: the exact rules, with plain messages, are applied by buildQuestion. */
++const questionFields = {
++  type: z.enum(QUESTION_TYPES),
++  text: z.string().max(5000),
++  options: z.array(z.string().max(2000)).max(10).nullable().optional(),
++  correctAnswer: z.union([z.string().max(1000), z.array(z.string().max(1000)).max(50)]),
++  marks: z.number().optional(),
++  topic: z.string().max(500).nullable().optional(),
++  difficulty: z.enum(DIFFICULTIES).optional(),
++  explanation: z.string().max(5000).nullable().optional(),
++  imageFileName: z.string().max(200).nullable().optional(),
++};
++const addQuestionBody = z.object(questionFields).strict();
++const updateQuestionBody = z.object({
++  type: questionFields.type.optional(), text: questionFields.text.optional(), options: questionFields.options,
++  correctAnswer: questionFields.correctAnswer.optional(), marks: questionFields.marks, topic: questionFields.topic,
++  difficulty: questionFields.difficulty, explanation: questionFields.explanation, imageFileName: questionFields.imageFileName,
++}).strict().refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
++const questionPathParams = z.object({ id: objectId, questionId: objectId });
++export const addQuestionSchemas = { params: idParams, body: addQuestionBody };
++export const updateQuestionSchemas = { params: questionPathParams, body: updateQuestionBody };
++export const deleteQuestionSchemas = { params: questionPathParams };
++
+ const uploadImageBody = z.object({ questionId: objectId.optional() }).strict();
+ export const uploadImageSchemas = { params: idParams, body: uploadImageBody };
+ export const removeImageSchemas = { params: z.object({ id: objectId, fileName: z.string().trim().min(1).max(100) }) };
+@@ -118,6 +141,11 @@
+   registry.register({ method: 'get', path: '/cbt/exams/{id}/questions', operationId: 'listExamQuestions', summary: 'The questions with their correct answers, for the owner and admins to review', tags, roles: PERMISSIONS['cbt:analytics'], request: { params: idParams }, success: done(z.array(staffQuestion), 'Questions'), errors: ['NOT_FOUND'] });
+   registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import', operationId: 'importExamQuestions', summary: 'Upload the question CSV (field "file", max 2 MB, 200 questions). An optional image column names a picture uploaded with POST /cbt/exams/{id}/question-images. Validates every row; saves nothing', tags, roles: manage, request: { params: idParams }, upload: true, success: done(importReport, 'Validation report'), errors: ['IMPORT_INVALID', 'NOT_FOUND', 'CONFLICT'] });
+   registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import/confirm', operationId: 'confirmExamQuestions', summary: 'Save a clean upload as the exam\'s questions, replacing any earlier ones', tags, roles: manage, request: { params: idParams, body: confirmBody }, success: done(z.object({ questions: num, maxScore: z.number() }), 'Saved'), errors: ['IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
++  const examSummary = z.object({ questionCount: num, maxScore: z.number(), problem: z.object({ field: z.string(), issue: z.string() }).nullable().describe('A heads-up, not a block: for example mixed marks on an exam that gives each student a share of its questions. It must be fixed before the exam is submitted') });
++  const questionHow = 'Only while the exam is a draft or rejected, and only the teacher who owns it. The exam\'s question count and total marks are updated with it. A question identical to another in the exam is refused';
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions', operationId: 'addQuestion', summary: `Add one question to the end of the exam, without uploading a spreadsheet. MCQ: options are the option texts in order (2 to 5, lettered A to E automatically) and correctAnswer is the letter. TRUE_FALSE: correctAnswer is TRUE or FALSE. SHORT_ANSWER: correctAnswer is the list of accepted answers (1 to 10). imageFileName names a picture already uploaded to this exam. ${questionHow}`, tags, roles: manage, request: { params: idParams, body: addQuestionBody }, success: done(z.object({ question: staffQuestion, exam: examSummary }), 'Added', 201), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'patch', path: '/cbt/exams/{id}/questions/{questionId}', operationId: 'updateQuestion', summary: `Fix any part of one question: a typo, the correct answer, the marks, an option, its picture (imageFileName, or null to remove it). Only the fields you send change, and the result must still be a valid question. Changing type to one without options drops them. ${questionHow}`, tags, roles: manage, request: { params: questionPathParams, body: updateQuestionBody }, success: done(z.object({ question: staffQuestion, exam: examSummary }), 'Updated'), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'delete', path: '/cbt/exams/{id}/questions/{questionId}', operationId: 'deleteQuestion', summary: `Delete one question. The ones after it move up so the numbering has no gap. ${questionHow}`, tags, roles: manage, request: { params: questionPathParams }, success: done(z.object({ exam: examSummary }), 'Deleted'), errors: ['NOT_FOUND', 'CONFLICT'] });
+   const imageView = z.object({ fileName: z.string(), url: z.string(), width: num, height: num, bytes: num, questionIds: z.array(z.string()), uploadedAt: iso });
+   registry.register({ method: 'get', path: '/cbt/exams/{id}/question-images', operationId: 'listQuestionImages', summary: 'The pictures uploaded to this exam, each with the questions that show it. A picture with no questions is waiting to be matched by an import', tags, roles: manage, request: { params: idParams }, success: done(z.array(imageView), 'Pictures'), errors: ['NOT_FOUND'] });
+   registry.register({ method: 'post', path: '/cbt/exams/{id}/question-images', operationId: 'uploadQuestionImage', summary: 'Upload a diagram (field "file", PNG or JPG, max 2 MB, checked by its content). The file name matters: a spreadsheet\'s image column finds pictures by it, and uploading the same name again replaces the picture everywhere it is used. Send questionId to attach it to one question straight away. Shown at most 1600 px wide with its width and height returned. Only while the exam is a draft or rejected', tags, roles: manage, request: { params: idParams, body: uploadImageBody }, upload: true, success: done(imageView, 'Uploaded', 201), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT', 'SERVICE_UNAVAILABLE'] });
+--- /dev/null
++++ b/src/modules/cbt/question.editor.service.ts
+@@ -0,0 +1,181 @@
++import { AppError } from '../../common/errors/AppError';
++import { withTransaction } from '../../config/db';
++import { recordSafely, type AuditPort } from '../audit/audit.port';
++import { EXAM_STATUS, MAX_QUESTIONS } from './cbt.types';
++import type { ExamRecord, examRepository } from './exam.repository';
++import type { StoredQuestion } from './grading';
++import type { PaperCache } from './paper.cache';
++import { poolIssue } from './pool';
++import type { ImageRecord } from './question.image.repository';
++import type { QuestionToSave, questionRepository } from './question.repository';
++import { buildQuestion, type BuiltQuestion, type QuestionInput, type QuestionIssue } from './question.rules';
++
++interface Actor { id: string }
++interface Context { ip: string; requestId: string }
++
++/** What the exam holds after a change. `problem` is a heads-up, not a block: it is only enforced when the exam is submitted. */
++export interface ExamSummary { questionCount: number; maxScore: number; problem: QuestionIssue | null }
++export interface StaffQuestion {
++  id: string; order: number; type: string; text: string; options: { key: string; text: string }[] | null; correctAnswer: string | string[];
++  marks: number; topic: string | null; difficulty: string; explanation: string | null;
++  imageFileName: string | null; imageUrl: string | null; imageWidth: number | null; imageHeight: number | null;
++}
++export type QuestionPatch = Partial<QuestionInput>;
++
++const toStaff = (q: StoredQuestion): StaffQuestion => ({
++  id: q.id, order: q.order, type: q.type, text: q.text, options: q.options, correctAnswer: q.correctAnswer, marks: q.marks,
++  topic: q.topic, difficulty: q.difficulty, explanation: q.explanation,
++  imageFileName: q.imageFileName ?? null, imageUrl: q.imageUrl ?? null, imageWidth: q.imageWidth ?? null, imageHeight: q.imageHeight ?? null,
++});
++
++const invalid = (issues: readonly QuestionIssue[]): AppError =>
++  new AppError('VALIDATION_ERROR', { details: issues.map((i) => ({ field: i.field, issue: i.issue })) });
++const isDuplicateKey = (err: unknown): boolean => typeof err === 'object' && err !== null && 'code' in err && err.code === 11000;
++const duplicate = (): AppError => new AppError('CONFLICT', { details: [{ field: 'text', issue: 'This exam already has an identical question' }] });
++
++export function createQuestionEditorService(deps: {
++  questions: Pick<typeof questionRepository, 'findOne' | 'insertOne' | 'replaceOne' | 'deleteOne' | 'totals' | 'distinctMarks'>;
++  exams: Pick<typeof examRepository, 'findById' | 'setQuestionStats'>;
++  pictures: { byName(examId: string): Promise<Map<string, ImageRecord>> };
++  paper: PaperCache;
++  audit: AuditPort;
++}) {
++  const { questions, exams, pictures, paper, audit } = deps;
++
++  /** The teacher's own exam, and only while questions can still change: a draft, or one an admin sent back. */
++  async function editableExam(actor: Actor, examId: string): Promise<ExamRecord> {
++    const exam = await exams.findById(examId);
++    if (!exam || exam.teacherId !== actor.id) throw new AppError('NOT_FOUND');
++    if (exam.status !== EXAM_STATUS.DRAFT && exam.status !== EXAM_STATUS.REJECTED) {
++      throw new AppError('CONFLICT', { message: 'Only a draft or a rejected exam can have its questions changed' });
++    }
++    return exam;
++  }
++
++  /** Attaches the picture the question names, which must already be uploaded to this exam. */
++  async function withPicture(examId: string, built: BuiltQuestion, keep: StoredQuestion | null): Promise<QuestionToSave> {
++    const { imageFile, ...rest } = built;
++    let image: QuestionToSave['image'] = null;
++    if (imageFile) {
++      if (keep && keep.imageFileName === imageFile && keep.imageUrl) {
++        image = { fileName: imageFile, url: keep.imageUrl, width: keep.imageWidth ?? 0, height: keep.imageHeight ?? 0 };
++      } else {
++        const found = (await pictures.byName(examId)).get(imageFile);
++        if (!found) throw invalid([{ field: 'imageFileName', issue: `No picture named "${imageFile}" has been uploaded to this exam. Upload it first` }]);
++        image = { fileName: found.fileName, url: found.url, width: found.width, height: found.height };
++      }
++    }
++    return { ...rest, image };
++  }
++
++  /** Writes the totals from the questions that are really there. A false means the exam stopped being editable: undo everything. */
++  async function syncTotals(examId: string, tx: Parameters<typeof questions.totals>[1]): Promise<{ count: number; maxScore: number }> {
++    const t = await questions.totals(examId, tx);
++    if (!(await exams.setQuestionStats(examId, t.count, t.maxScore, tx))) {
++      throw new AppError('CONFLICT', { message: 'This exam was submitted while you were editing it' });
++    }
++    return t;
++  }
++
++  /** Mixed marks matter once students are given only some of the questions. Say so now rather than at submission. */
++  async function summary(exam: ExamRecord, t: { count: number; maxScore: number }): Promise<ExamSummary> {
++    const issue = poolIssue(exam.settings.questionsPerStudent, t.count, await questions.distinctMarks(exam.id));
++    return { questionCount: t.count, maxScore: t.maxScore, problem: issue && issue.field === 'marks' ? issue : null };
++  }
++
++  return {
++    /** Adds one question at the end of the exam. */
++    async add(actor: Actor, examId: string, input: QuestionInput, ctx: Context): Promise<{ question: StaffQuestion; exam: ExamSummary }> {
++      const exam = await editableExam(actor, examId);
++      const built = buildQuestion(input);
++      if (!built.ok) throw invalid(built.issues);
++      const toSave = await withPicture(examId, built.value, null);
++
++      let saved: StoredQuestion; let totals: { count: number; maxScore: number };
++      try {
++        ({ saved, totals } = await withTransaction(async (tx) => {
++          if ((await questions.totals(examId, tx)).count >= MAX_QUESTIONS) {
++            throw new AppError('CONFLICT', { details: [{ field: 'text', issue: `An exam can have at most ${MAX_QUESTIONS} questions` }] });
++          }
++          const inserted = await questions.insertOne(examId, toSave, tx);
++          return { saved: inserted, totals: await syncTotals(examId, tx) };
++        }));
++      } catch (err) {
++        throw isDuplicateKey(err) ? duplicate() : err;
++      }
++
++      await paper.invalidate(examId);
++      await recordSafely(audit, {
++        action: 'EXAM_QUESTION_ADDED', actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId,
++        metadata: { questionId: saved.id, type: saved.type, marks: saved.marks, text: saved.text.slice(0, 80) },
++      });
++      return { question: toStaff(saved), exam: await summary(exam, totals) };
++    },
++
++    /** Changes any of a question's fields. Only what is sent changes, and the result must still be a valid question. */
++    async update(actor: Actor, examId: string, questionId: string, patch: QuestionPatch, ctx: Context): Promise<{ question: StaffQuestion; exam: ExamSummary }> {
++      const exam = await editableExam(actor, examId);
++      const existing = await questions.findOne(examId, questionId);
++      if (!existing) throw new AppError('NOT_FOUND');
++      const changed = Object.entries(patch).filter(([, v]) => v !== undefined).map(([k]) => k);
++      if (changed.length === 0) throw invalid([{ field: 'body', issue: 'Nothing to update' }]);
++
++      const type = patch.type ?? existing.type;
++      const candidate: QuestionInput = {
++        type,
++        text: patch.text ?? existing.text,
++        // Moving to a type without options drops them, so a teacher need not send options: null as well.
++        options: patch.options !== undefined ? patch.options : (type === 'MCQ' ? existing.options?.map((o) => o.text) ?? null : null),
++        correctAnswer: patch.correctAnswer ?? existing.correctAnswer,
++        marks: patch.marks ?? existing.marks,
++        topic: patch.topic !== undefined ? patch.topic : existing.topic,
++        difficulty: patch.difficulty ?? existing.difficulty,
++        explanation: patch.explanation !== undefined ? patch.explanation : existing.explanation,
++        imageFileName: patch.imageFileName !== undefined ? patch.imageFileName : existing.imageFileName ?? null,
++      };
++      const built = buildQuestion(candidate);
++      if (!built.ok) throw invalid(built.issues);
++      const toSave = await withPicture(examId, built.value, existing);
++
++      let saved: StoredQuestion | null; let totals: { count: number; maxScore: number };
++      try {
++        ({ saved, totals } = await withTransaction(async (tx) => {
++          const replaced = await questions.replaceOne(examId, questionId, toSave, tx);
++          if (!replaced) throw new AppError('NOT_FOUND');
++          return { saved: replaced, totals: await syncTotals(examId, tx) };
++        }));
++      } catch (err) {
++        throw isDuplicateKey(err) ? duplicate() : err;
++      }
++      if (!saved) throw new AppError('NOT_FOUND');
++
++      await paper.invalidate(examId);
++      await recordSafely(audit, {
++        action: 'EXAM_QUESTION_UPDATED', actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId,
++        metadata: { questionId, fields: changed, before: { text: existing.text.slice(0, 80), marks: existing.marks }, after: { text: saved.text.slice(0, 80), marks: saved.marks } },
++      });
++      return { question: toStaff(saved), exam: await summary(exam, totals) };
++    },
++
++    /** Removes one question. The ones after it move up, so the numbering has no gap. */
++    async remove(actor: Actor, examId: string, questionId: string, ctx: Context): Promise<{ exam: ExamSummary }> {
++      const exam = await editableExam(actor, examId);
++      const existing = await questions.findOne(examId, questionId);
++      if (!existing) throw new AppError('NOT_FOUND');
++
++      const totals = await withTransaction(async (tx) => {
++        if (!(await questions.deleteOne(examId, questionId, tx))) throw new AppError('NOT_FOUND');
++        return syncTotals(examId, tx);
++      });
++
++      await paper.invalidate(examId);
++      await recordSafely(audit, {
++        action: 'EXAM_QUESTION_DELETED', actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId,
++        metadata: { questionId, type: existing.type, marks: existing.marks, text: existing.text.slice(0, 80) },
++      });
++      return { exam: await summary(exam, totals) };
++    },
++  };
++}
++
++export type QuestionEditorService = ReturnType<typeof createQuestionEditorService>;
+--- a/src/modules/cbt/question.repository.ts
++++ b/src/modules/cbt/question.repository.ts
+@@ -3,7 +3,8 @@
+ import type { PaperQuestion, StoredQuestion } from './grading';
+ 
+ interface QuestionDocument {
+-  examId: Types.ObjectId; importBatchId: Types.ObjectId; order: number; type: QuestionType; text: string;
++  examId: Types.ObjectId; /** Absent on a question added by hand. */
++  importBatchId?: Types.ObjectId; order: number; type: QuestionType; text: string;
+   options: { key: string; text: string }[]; correctAnswer: string | string[]; marks: number;
+   topic: string | null; difficulty: Difficulty; explanation: string | null; hash: string;
+   image?: { fileName: string; url: string; width: number; height: number } | null;
+@@ -13,7 +14,7 @@
+ const questionSchema = new mongoose.Schema<QuestionDocument>(
+   {
+     examId: { type: mongoose.Schema.Types.ObjectId, ref: 'Exam', required: true },
+-    importBatchId: { type: mongoose.Schema.Types.ObjectId, required: true },
++    importBatchId: { type: mongoose.Schema.Types.ObjectId },
+     order: { type: Number, required: true },
+     type: { type: String, enum: QUESTION_TYPES, required: true },
+     text: { type: String, required: true, maxlength: 1000 },
+@@ -86,6 +87,55 @@
+   }));
+ }
+ 
++/** A question as the teacher will save it: validated, with its picture (if any) already looked up. */
++export interface QuestionToSave {
++  type: QuestionType; text: string; options: { key: string; text: string }[] | null; correctAnswer: string | string[];
++  marks: number; topic: string | null; difficulty: Difficulty; explanation: string | null; hash: string;
++  image: { fileName: string; url: string; width: number; height: number } | null;
++}
++const body = (q: QuestionToSave) => ({
++  type: q.type, text: q.text, options: q.options ?? [], correctAnswer: q.correctAnswer, marks: q.marks, topic: q.topic,
++  difficulty: q.difficulty, explanation: q.explanation, hash: q.hash, image: q.image,
++});
++
++async function findOne(examId: string, questionId: string): Promise<StoredQuestion | null> {
++  if (!/^[a-f0-9]{24}$/.test(questionId)) return null;
++  const row = await QuestionModel.findOne({ _id: questionId, examId }).lean<Row>();
++  return row ? toStored(row) : null;
++}
++
++/** Adds one question at the end. The caller runs this in a transaction with the exam's totals. */
++async function insertOne(examId: string, q: QuestionToSave, session: ClientSession): Promise<StoredQuestion> {
++  const last = await QuestionModel.findOne({ examId }, { order: 1 }).sort({ order: -1 }).session(session).lean<Row>();
++  const [doc] = await QuestionModel.create([{ examId, order: last ? last.order + 1 : 0, ...body(q) }], { session });
++  if (!doc) throw new Error('Question was not saved');
++  return toStored(doc.toObject() as Row);
++}
++
++async function replaceOne(examId: string, questionId: string, q: QuestionToSave, session: ClientSession): Promise<StoredQuestion | null> {
++  const row = await QuestionModel.findOneAndUpdate({ _id: questionId, examId }, { $set: body(q) }, { new: true, session }).lean<Row>();
++  return row ? toStored(row) : null;
++}
++
++/** Deletes one question and closes the gap it leaves, so the numbering stays 1, 2, 3 with no holes. */
++async function deleteOne(examId: string, questionId: string, session: ClientSession): Promise<boolean> {
++  const done = await QuestionModel.deleteOne({ _id: questionId, examId }, { session });
++  if (done.deletedCount === 0) return false;
++  const rest = await QuestionModel.find({ examId }, { order: 1 }).sort({ order: 1 }).session(session).lean<Row[]>();
++  const moves = rest.flatMap((r, i) => (r.order === i ? [] : [{ updateOne: { filter: { _id: r._id }, update: { $set: { order: i } } } }]));
++  if (moves.length > 0) await QuestionModel.bulkWrite(moves, { session, ordered: true });
++  return true;
++}
++
++/** What the exam now holds, worked out from the questions themselves so it can never drift from them. */
++async function totals(examId: string, session: ClientSession): Promise<{ count: number; maxScore: number }> {
++  const [row] = await QuestionModel.aggregate<{ count: number; marks: number }>([
++    { $match: { examId: new mongoose.Types.ObjectId(examId) } },
++    { $group: { _id: null, count: { $sum: 1 }, marks: { $sum: '$marks' } } },
++  ]).session(session);
++  return { count: row?.count ?? 0, maxScore: Math.round((row?.marks ?? 0) * 10) / 10 };
++}
++
+ /** The different mark values among an exam's questions. */
+ async function distinctMarks(examId: string): Promise<number[]> {
+   return (await QuestionModel.distinct('marks', { examId })) as number[];
+@@ -125,4 +175,4 @@
+   await BatchModel.deleteMany({ examId });
+ }
+ 
+-export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam, distinctMarks, hasQuestion, attachImage, refreshImage, clearImage, imageLinks };
+\ No newline at end of file
++export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam, distinctMarks, findOne, insertOne, replaceOne, deleteOne, totals, hasQuestion, attachImage, refreshImage, clearImage, imageLinks };
+\ No newline at end of file
+--- /dev/null
++++ b/src/modules/cbt/question.rules.ts
+@@ -0,0 +1,122 @@
++import { createHash } from 'node:crypto';
++import { normalizeImageFileName } from '../../common/utils/image';
++import { DIFFICULTIES, OPTION_KEYS, QUESTION_TYPES, type Difficulty, type QuestionType } from './cbt.types';
++import { normalizeAnswer } from './grading';
++
++/**
++ * The rules one question must meet, the same ones the spreadsheet import applies to every row, for questions
++ * added or edited by hand. Pure: it reads its input and returns either a clean question or every problem found.
++ */
++export interface QuestionInput {
++  type: string;
++  text: string;
++  /** MCQ only: the option texts in order. Letters A to E are given automatically. */
++  options?: readonly string[] | null | undefined;
++  /** MCQ: the letter. TRUE_FALSE: TRUE or FALSE. SHORT_ANSWER: the accepted answers (or one string with answers split by |). */
++  correctAnswer: string | readonly string[];
++  marks?: number | undefined;
++  topic?: string | null | undefined;
++  difficulty?: string | undefined;
++  explanation?: string | null | undefined;
++  imageFileName?: string | null | undefined;
++}
++
++export interface QuestionIssue { field: string; issue: string }
++
++export interface BuiltQuestion {
++  type: QuestionType;
++  text: string;
++  options: { key: string; text: string }[] | null;
++  correctAnswer: string | string[];
++  marks: number;
++  topic: string | null;
++  difficulty: Difficulty;
++  explanation: string | null;
++  /** The normalised picture file name, or null. Whether that picture exists is checked by the caller. */
++  imageFile: string | null;
++  hash: string;
++}
++
++const CONTROL = /[\u0000-\u001f\u007f]/g;
++const FORMULA_START = /^[=@]/;
++const clean = (value: string | null | undefined): string => (value ?? '').replace(CONTROL, '').trim();
++
++/** Two questions are the same when their type, wording, options and picture are the same, ignoring case and spacing. */
++export function questionHash(type: string, text: string, optionTexts: readonly string[], imageFile: string | null): string {
++  return createHash('sha256')
++    .update([type, normalizeAnswer(text), ...optionTexts.map(normalizeAnswer), imageFile ?? ''].join('\u0001'))
++    .digest('hex');
++}
++
++export function buildQuestion(input: QuestionInput): { ok: true; value: BuiltQuestion } | { ok: false; issues: QuestionIssue[] } {
++  const issues: QuestionIssue[] = [];
++  const problem = (field: string, issue: string): void => void issues.push({ field, issue });
++  const text_ = (field: string, raw: string | null | undefined, max: number, required: boolean): string => {
++    const value = clean(raw);
++    if (!value) { if (required) problem(field, 'Required'); return ''; }
++    if (value.length > max) problem(field, `At most ${max} characters`);
++    else if (FORMULA_START.test(value)) problem(field, 'Must not start with = or @');
++    return value;
++  };
++
++  const type = clean(input.type).toUpperCase().replace(/[\s-]+/g, '_');
++  if (!(QUESTION_TYPES as readonly string[]).includes(type)) problem('type', 'Use MCQ, TRUE_FALSE or SHORT_ANSWER');
++  const text = text_('text', input.text, 1000, true);
++
++  // Options belong to multiple-choice questions only, and are lettered from A.
++  const optionTexts = (input.options ?? []).map((o, i) => text_(`options.${i}`, o, 300, true));
++  const options = optionTexts.map((t, i) => ({ key: OPTION_KEYS[i] ?? '', text: t }));
++  if (type === 'MCQ') {
++    if (optionTexts.length < 2) problem('options', 'A multiple-choice question needs at least two options');
++    else if (optionTexts.length > OPTION_KEYS.length) problem('options', `At most ${OPTION_KEYS.length} options`);
++    else if (new Set(optionTexts.map(normalizeAnswer)).size !== optionTexts.length) problem('options', 'Two options are the same');
++  } else if (optionTexts.length > 0) {
++    problem('options', 'Options are only for MCQ questions. Send options: null');
++  }
++
++  // The correct answer.
++  let correctAnswer: string | string[] = '';
++  const raw = input.correctAnswer;
++  if (type === 'MCQ') {
++    const key = (typeof raw === 'string' ? raw : '').trim().toUpperCase();
++    if (!options.some((o) => o.key === key)) problem('correctAnswer', 'Must be the letter of one of the options');
++    else correctAnswer = key;
++  } else if (type === 'TRUE_FALSE') {
++    const v = (typeof raw === 'string' ? raw : '').trim().toUpperCase();
++    if (v === 'TRUE' || v === 'T') correctAnswer = 'TRUE';
++    else if (v === 'FALSE' || v === 'F') correctAnswer = 'FALSE';
++    else problem('correctAnswer', 'Use TRUE or FALSE');
++  } else if (type === 'SHORT_ANSWER') {
++    const list = typeof raw === 'string' ? raw.split('|') : [...raw];
++    const accepted = [...new Set(list.map((a) => normalizeAnswer(clean(a))).filter(Boolean))];
++    if (accepted.length === 0 || accepted.length > 10) problem('correctAnswer', 'Give 1 to 10 accepted answers');
++    else if (accepted.some((a) => a.length > 100)) problem('correctAnswer', 'Each accepted answer can be at most 100 characters');
++    else correctAnswer = accepted;
++  }
++
++  const marks = input.marks ?? 1;
++  if (!Number.isFinite(marks) || marks < 0.5 || marks > 100 || Math.round(marks * 10) / 10 !== marks) {
++    problem('marks', 'Use a number from 0.5 to 100, with at most one decimal');
++  }
++
++  const topic = text_('topic', input.topic, 60, false);
++  const difficulty = (input.difficulty ?? 'MEDIUM').toUpperCase();
++  if (!(DIFFICULTIES as readonly string[]).includes(difficulty)) problem('difficulty', 'Use EASY, MEDIUM or HARD');
++  const explanation = text_('explanation', input.explanation, 500, false);
++
++  let imageFile: string | null = null;
++  if (input.imageFileName) {
++    imageFile = normalizeImageFileName(input.imageFileName);
++    if (!imageFile) problem('imageFileName', 'Use the picture\'s file name, like triangle.png');
++  }
++
++  if (issues.length > 0) return { ok: false, issues };
++  return {
++    ok: true,
++    value: {
++      type: type as QuestionType, text, options: type === 'MCQ' ? options : null, correctAnswer, marks,
++      topic: topic || null, difficulty: difficulty as Difficulty, explanation: explanation || null, imageFile,
++      hash: questionHash(type, text, optionTexts, imageFile),
++    },
++  };
++}

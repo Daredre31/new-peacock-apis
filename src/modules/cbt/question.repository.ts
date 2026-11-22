@@ -3,7 +3,8 @@ import { DIFFICULTIES, QUESTION_TYPES, type Difficulty, type QuestionType } from
 import type { PaperQuestion, StoredQuestion } from './grading';
 
 interface QuestionDocument {
-  examId: Types.ObjectId; importBatchId: Types.ObjectId; order: number; type: QuestionType; text: string;
+  examId: Types.ObjectId; /** Absent on a question added by hand. */
+  importBatchId?: Types.ObjectId; order: number; type: QuestionType; text: string;
   options: { key: string; text: string }[]; correctAnswer: string | string[]; marks: number;
   topic: string | null; difficulty: Difficulty; explanation: string | null; hash: string;
   image?: { fileName: string; url: string; width: number; height: number } | null;
@@ -13,7 +14,7 @@ type Row = QuestionDocument & { _id: Types.ObjectId };
 const questionSchema = new mongoose.Schema<QuestionDocument>(
   {
     examId: { type: mongoose.Schema.Types.ObjectId, ref: 'Exam', required: true },
-    importBatchId: { type: mongoose.Schema.Types.ObjectId, required: true },
+    importBatchId: { type: mongoose.Schema.Types.ObjectId },
     order: { type: Number, required: true },
     type: { type: String, enum: QUESTION_TYPES, required: true },
     text: { type: String, required: true, maxlength: 1000 },
@@ -86,6 +87,55 @@ async function paperOf(examId: string): Promise<PaperQuestion[]> {
   }));
 }
 
+/** A question as the teacher will save it: validated, with its picture (if any) already looked up. */
+export interface QuestionToSave {
+  type: QuestionType; text: string; options: { key: string; text: string }[] | null; correctAnswer: string | string[];
+  marks: number; topic: string | null; difficulty: Difficulty; explanation: string | null; hash: string;
+  image: { fileName: string; url: string; width: number; height: number } | null;
+}
+const body = (q: QuestionToSave) => ({
+  type: q.type, text: q.text, options: q.options ?? [], correctAnswer: q.correctAnswer, marks: q.marks, topic: q.topic,
+  difficulty: q.difficulty, explanation: q.explanation, hash: q.hash, image: q.image,
+});
+
+async function findOne(examId: string, questionId: string): Promise<StoredQuestion | null> {
+  if (!/^[a-f0-9]{24}$/.test(questionId)) return null;
+  const row = await QuestionModel.findOne({ _id: questionId, examId }).lean<Row>();
+  return row ? toStored(row) : null;
+}
+
+/** Adds one question at the end. The caller runs this in a transaction with the exam's totals. */
+async function insertOne(examId: string, q: QuestionToSave, session: ClientSession): Promise<StoredQuestion> {
+  const last = await QuestionModel.findOne({ examId }, { order: 1 }).sort({ order: -1 }).session(session).lean<Row>();
+  const [doc] = await QuestionModel.create([{ examId, order: last ? last.order + 1 : 0, ...body(q) }], { session });
+  if (!doc) throw new Error('Question was not saved');
+  return toStored(doc.toObject() as Row);
+}
+
+async function replaceOne(examId: string, questionId: string, q: QuestionToSave, session: ClientSession): Promise<StoredQuestion | null> {
+  const row = await QuestionModel.findOneAndUpdate({ _id: questionId, examId }, { $set: body(q) }, { new: true, session }).lean<Row>();
+  return row ? toStored(row) : null;
+}
+
+/** Deletes one question and closes the gap it leaves, so the numbering stays 1, 2, 3 with no holes. */
+async function deleteOne(examId: string, questionId: string, session: ClientSession): Promise<boolean> {
+  const done = await QuestionModel.deleteOne({ _id: questionId, examId }, { session });
+  if (done.deletedCount === 0) return false;
+  const rest = await QuestionModel.find({ examId }, { order: 1 }).sort({ order: 1 }).session(session).lean<Row[]>();
+  const moves = rest.flatMap((r, i) => (r.order === i ? [] : [{ updateOne: { filter: { _id: r._id }, update: { $set: { order: i } } } }]));
+  if (moves.length > 0) await QuestionModel.bulkWrite(moves, { session, ordered: true });
+  return true;
+}
+
+/** What the exam now holds, worked out from the questions themselves so it can never drift from them. */
+async function totals(examId: string, session: ClientSession): Promise<{ count: number; maxScore: number }> {
+  const [row] = await QuestionModel.aggregate<{ count: number; marks: number }>([
+    { $match: { examId: new mongoose.Types.ObjectId(examId) } },
+    { $group: { _id: null, count: { $sum: 1 }, marks: { $sum: '$marks' } } },
+  ]).session(session);
+  return { count: row?.count ?? 0, maxScore: Math.round((row?.marks ?? 0) * 10) / 10 };
+}
+
 /** The different mark values among an exam's questions. */
 async function distinctMarks(examId: string): Promise<number[]> {
   return (await QuestionModel.distinct('marks', { examId })) as number[];
@@ -125,4 +175,4 @@ async function removeForExam(examId: string): Promise<void> {
   await BatchModel.deleteMany({ examId });
 }
 
-export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam, distinctMarks, hasQuestion, attachImage, refreshImage, clearImage, imageLinks };
+export const questionRepository = { replaceAll, forExamWithKey, paperOf, removeForExam, distinctMarks, findOne, insertOne, replaceOne, deleteOne, totals, hasQuestion, attachImage, refreshImage, clearImage, imageLinks };

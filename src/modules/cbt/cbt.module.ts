@@ -24,6 +24,7 @@ import { createExamService } from './exam.service';
 import type { ImageStore } from '../../integrations/imageStore';
 import { createPaperCache } from './paper.cache';
 import { questionImageRepository } from './question.image.repository';
+import { createQuestionEditorService } from './question.editor.service';
 import { createQuestionImageService } from './question.image.service';
 import { createQuestionImportService } from './question.import';
 import { questionRepository } from './question.repository';
@@ -52,12 +53,13 @@ export function createCbtModule(deps: {
   const importService = createQuestionImportService({
     store: deps.store, secret: env.REFRESH_TOKEN_SECRET, exams: examRepository, questions: questionRepository, pictures, paper, audit: deps.audit,
   });
+  const editor = createQuestionEditorService({ questions: questionRepository, exams: examRepository, pictures, paper, audit: deps.audit });
   const analytics = createAnalyticsService({
     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository, students: studentRepository,
   });
 
     return {
-    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, authenticate: deps.auth.middleware.authenticate }),
+    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, editor, authenticate: deps.auth.middleware.authenticate }),
     attempts: attemptService,
     exams: examService,
   };

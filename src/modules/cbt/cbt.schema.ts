@@ -50,6 +50,29 @@ export const attemptsListSchemas = { params: idParams, query: z.object({ ...pagi
 const confirmBody = z.object({ importToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
 export const confirmQuestionsSchemas = { params: idParams, body: confirmBody };
 
+/** Loose size limits only: the exact rules, with plain messages, are applied by buildQuestion. */
+const questionFields = {
+  type: z.enum(QUESTION_TYPES),
+  text: z.string().max(5000),
+  options: z.array(z.string().max(2000)).max(10).nullable().optional(),
+  correctAnswer: z.union([z.string().max(1000), z.array(z.string().max(1000)).max(50)]),
+  marks: z.number().optional(),
+  topic: z.string().max(500).nullable().optional(),
+  difficulty: z.enum(DIFFICULTIES).optional(),
+  explanation: z.string().max(5000).nullable().optional(),
+  imageFileName: z.string().max(200).nullable().optional(),
+};
+const addQuestionBody = z.object(questionFields).strict();
+const updateQuestionBody = z.object({
+  type: questionFields.type.optional(), text: questionFields.text.optional(), options: questionFields.options,
+  correctAnswer: questionFields.correctAnswer.optional(), marks: questionFields.marks, topic: questionFields.topic,
+  difficulty: questionFields.difficulty, explanation: questionFields.explanation, imageFileName: questionFields.imageFileName,
+}).strict().refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
+const questionPathParams = z.object({ id: objectId, questionId: objectId });
+export const addQuestionSchemas = { params: idParams, body: addQuestionBody };
+export const updateQuestionSchemas = { params: questionPathParams, body: updateQuestionBody };
+export const deleteQuestionSchemas = { params: questionPathParams };
+
 const uploadImageBody = z.object({ questionId: objectId.optional() }).strict();
 export const uploadImageSchemas = { params: idParams, body: uploadImageBody };
 export const removeImageSchemas = { params: z.object({ id: objectId, fileName: z.string().trim().min(1).max(100) }) };
@@ -118,6 +141,11 @@ export function registerCbtOperations(registry: OpenApiRegistry): void {
   registry.register({ method: 'get', path: '/cbt/exams/{id}/questions', operationId: 'listExamQuestions', summary: 'The questions with their correct answers, for the owner and admins to review', tags, roles: PERMISSIONS['cbt:analytics'], request: { params: idParams }, success: done(z.array(staffQuestion), 'Questions'), errors: ['NOT_FOUND'] });
   registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import', operationId: 'importExamQuestions', summary: 'Upload the question CSV (field "file", max 2 MB, 200 questions). An optional image column names a picture uploaded with POST /cbt/exams/{id}/question-images. Validates every row; saves nothing', tags, roles: manage, request: { params: idParams }, upload: true, success: done(importReport, 'Validation report'), errors: ['IMPORT_INVALID', 'NOT_FOUND', 'CONFLICT'] });
   registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import/confirm', operationId: 'confirmExamQuestions', summary: 'Save a clean upload as the exam\'s questions, replacing any earlier ones', tags, roles: manage, request: { params: idParams, body: confirmBody }, success: done(z.object({ questions: num, maxScore: z.number() }), 'Saved'), errors: ['IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
+  const examSummary = z.object({ questionCount: num, maxScore: z.number(), problem: z.object({ field: z.string(), issue: z.string() }).nullable().describe('A heads-up, not a block: for example mixed marks on an exam that gives each student a share of its questions. It must be fixed before the exam is submitted') });
+  const questionHow = 'Only while the exam is a draft or rejected, and only the teacher who owns it. The exam\'s question count and total marks are updated with it. A question identical to another in the exam is refused';
+  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions', operationId: 'addQuestion', summary: `Add one question to the end of the exam, without uploading a spreadsheet. MCQ: options are the option texts in order (2 to 5, lettered A to E automatically) and correctAnswer is the letter. TRUE_FALSE: correctAnswer is TRUE or FALSE. SHORT_ANSWER: correctAnswer is the list of accepted answers (1 to 10). imageFileName names a picture already uploaded to this exam. ${questionHow}`, tags, roles: manage, request: { params: idParams, body: addQuestionBody }, success: done(z.object({ question: staffQuestion, exam: examSummary }), 'Added', 201), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT'] });
+  registry.register({ method: 'patch', path: '/cbt/exams/{id}/questions/{questionId}', operationId: 'updateQuestion', summary: `Fix any part of one question: a typo, the correct answer, the marks, an option, its picture (imageFileName, or null to remove it). Only the fields you send change, and the result must still be a valid question. Changing type to one without options drops them. ${questionHow}`, tags, roles: manage, request: { params: questionPathParams, body: updateQuestionBody }, success: done(z.object({ question: staffQuestion, exam: examSummary }), 'Updated'), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT'] });
+  registry.register({ method: 'delete', path: '/cbt/exams/{id}/questions/{questionId}', operationId: 'deleteQuestion', summary: `Delete one question. The ones after it move up so the numbering has no gap. ${questionHow}`, tags, roles: manage, request: { params: questionPathParams }, success: done(z.object({ exam: examSummary }), 'Deleted'), errors: ['NOT_FOUND', 'CONFLICT'] });
   const imageView = z.object({ fileName: z.string(), url: z.string(), width: num, height: num, bytes: num, questionIds: z.array(z.string()), uploadedAt: iso });
   registry.register({ method: 'get', path: '/cbt/exams/{id}/question-images', operationId: 'listQuestionImages', summary: 'The pictures uploaded to this exam, each with the questions that show it. A picture with no questions is waiting to be matched by an import', tags, roles: manage, request: { params: idParams }, success: done(z.array(imageView), 'Pictures'), errors: ['NOT_FOUND'] });
   registry.register({ method: 'post', path: '/cbt/exams/{id}/question-images', operationId: 'uploadQuestionImage', summary: 'Upload a diagram (field "file", PNG or JPG, max 2 MB, checked by its content). The file name matters: a spreadsheet\'s image column finds pictures by it, and uploading the same name again replaces the picture everywhere it is used. Send questionId to attach it to one question straight away. Shown at most 1600 px wide with its width and height returned. Only while the exam is a draft or rejected', tags, roles: manage, request: { params: idParams, body: uploadImageBody }, upload: true, success: done(imageView, 'Uploaded', 201), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT', 'SERVICE_UNAVAILABLE'] });

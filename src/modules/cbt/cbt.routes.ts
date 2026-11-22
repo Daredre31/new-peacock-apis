@@ -10,11 +10,12 @@ import { ROLES } from '../../config/constants';
 import type { AnalyticsService } from './analytics.service';
 import type { AttemptService } from './attempt.service';
 import {
-  attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, examIdSchemas, listExamsSchemas, rejectSchemas, removeImageSchemas,
-  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas, uploadImageSchemas,
+  addQuestionSchemas, attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, deleteQuestionSchemas, examIdSchemas, listExamsSchemas, rejectSchemas, removeImageSchemas,
+  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas, updateQuestionSchemas, uploadImageSchemas,
 } from './cbt.schema';
 import type { ExamService } from './exam.service';
 import { QUESTION_TEMPLATE_CSV, type QuestionImportService } from './question.import';
+import type { QuestionEditorService } from './question.editor.service';
 import type { QuestionImageService } from './question.image.service';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
@@ -23,9 +24,9 @@ const uploadPicture = multer({ storage: multer.memoryStorage(), limits: { fileSi
 const CSV_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain']);
 
 export function createCbtRouter(deps: {
-  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; authenticate: RequestHandler;
+  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; editor: QuestionEditorService; authenticate: RequestHandler;
 }): Router {
-  const { exams, attempts, analytics, importService, pictures, authenticate: auth } = deps;
+  const { exams, attempts, analytics, importService, pictures, editor, authenticate: auth } = deps;
   const router = Router();
 
   // Parents and students have their own routes. The staff routes refuse them.
@@ -91,6 +92,21 @@ export function createCbtRouter(deps: {
   router.post('/cbt/exams/:id/questions/import/confirm', auth, authorize('cbt:manage'), validate(confirmQuestionsSchemas), async (req, res) => {
     const { params, body } = req.validated as Validated<typeof confirmQuestionsSchemas>;
     sendSuccess(res, await importService.confirm(requireUser(req), params.id, body.importToken, contextOf(req)));
+  });
+
+  router.post('/cbt/exams/:id/questions', auth, authorize('cbt:manage'), validate(addQuestionSchemas), async (req, res) => {
+    const { params, body } = req.validated as Validated<typeof addQuestionSchemas>;
+    sendCreated(res, await editor.add(requireUser(req), params.id, body, contextOf(req)));
+  });
+
+  router.patch('/cbt/exams/:id/questions/:questionId', auth, authorize('cbt:manage'), validate(updateQuestionSchemas), async (req, res) => {
+    const { params, body } = req.validated as Validated<typeof updateQuestionSchemas>;
+    sendSuccess(res, await editor.update(requireUser(req), params.id, params.questionId, body, contextOf(req)));
+  });
+
+  router.delete('/cbt/exams/:id/questions/:questionId', auth, authorize('cbt:manage'), validate(deleteQuestionSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof deleteQuestionSchemas>;
+    sendSuccess(res, await editor.remove(requireUser(req), params.id, params.questionId, contextOf(req)));
   });
 
   router.get('/cbt/exams/:id/question-images', auth, authorize('cbt:manage'), validate(examIdSchemas), async (req, res) => {
