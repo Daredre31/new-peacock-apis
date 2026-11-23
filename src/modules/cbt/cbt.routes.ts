@@ -10,13 +10,17 @@ import { ROLES } from '../../config/constants';
 import type { AnalyticsService } from './analytics.service';
 import type { AttemptService } from './attempt.service';
 import {
-  addQuestionSchemas, attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, deleteQuestionSchemas, examIdSchemas, listExamsSchemas, rejectSchemas, removeImageSchemas,
-  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas, updateQuestionSchemas, uploadImageSchemas,
+  addQuestionSchemas, allRetakesSchemas, approveRetakeSchemas, attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, deleteQuestionSchemas,
+  draftAddSchemas, draftBatchSchemas, draftRowSchemas, draftUpdateSchemas, examIdSchemas, examRetakesSchemas, listExamsSchemas, pauseSchemas,
+  rejectRetakeSchemas, rejectSchemas, removeImageSchemas, requestRetakeSchemas, revokeRetakeSchemas, saveAnswersSchemas, scheduleSchemas,
+  studentTrailSchemas, submitAttemptSchemas, updateExamSchemas, updateQuestionSchemas, uploadImageSchemas,
 } from './cbt.schema';
 import type { ExamService } from './exam.service';
+import type { PauseService } from './pause.service';
 import { QUESTION_TEMPLATE_CSV, type QuestionImportService } from './question.import';
 import type { QuestionEditorService } from './question.editor.service';
 import type { QuestionImageService } from './question.image.service';
+import type { RetakeService } from './retake.service';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
 /** One picture and, optionally, the question it belongs to. The picture's real type is checked from its bytes. */
@@ -24,9 +28,10 @@ const uploadPicture = multer({ storage: multer.memoryStorage(), limits: { fileSi
 const CSV_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain']);
 
 export function createCbtRouter(deps: {
-  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; editor: QuestionEditorService; authenticate: RequestHandler;
+  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; editor: QuestionEditorService;
+  pauses: PauseService; retakes: RetakeService; authenticate: RequestHandler;
 }): Router {
-  const { exams, attempts, analytics, importService, pictures, editor, authenticate: auth } = deps;
+  const { exams, attempts, analytics, importService, pictures, editor, pauses, retakes, authenticate: auth } = deps;
   const router = Router();
 
   // Parents and students have their own routes. The staff routes refuse them.
@@ -94,6 +99,38 @@ export function createCbtRouter(deps: {
     sendSuccess(res, await importService.confirm(requireUser(req), params.id, body.importToken, contextOf(req)));
   });
 
+  // ---- the uploaded draft: look at it, fix it, add to it, then confirm
+  router.get('/cbt/exams/:id/questions/import/:batchId', auth, authorize('cbt:manage'), validate(draftBatchSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof draftBatchSchemas>;
+    sendSuccess(res, await importService.get(requireUser(req), params.id, params.batchId));
+  });
+
+  router.post('/cbt/exams/:id/questions/import/:batchId/questions', auth, authorize('cbt:manage'), validate(draftAddSchemas), async (req, res) => {
+    const { params, body } = req.validated as Validated<typeof draftAddSchemas>;
+    sendCreated(res, await importService.addQuestion(requireUser(req), params.id, params.batchId, body));
+  });
+
+  router.patch('/cbt/exams/:id/questions/import/:batchId/questions/:tempId', auth, authorize('cbt:manage'), validate(draftUpdateSchemas), async (req, res) => {
+    const { params, body } = req.validated as Validated<typeof draftUpdateSchemas>;
+    sendSuccess(res, await importService.updateQuestion(requireUser(req), params.id, params.batchId, params.tempId, body));
+  });
+
+  router.delete('/cbt/exams/:id/questions/import/:batchId/questions/:tempId', auth, authorize('cbt:manage'), validate(draftRowSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof draftRowSchemas>;
+    sendSuccess(res, await importService.removeQuestion(requireUser(req), params.id, params.batchId, params.tempId));
+  });
+
+  router.post('/cbt/exams/:id/questions/import/:batchId/confirm', auth, authorize('cbt:manage'), validate(draftBatchSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof draftBatchSchemas>;
+    sendSuccess(res, await importService.confirm(requireUser(req), params.id, params.batchId, contextOf(req)));
+  });
+
+  router.delete('/cbt/exams/:id/questions/import/:batchId', auth, authorize('cbt:manage'), validate(draftBatchSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof draftBatchSchemas>;
+    await importService.discard(requireUser(req), params.id, params.batchId);
+    sendSuccess(res, null);
+  });
+
   router.post('/cbt/exams/:id/questions', auth, authorize('cbt:manage'), validate(addQuestionSchemas), async (req, res) => {
     const { params, body } = req.validated as Validated<typeof addQuestionSchemas>;
     sendCreated(res, await editor.add(requireUser(req), params.id, body, contextOf(req)));
@@ -156,6 +193,66 @@ export function createCbtRouter(deps: {
     const { params, query } = req.validated as Validated<typeof attemptsListSchemas>;
     const { items, total } = await analytics.attemptsOf(requireUser(req), params.id, query);
     sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
+  });
+
+  // ---- pause and resume (the exam's teacher, an admin or the super admin)
+  router.post('/cbt/exams/:id/pause', auth, authorize('cbt:analytics'), validate(pauseSchemas), async (req, res) => {
+    const { params, body } = req.validated as Validated<typeof pauseSchemas>;
+    sendSuccess(res, await pauses.pause(requireUser(req), params.id, body, contextOf(req)));
+  });
+
+  router.post('/cbt/exams/:id/resume', auth, authorize('cbt:analytics'), validate(examIdSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof examIdSchemas>;
+    sendSuccess(res, await pauses.resume(requireUser(req), params.id, contextOf(req)));
+  });
+
+  router.get('/cbt/exams/:id/pause-history', auth, authorize('cbt:analytics'), validate(examIdSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof examIdSchemas>;
+    sendSuccess(res, await pauses.history(requireUser(req), params.id));
+  });
+
+  /** Students ask this to know whether to show the paused notice. Staff can ask it for their own exams. */
+  router.get('/cbt/exams/:id/status', auth, authorize('cbt:read'), validate(examIdSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof examIdSchemas>;
+    sendSuccess(res, await pauses.status(requireUser(req), params.id));
+  });
+
+  // ---- retakes
+  router.post('/cbt/exams/:id/retakes', auth, authorize('cbt:manage'), validate(requestRetakeSchemas), async (req, res) => {
+    const { params, body } = req.validated as Validated<typeof requestRetakeSchemas>;
+    sendCreated(res, await retakes.request(requireUser(req), params.id, body, contextOf(req)));
+  });
+
+  router.get('/cbt/exams/:id/retakes', auth, authorize('cbt:analytics'), validate(examRetakesSchemas), async (req, res) => {
+    const { params, query } = req.validated as Validated<typeof examRetakesSchemas>;
+    const { items, total } = await retakes.list(requireUser(req), { examId: params.id, status: query.status, page: query.page, limit: query.limit });
+    sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
+  });
+
+  router.get('/cbt/retakes', auth, authorize('cbt:analytics'), validate(allRetakesSchemas), async (req, res) => {
+    const { query } = req.validated as Validated<typeof allRetakesSchemas>;
+    const { items, total } = await retakes.list(requireUser(req), query);
+    sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
+  });
+
+  router.post('/cbt/exams/:id/retakes/:retakeId/approve', auth, authorize('cbt:approve'), validate(approveRetakeSchemas), async (req, res) => {
+    const { params, body } = req.validated as Validated<typeof approveRetakeSchemas>;
+    sendSuccess(res, await retakes.approve(requireUser(req), params.id, params.retakeId, body, contextOf(req)));
+  });
+
+  router.post('/cbt/exams/:id/retakes/:retakeId/reject', auth, authorize('cbt:approve'), validate(rejectRetakeSchemas), async (req, res) => {
+    const { params, body } = req.validated as Validated<typeof rejectRetakeSchemas>;
+    sendSuccess(res, await retakes.reject(requireUser(req), params.id, params.retakeId, body, contextOf(req)));
+  });
+
+  router.delete('/cbt/exams/:id/retakes/:retakeId', auth, authorize('cbt:analytics'), validate(revokeRetakeSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof revokeRetakeSchemas>;
+    sendSuccess(res, await retakes.revoke(requireUser(req), params.id, params.retakeId, contextOf(req)));
+  });
+
+  router.get('/cbt/exams/:id/students/:studentId/attempts', auth, authorize('cbt:analytics'), validate(studentTrailSchemas), async (req, res) => {
+    const { params } = req.validated as Validated<typeof studentTrailSchemas>;
+    sendSuccess(res, await retakes.trail(requireUser(req), params.id, params.studentId));
   });
 
   // ---- schedule (parents, students)

@@ -10,6 +10,8 @@ interface AttemptDocument {
   questionOrder: Types.ObjectId[]; optionOrder: Record<string, string[]>; answers: Record<string, string>;
   maxScore: number; score: number | null; correctCount: number | null; graded: boolean;
   submittedAt: Date | null; autoSubmitted: boolean;
+  /** 1 for the first sitting. A retake the school approved is 2, and so on. Older sittings are kept in the attempt history. */
+  attemptNumber: number;
 }
 type Row = AttemptDocument & { _id: Types.ObjectId };
 
@@ -25,6 +27,7 @@ const schema = new mongoose.Schema<AttemptDocument>(
     maxScore: { type: Number, required: true },
     score: { type: Number, default: null }, correctCount: { type: Number, default: null }, graded: { type: Boolean, default: false },
     submittedAt: { type: Date, default: null }, autoSubmitted: { type: Boolean, default: false },
+    attemptNumber: { type: Number, default: 1 },
   },
   { timestamps: false, versionKey: false, minimize: false },
 );
@@ -39,7 +42,7 @@ const AttemptModel: Model<AttemptDocument> =
 export interface AttemptRecord {
   id: string; examId: string; studentId: string; startedAt: Date; endsAt: Date; status: AttemptStatus;
   questionOrder: string[]; optionOrder: Record<string, string[]>; answers: Record<string, string>;
-  maxScore: number; score: number | null; correctCount: number | null; graded: boolean; submittedAt: Date | null; autoSubmitted: boolean;
+  maxScore: number; score: number | null; correctCount: number | null; graded: boolean; submittedAt: Date | null; autoSubmitted: boolean; attemptNumber: number;
 }
 export interface GradeResult { score: number; maxScore: number; correctCount: number }
 
@@ -48,12 +51,21 @@ const toRecord = (r: Row): AttemptRecord => ({
   id: r._id.toString(), examId: r.examId.toString(), studentId: r.studentId.toString(), startedAt: r.startedAt, endsAt: r.endsAt,
   status: r.status, questionOrder: r.questionOrder.map(String), optionOrder: r.optionOrder ?? {}, answers: r.answers ?? {},
   maxScore: r.maxScore, score: r.score ?? null, correctCount: r.correctCount ?? null, graded: r.graded,
-  submittedAt: r.submittedAt ?? null, autoSubmitted: r.autoSubmitted,
+  submittedAt: r.submittedAt ?? null, autoSubmitted: r.autoSubmitted, attemptNumber: r.attemptNumber ?? 1,
 });
 const opts = (session?: ClientSession) => (session ? { session } : {});
 
-/** Returns null if this student already has an attempt (a double click, or two devices). */
-async function create(data: { examId: string; studentId: string; startedAt: Date; endsAt: Date; questionOrder: string[]; optionOrder: Record<string, string[]>; maxScore: number }): Promise<AttemptRecord | null> {
+export interface NewAttempt { examId: string; studentId: string; startedAt: Date; endsAt: Date; questionOrder: string[]; optionOrder: Record<string, string[]>; maxScore: number; attemptNumber?: number }
+
+/**
+ * Returns null if this student already has an attempt (a double click, or two devices).
+ * Inside a transaction (a retake) a clash is an error instead, so the whole transaction is undone.
+ */
+async function create(data: NewAttempt, session?: ClientSession): Promise<AttemptRecord | null> {
+  if (session) {
+    const [doc] = await AttemptModel.create([data], { session });
+    return doc ? toRecord(doc.toObject() as Row) : null;
+  }
   try {
     const doc = await AttemptModel.create(data);
     return toRecord(doc.toObject() as Row);
@@ -102,8 +114,10 @@ async function applyGrade(id: string, grade: GradeResult, session: ClientSession
   return row ? toRecord(row) : findById(id, session);
 }
 
-async function findOverdueIds(cutoff: Date, limit: number): Promise<string[]> {
-  const rows = await AttemptModel.find({ status: ATTEMPT_STATUS.IN_PROGRESS, endsAt: { $lt: cutoff } }, { _id: 1 }).limit(limit).lean<Row[]>();
+/** Overdue attempts to close. Exams that are paused are left out: their clocks are stopped. */
+async function findOverdueIds(cutoff: Date, limit: number, pausedExamIds: string[] = []): Promise<string[]> {
+  const filter = { status: ATTEMPT_STATUS.IN_PROGRESS, endsAt: { $lt: cutoff }, ...(pausedExamIds.length > 0 ? { examId: { $nin: pausedExamIds } } : {}) };
+  const rows = await AttemptModel.find(filter, { _id: 1 }).limit(limit).lean<Row[]>();
   return rows.map((r) => r._id.toString());
 }
 
@@ -138,9 +152,31 @@ async function forStudentExams(studentId: string, examIds: string[]): Promise<Ma
   return new Map(rows.map((r) => [r.examId.toString(), toRecord(r)]));
 }
 
+/** Deletes one attempt. Only used by a retake, in the same transaction that files the attempt in the history. */
+async function removeById(id: string, session: ClientSession): Promise<boolean> {
+  return (await AttemptModel.deleteOne({ _id: id }, { session })).deletedCount > 0;
+}
+
+/** After a pause: every attempt that was still running when it began gets the length of the pause added to its end time. */
+async function extendActive(examId: string, pausedAt: Date, pausedMs: number, session: ClientSession): Promise<number> {
+  const result = await AttemptModel.updateMany(
+    { examId, status: ATTEMPT_STATUS.IN_PROGRESS, startedAt: { $lt: pausedAt }, endsAt: { $gt: pausedAt } },
+    [{ $set: { endsAt: { $add: ['$endsAt', pausedMs] } } }],
+    { session },
+  );
+  return result.modifiedCount;
+}
+
+/** The attempts of an exam still running, with their end times, so their auto-submit jobs can be set again. */
+async function runningTimes(examId: string): Promise<{ id: string; endsAt: Date }[]> {
+  const rows = await AttemptModel.find({ examId, status: ATTEMPT_STATUS.IN_PROGRESS }, { endsAt: 1 }).limit(5000).lean<Row[]>();
+  return rows.map((r) => ({ id: r._id.toString(), endsAt: r.endsAt }));
+}
+
 const countForExam = (examId: string): Promise<number> => AttemptModel.countDocuments({ examId });
 
 export const attemptRepository = {
   create, findById, findByExamStudent, saveAnswers, claimSubmission, applyGrade,
   findOverdueIds, findUngradedIds, findOverdueForExam, listForExam, allForExam, forStudentExams, countForExam,
+  removeById, extendActive, runningTimes,
 };

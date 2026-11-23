@@ -1,0 +1,1895 @@
+--- a/src/common/errors/errorCodes.ts
++++ b/src/common/errors/errorCodes.ts
+@@ -16,6 +16,7 @@
+   EXAM_NOT_OPEN: { status: 409, message: 'This exam is not open for you' },
+   ATTEMPT_EXPIRED: { status: 409, message: 'Exam time has ended and your attempt was submitted' },
+   ATTEMPT_ALREADY_SUBMITTED: { status: 409, message: 'This attempt has already been submitted' },
++  EXAM_PAUSED: { status: 409, message: 'This exam is paused for now. Your saved answers are safe. Wait for your teacher to resume it' },
+   IMPORT_INVALID: { status: 422, message: 'The file contains invalid rows' },
+   IMPORT_TOKEN_EXPIRED: { status: 410, message: 'The upload has expired. Please upload again' },
+   RESULT_LOCKED: { status: 409, message: 'Published results are locked' },
+--- /dev/null
++++ b/src/modules/cbt/attempt.history.repository.ts
+@@ -0,0 +1,67 @@
++import mongoose, { type ClientSession, type Model, type Types } from 'mongoose';
++import type { AttemptRecord, AttemptStatus } from './attempt.repository';
++
++/**
++ * Earlier sittings of an exam, kept when an approved retake replaces them. Only ever added to and read, never changed.
++ * The live attempt collection holds each student's current sitting, so results, analytics and parents only ever see that one.
++ */
++interface HistoryDocument {
++  examId: Types.ObjectId; studentId: Types.ObjectId; attemptId: Types.ObjectId; attemptNumber: number;
++  startedAt: Date; endsAt: Date; status: AttemptStatus; questionOrder: Types.ObjectId[];
++  optionOrder: Record<string, string[]>; answers: Record<string, string>;
++  maxScore: number; score: number | null; correctCount: number | null; graded: boolean;
++  submittedAt: Date | null; autoSubmitted: boolean;
++  supersededAt: Date; retakeId: Types.ObjectId;
++}
++type Row = HistoryDocument & { _id: Types.ObjectId };
++
++const schema = new mongoose.Schema<HistoryDocument>(
++  {
++    examId: { type: mongoose.Schema.Types.ObjectId, required: true },
++    studentId: { type: mongoose.Schema.Types.ObjectId, required: true },
++    attemptId: { type: mongoose.Schema.Types.ObjectId, required: true },
++    attemptNumber: { type: Number, required: true },
++    startedAt: { type: Date, required: true }, endsAt: { type: Date, required: true },
++    status: { type: String, required: true },
++    questionOrder: { type: [mongoose.Schema.Types.ObjectId], default: [] },
++    optionOrder: { type: mongoose.Schema.Types.Mixed, default: {} },
++    answers: { type: mongoose.Schema.Types.Mixed, default: {} },
++    maxScore: { type: Number, required: true },
++    score: { type: Number, default: null }, correctCount: { type: Number, default: null }, graded: { type: Boolean, default: false },
++    submittedAt: { type: Date, default: null }, autoSubmitted: { type: Boolean, default: false },
++    supersededAt: { type: Date, required: true },
++    retakeId: { type: mongoose.Schema.Types.ObjectId, required: true },
++  },
++  { collection: 'attempt_history', timestamps: false, versionKey: false, minimize: false },
++);
++schema.index({ examId: 1, studentId: 1, attemptNumber: 1 }, { unique: true });
++
++const HistoryModel: Model<HistoryDocument> =
++  (mongoose.models.AttemptHistory as Model<HistoryDocument> | undefined) ?? mongoose.model<HistoryDocument>('AttemptHistory', schema);
++
++export interface HistoryRecord {
++  attemptId: string; attemptNumber: number; status: AttemptStatus; startedAt: Date; submittedAt: Date | null;
++  score: number | null; maxScore: number; autoSubmitted: boolean; supersededAt: Date; retakeId: string;
++}
++
++/** Files an attempt in the history. Runs inside the retake's transaction. */
++async function archive(attempt: AttemptRecord, meta: { retakeId: string; supersededAt: Date }, session: ClientSession): Promise<void> {
++  await HistoryModel.create([{
++    examId: attempt.examId, studentId: attempt.studentId, attemptId: attempt.id, attemptNumber: attempt.attemptNumber,
++    startedAt: attempt.startedAt, endsAt: attempt.endsAt, status: attempt.status, questionOrder: attempt.questionOrder,
++    optionOrder: attempt.optionOrder, answers: attempt.answers, maxScore: attempt.maxScore, score: attempt.score,
++    correctCount: attempt.correctCount, graded: attempt.graded, submittedAt: attempt.submittedAt, autoSubmitted: attempt.autoSubmitted,
++    supersededAt: meta.supersededAt, retakeId: meta.retakeId,
++  }], { session });
++}
++
++async function forStudent(examId: string, studentId: string): Promise<HistoryRecord[]> {
++  if (!/^[a-f0-9]{24}$/.test(examId) || !/^[a-f0-9]{24}$/.test(studentId)) return [];
++  const rows = await HistoryModel.find({ examId, studentId }).sort({ attemptNumber: 1 }).lean<Row[]>();
++  return rows.map((r) => ({
++    attemptId: r.attemptId.toString(), attemptNumber: r.attemptNumber, status: r.status, startedAt: r.startedAt, submittedAt: r.submittedAt ?? null,
++    score: r.score ?? null, maxScore: r.maxScore, autoSubmitted: r.autoSubmitted, supersededAt: r.supersededAt, retakeId: r.retakeId.toString(),
++  }));
++}
++
++export const attemptHistoryRepository = { archive, forStudent };
+--- a/src/modules/cbt/attempt.repository.ts
++++ b/src/modules/cbt/attempt.repository.ts
+@@ -10,6 +10,8 @@
+   questionOrder: Types.ObjectId[]; optionOrder: Record<string, string[]>; answers: Record<string, string>;
+   maxScore: number; score: number | null; correctCount: number | null; graded: boolean;
+   submittedAt: Date | null; autoSubmitted: boolean;
++  /** 1 for the first sitting. A retake the school approved is 2, and so on. Older sittings are kept in the attempt history. */
++  attemptNumber: number;
+ }
+ type Row = AttemptDocument & { _id: Types.ObjectId };
+ 
+@@ -25,6 +27,7 @@
+     maxScore: { type: Number, required: true },
+     score: { type: Number, default: null }, correctCount: { type: Number, default: null }, graded: { type: Boolean, default: false },
+     submittedAt: { type: Date, default: null }, autoSubmitted: { type: Boolean, default: false },
++    attemptNumber: { type: Number, default: 1 },
+   },
+   { timestamps: false, versionKey: false, minimize: false },
+ );
+@@ -39,7 +42,7 @@
+ export interface AttemptRecord {
+   id: string; examId: string; studentId: string; startedAt: Date; endsAt: Date; status: AttemptStatus;
+   questionOrder: string[]; optionOrder: Record<string, string[]>; answers: Record<string, string>;
+-  maxScore: number; score: number | null; correctCount: number | null; graded: boolean; submittedAt: Date | null; autoSubmitted: boolean;
++  maxScore: number; score: number | null; correctCount: number | null; graded: boolean; submittedAt: Date | null; autoSubmitted: boolean; attemptNumber: number;
+ }
+ export interface GradeResult { score: number; maxScore: number; correctCount: number }
+ 
+@@ -48,12 +51,21 @@
+   id: r._id.toString(), examId: r.examId.toString(), studentId: r.studentId.toString(), startedAt: r.startedAt, endsAt: r.endsAt,
+   status: r.status, questionOrder: r.questionOrder.map(String), optionOrder: r.optionOrder ?? {}, answers: r.answers ?? {},
+   maxScore: r.maxScore, score: r.score ?? null, correctCount: r.correctCount ?? null, graded: r.graded,
+-  submittedAt: r.submittedAt ?? null, autoSubmitted: r.autoSubmitted,
++  submittedAt: r.submittedAt ?? null, autoSubmitted: r.autoSubmitted, attemptNumber: r.attemptNumber ?? 1,
+ });
+ const opts = (session?: ClientSession) => (session ? { session } : {});
+ 
+-/** Returns null if this student already has an attempt (a double click, or two devices). */
+-async function create(data: { examId: string; studentId: string; startedAt: Date; endsAt: Date; questionOrder: string[]; optionOrder: Record<string, string[]>; maxScore: number }): Promise<AttemptRecord | null> {
++export interface NewAttempt { examId: string; studentId: string; startedAt: Date; endsAt: Date; questionOrder: string[]; optionOrder: Record<string, string[]>; maxScore: number; attemptNumber?: number }
++
++/**
++ * Returns null if this student already has an attempt (a double click, or two devices).
++ * Inside a transaction (a retake) a clash is an error instead, so the whole transaction is undone.
++ */
++async function create(data: NewAttempt, session?: ClientSession): Promise<AttemptRecord | null> {
++  if (session) {
++    const [doc] = await AttemptModel.create([data], { session });
++    return doc ? toRecord(doc.toObject() as Row) : null;
++  }
+   try {
+     const doc = await AttemptModel.create(data);
+     return toRecord(doc.toObject() as Row);
+@@ -102,8 +114,10 @@
+   return row ? toRecord(row) : findById(id, session);
+ }
+ 
+-async function findOverdueIds(cutoff: Date, limit: number): Promise<string[]> {
+-  const rows = await AttemptModel.find({ status: ATTEMPT_STATUS.IN_PROGRESS, endsAt: { $lt: cutoff } }, { _id: 1 }).limit(limit).lean<Row[]>();
++/** Overdue attempts to close. Exams that are paused are left out: their clocks are stopped. */
++async function findOverdueIds(cutoff: Date, limit: number, pausedExamIds: string[] = []): Promise<string[]> {
++  const filter = { status: ATTEMPT_STATUS.IN_PROGRESS, endsAt: { $lt: cutoff }, ...(pausedExamIds.length > 0 ? { examId: { $nin: pausedExamIds } } : {}) };
++  const rows = await AttemptModel.find(filter, { _id: 1 }).limit(limit).lean<Row[]>();
+   return rows.map((r) => r._id.toString());
+ }
+ 
+@@ -138,9 +152,31 @@
+   return new Map(rows.map((r) => [r.examId.toString(), toRecord(r)]));
+ }
+ 
++/** Deletes one attempt. Only used by a retake, in the same transaction that files the attempt in the history. */
++async function removeById(id: string, session: ClientSession): Promise<boolean> {
++  return (await AttemptModel.deleteOne({ _id: id }, { session })).deletedCount > 0;
++}
++
++/** After a pause: every attempt that was still running when it began gets the length of the pause added to its end time. */
++async function extendActive(examId: string, pausedAt: Date, pausedMs: number, session: ClientSession): Promise<number> {
++  const result = await AttemptModel.updateMany(
++    { examId, status: ATTEMPT_STATUS.IN_PROGRESS, startedAt: { $lt: pausedAt }, endsAt: { $gt: pausedAt } },
++    [{ $set: { endsAt: { $add: ['$endsAt', pausedMs] } } }],
++    { session },
++  );
++  return result.modifiedCount;
++}
++
++/** The attempts of an exam still running, with their end times, so their auto-submit jobs can be set again. */
++async function runningTimes(examId: string): Promise<{ id: string; endsAt: Date }[]> {
++  const rows = await AttemptModel.find({ examId, status: ATTEMPT_STATUS.IN_PROGRESS }, { endsAt: 1 }).limit(5000).lean<Row[]>();
++  return rows.map((r) => ({ id: r._id.toString(), endsAt: r.endsAt }));
++}
++
+ const countForExam = (examId: string): Promise<number> => AttemptModel.countDocuments({ examId });
+ 
+ export const attemptRepository = {
+   create, findById, findByExamStudent, saveAnswers, claimSubmission, applyGrade,
+   findOverdueIds, findUngradedIds, findOverdueForExam, listForExam, allForExam, forStudentExams, countForExam,
++  removeById, extendActive, runningTimes,
+ };
+\ No newline at end of file
+--- a/src/modules/cbt/attempt.service.ts
++++ b/src/modules/cbt/attempt.service.ts
+@@ -9,6 +9,7 @@
+ import type { ExamScheduler } from '../../jobs/exam.jobs';
+ import type { linkRepository } from '../users/link.repository';
+ import type { studentRepository } from '../users/student.repository';
++import type { attemptHistoryRepository } from './attempt.history.repository';
+ import { ATTEMPT_STATUS, type AttemptRecord, type attemptRepository } from './attempt.repository';
+ import { GRACE_MS } from './cbt.types';
+ import type { ExamRecord, examRepository } from './exam.repository';
+@@ -16,11 +17,12 @@
+ import type { PaperCache } from './paper.cache';
+ import { chooseQuestions } from './pool';
+ import type { questionRepository } from './question.repository';
++import type { RetakeRecord, retakeRepository } from './retake.repository';
+ 
+ interface Actor { id: string; role: Role }
+ 
+ export interface AttemptServiceDeps {
+-  exams: Pick<typeof examRepository, 'findById' | 'listForArm'>;
++  exams: Pick<typeof examRepository, 'findById' | 'listForArm' | 'pausedIds'>;
+   questions: Pick<typeof questionRepository, 'forExamWithKey'>;
+   attempts: typeof attemptRepository;
+   enrolments: Pick<typeof enrolmentRepository, 'forStudents'>;
+@@ -31,6 +33,8 @@
+   scope: Pick<ScopeService, 'assertCanAccessStudent'>;
+   paper: PaperCache;
+   scheduler: ExamScheduler;
++  retakes: Pick<typeof retakeRepository, 'usableFor' | 'usableForStudentExams' | 'consume'>;
++  history: Pick<typeof attemptHistoryRepository, 'archive'>;
+ }
+ 
+ const round1 = (n: number): number => Math.round(n * 10) / 10;
+@@ -42,7 +46,7 @@
+   exam.resultsReleased || (exam.settings.resultRelease === 'IMMEDIATE' && attempt.status === ATTEMPT_STATUS.SUBMITTED);
+ 
+ export function createAttemptService(deps: AttemptServiceDeps) {
+-  const { exams, questions, attempts, enrolments, sessions, structure, students, links, scope, paper, scheduler } = deps;
++  const { exams, questions, attempts, enrolments, sessions, structure, students, links, scope, paper, scheduler, retakes, history } = deps;
+ 
+   /** Builds the student's screen: questions in their own order, options in their own order, no answers. */
+   function view(attempt: AttemptRecord, exam: ExamRecord, questionsInPaper: PaperQuestion[], now: Date) {
+@@ -62,6 +66,20 @@
+     };
+   }
+ 
++  /** Deals one student's paper: which questions they get, in what order, and the order of each question's options. */
++  function deal(exam: ExamRecord, paperQuestions: PaperQuestion[]) {
++    // With a pool, this student is dealt their own random share of the questions, once, here. It is stored on the
++    // attempt, so a refresh or resume shows the same ones, and nothing the client sends can change it.
++    const questionOrder = chooseQuestions(paperQuestions.map((q) => q.id), exam.settings.questionsPerStudent, exam.settings.shuffleQuestions);
++    const dealt = new Set(questionOrder);
++    const given = paperQuestions.filter((q) => dealt.has(q.id));
++    const optionOrder: Record<string, string[]> = {};
++    if (exam.settings.shuffleOptions) {
++      for (const q of given) if (q.type === 'MCQ' && q.options) optionOrder[q.id] = shuffle(q.options.map((o) => o.key));
++    }
++    return { questionOrder, optionOrder, maxScore: round1(given.reduce((sum, q) => sum + q.marks, 0)) };
++  }
++
+   /** Closes an attempt and grades it, once, in one transaction. Safe to call any number of times. */
+   async function finalize(attemptId: string, auto: boolean): Promise<AttemptRecord | null> {
+     const attempt = await attempts.findById(attemptId);
+@@ -135,6 +153,8 @@
+     async autoSubmit(attemptId: string): Promise<void> {
+       const attempt = await attempts.findById(attemptId);
+       if (!attempt || (attempt.status === ATTEMPT_STATUS.SUBMITTED && attempt.graded)) return;
++      // A paused exam's clock is stopped. Resuming sets this job again for the new end time.
++      if (attempt.status === ATTEMPT_STATUS.IN_PROGRESS && (await exams.findById(attempt.examId))?.pausedAt) return;
+       if (attempt.status === ATTEMPT_STATUS.IN_PROGRESS && attempt.endsAt.getTime() > Date.now()) {
+         await scheduler.scheduleAutoSubmit(attemptId, attempt.endsAt); // too early: try again at the right time
+         return;
+@@ -144,7 +164,7 @@
+ 
+     /** Runs every minute: closes anything overdue and grades anything left half-finished. */
+     async sweep(): Promise<void> {
+-      const overdue = await attempts.findOverdueIds(new Date(Date.now() - GRACE_MS), 200);
++      const overdue = await attempts.findOverdueIds(new Date(Date.now() - GRACE_MS), 200, await exams.pausedIds());
+       const ungraded = await attempts.findUngradedIds(200);
+       for (const id of new Set([...overdue, ...ungraded])) {
+         try { await finalize(id, true); } catch (err) { logger.error({ err, attemptId: id }, 'sweep could not finalize an attempt'); }
+@@ -160,7 +180,7 @@
+ 
+     time: (): { serverTime: string } => ({ serverTime: new Date().toISOString() }),
+ 
+-    /** Starts the exam, or resumes it if it is already running. */
++    /** Starts the exam, or resumes it if it is already running. With an approved retake, starts the student's next sitting. */
+     async start(actor: Actor, examId: string) {
+       const exam = await exams.findById(examId);
+       if (!exam || exam.status !== 'PUBLISHED') throw new AppError('NOT_FOUND');
+@@ -170,32 +190,64 @@
+       const now = new Date();
+       const resume = async (attempt: AttemptRecord) => {
+         if (attempt.status === ATTEMPT_STATUS.SUBMITTED) throw new AppError('ATTEMPT_ALREADY_SUBMITTED');
++        if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
+         if (pastClock(attempt, now)) await expire(attempt);
+         return view(attempt, exam, await paper.get(exam), now);
+       };
+ 
++      /**
++       * The student's earlier sitting moves to the attempt history, and a fresh sitting with a newly dealt paper
++       * takes its place. All of it, including using up the approval, happens in one transaction, so an approval
++       * can be used once and a failure leaves the earlier sitting exactly as it was.
++       */
++      const startRetake = async (previous: AttemptRecord, retake: RetakeRecord) => {
++        if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
++        const closed = previous.status === ATTEMPT_STATUS.SUBMITTED && previous.graded ? previous : await finalize(previous.id, true);
++        if (!closed || !closed.graded) throw new AppError('CONFLICT', { message: 'Your earlier sitting is still being marked. Try again in a moment' });
++
++        const questionsInPaper = await paper.get(exam);
++        if (questionsInPaper.length === 0) throw new AppError('EXAM_NOT_OPEN');
++        const dealt = deal(exam, questionsInPaper);
++        // A retake is not held to the exam window: the admin's approval (and its expiry) decides when it may be started.
++        const endsAt = new Date(now.getTime() + exam.durationMin * 60_000);
++
++        const created = await withTransaction(async (session) => {
++          await history.archive(closed, { retakeId: retake.id, supersededAt: now }, session);
++          if (!(await attempts.removeById(closed.id, session))) throw new AppError('CONFLICT');
++          const fresh = await attempts.create({
++            examId, studentId: actor.id, startedAt: now, endsAt, questionOrder: dealt.questionOrder, optionOrder: dealt.optionOrder,
++            maxScore: dealt.maxScore, attemptNumber: closed.attemptNumber + 1,
++          }, session);
++          if (!fresh) throw new AppError('CONFLICT');
++          if (!(await retakes.consume(retake.id, now, fresh.id, session))) {
++            throw new AppError('CONFLICT', { message: 'This retake has already been used or has expired' });
++          }
++          return fresh;
++        });
++
++        await scheduler.scheduleAutoSubmit(created.id, created.endsAt);
++        return view(created, exam, questionsInPaper, now);
++      };
++
+       const existing = await attempts.findByExamStudent(examId, actor.id);
+-      if (existing) return resume(existing);
++      if (existing) {
++        // Only a sitting that has ended can be replaced by a retake. One still running is simply resumed.
++        const ended = existing.status === ATTEMPT_STATUS.SUBMITTED || pastClock(existing, now);
++        const retake = ended ? await retakes.usableFor(examId, actor.id, now) : null;
++        return retake ? startRetake(existing, retake) : resume(existing);
++      }
+ 
++      if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
+       if (now < exam.windowStart || now >= exam.windowEnd || exam.questionCount === 0) throw new AppError('EXAM_NOT_OPEN');
+ 
+       const questionsInPaper = await paper.get(exam);
+       if (questionsInPaper.length === 0) throw new AppError('EXAM_NOT_OPEN');
+-      // With a pool, this student is dealt their own random share of the questions, once, here. It is stored on the
+-      // attempt, so a refresh or resume shows the same ones, and nothing the client sends can change it.
+-      const questionOrder = chooseQuestions(questionsInPaper.map((q) => q.id), exam.settings.questionsPerStudent, exam.settings.shuffleQuestions);
+-      const dealt = new Set(questionOrder);
+-      const given = questionsInPaper.filter((q) => dealt.has(q.id));
+-      const optionOrder: Record<string, string[]> = {};
+-      if (exam.settings.shuffleOptions) {
+-        for (const q of given) if (q.type === 'MCQ' && q.options) optionOrder[q.id] = shuffle(q.options.map((o) => o.key));
+-      }
++      const dealt = deal(exam, questionsInPaper);
+ 
+       const endsAt = new Date(Math.min(now.getTime() + exam.durationMin * 60_000, exam.windowEnd.getTime()));
+       const created = await attempts.create({
+         examId, studentId: actor.id, startedAt: now, endsAt,
+-        questionOrder, optionOrder,
+-        maxScore: round1(given.reduce((s, q) => s + q.marks, 0)),
++        questionOrder: dealt.questionOrder, optionOrder: dealt.optionOrder, maxScore: dealt.maxScore,
+       });
+       if (!created) {
+         const raced = await attempts.findByExamStudent(examId, actor.id); // a double click started it a moment ago
+@@ -213,6 +265,7 @@
+       const exam = await mustExam(attempt.examId);
+       const now = new Date();
+       if (attempt.status === ATTEMPT_STATUS.SUBMITTED) throw new AppError('ATTEMPT_ALREADY_SUBMITTED');
++      if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
+       if (pastClock(attempt, now)) await expire(attempt);
+       return view(attempt, exam, await paper.get(exam), now);
+     },
+@@ -221,10 +274,13 @@
+       const attempt = await ownAttempt(actor, attemptId);
+       const now = new Date();
+       if (attempt.status === ATTEMPT_STATUS.SUBMITTED) throw new AppError('ATTEMPT_ALREADY_SUBMITTED');
++      const exam = await mustExam(attempt.examId);
++      // Saved answers are kept, but nothing new is accepted while the exam is paused.
++      if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
+       if (pastClock(attempt, now)) await expire(attempt);
+ 
+-      const saved = await applyAnswers(attempt, await mustExam(attempt.examId), answers, now);
+-      return { saved, serverTime: now.toISOString(), remainingSeconds: Math.max(0, Math.floor((attempt.endsAt.getTime() - now.getTime()) / 1000)) };
++      const saved = await applyAnswers(attempt, exam, answers, now);
++      return { saved, paused: false, serverTime: now.toISOString(), remainingSeconds: Math.max(0, Math.floor((attempt.endsAt.getTime() - now.getTime()) / 1000)) };
+     },
+ 
+     /** Safe to repeat. Optional final answers are saved first, if the clock allows. */
+@@ -235,6 +291,7 @@
+ 
+       let done = attempt;
+       if (attempt.status === ATTEMPT_STATUS.IN_PROGRESS) {
++        if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
+         if (pastClock(attempt, now)) await expire(attempt);
+         if (answers && Object.keys(answers).length > 0) await applyAnswers(attempt, exam, answers, now);
+         done = (await finalize(attempt.id, false)) ?? attempt;
+@@ -299,7 +356,10 @@
+       if (!armId) return [];
+ 
+       const list = await exams.listForArm(armId, current.id, new Date(Date.now() - 60 * 86_400_000));
+-      const [byExam, subjects] = await Promise.all([attempts.forStudentExams(actor.id, list.map((e) => e.id)), structure.subjectsByIds(list.map((e) => e.subjectId))]);
++      const [byExam, subjects, retakeFor] = await Promise.all([
++        attempts.forStudentExams(actor.id, list.map((e) => e.id)), structure.subjectsByIds(list.map((e) => e.subjectId)),
++        retakes.usableForStudentExams(actor.id, list.map((e) => e.id), new Date()),
++      ]);
+       const now = new Date();
+ 
+       return list.map((exam) => {
+@@ -315,6 +375,8 @@
+           instructions: exam.instructions, questionCount: Math.min(exam.questionCount, exam.settings.questionsPerStudent ?? exam.questionCount), state,
+           attempt: a ? { id: a.id, status: a.status, endsAt: a.endsAt.toISOString(), submittedAt: a.submittedAt ? a.submittedAt.toISOString() : null } : null,
+           result: visible && a.score !== null ? { score: a.score, maxScore: a.maxScore, percent, passed: percent !== null && percent >= exam.settings.passMarkPercent } : null,
++          paused: exam.pausedAt !== null,
++          retake: retakeFor.has(exam.id) ? { expiresAt: retakeFor.get(exam.id)?.expiresAt?.toISOString() ?? null } : null,
+         };
+       });
+     },
+--- a/src/modules/cbt/cbt.module.ts
++++ b/src/modules/cbt/cbt.module.ts
+@@ -16,6 +16,7 @@
+ import { studentRepository } from '../users/student.repository';
+ import { userRepository } from '../users/user.repository';
+ import { createAnalyticsService } from './analytics.service';
++import { attemptHistoryRepository } from './attempt.history.repository';
+ import { attemptRepository } from './attempt.repository';
+ import { createAttemptService } from './attempt.service';
+ import { createCbtRouter } from './cbt.routes';
+@@ -23,11 +24,15 @@
+ import { createExamService } from './exam.service';
+ import type { ImageStore } from '../../integrations/imageStore';
+ import { createPaperCache } from './paper.cache';
++import { createPauseService } from './pause.service';
++import { pauseRepository } from './pause.repository';
+ import { questionImageRepository } from './question.image.repository';
+ import { createQuestionEditorService } from './question.editor.service';
+ import { createQuestionImageService } from './question.image.service';
+ import { createQuestionImportService } from './question.import';
+ import { questionRepository } from './question.repository';
++import { retakeRepository } from './retake.repository';
++import { createRetakeService } from './retake.service';
+ 
+ export function createCbtModule(deps: {
+   audit: AuditService; auth: AuthModule; scope: ScopeService; notifier: NotificationService;
+@@ -39,7 +44,7 @@
+   const attemptService = createAttemptService({
+     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository,
+     sessions: sessionRepository, structure: structureRepository, students: studentRepository, links: linkRepository,
+-    scope: deps.scope, paper, scheduler: deps.jobs.scheduler,
++    scope: deps.scope, paper, scheduler: deps.jobs.scheduler, retakes: retakeRepository, history: attemptHistoryRepository,
+   });
+   // What the background jobs actually do.
+   deps.jobs.register({ autoSubmit: (attemptId) => attemptService.autoSubmit(attemptId), sweep: () => attemptService.sweep() });
+@@ -49,17 +54,26 @@
+     sessions: sessionRepository, structure: structureRepository, assignments: assignmentRepository, staff: staffRepository,
+     settings: deps.settings, scores: scoreRepository, users: userRepository, notifier: deps.notifier, paper,
+     finalizeOverdueFor: (examId) => attemptService.finalizeOverdueFor(examId), audit: deps.audit, pictures,
++    hasOpenRetakes: (examId) => retakeRepository.hasOpen(examId),
+   });
+   const importService = createQuestionImportService({
+     store: deps.store, secret: env.REFRESH_TOKEN_SECRET, exams: examRepository, questions: questionRepository, pictures, paper, audit: deps.audit,
+   });
++  const pauses = createPauseService({
++    exams: examRepository, attempts: attemptRepository, pauses: pauseRepository, enrolments: enrolmentRepository, staff: staffRepository,
++    scheduler: deps.jobs.scheduler, notifier: deps.notifier, audit: deps.audit,
++  });
++  const retakes = createRetakeService({
++    exams: examRepository, retakes: retakeRepository, attempts: attemptRepository, history: attemptHistoryRepository, enrolments: enrolmentRepository,
++    students: studentRepository, staff: staffRepository, users: userRepository, notifier: deps.notifier, audit: deps.audit,
++  });
+   const editor = createQuestionEditorService({ questions: questionRepository, exams: examRepository, pictures, paper, audit: deps.audit });
+   const analytics = createAnalyticsService({
+     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository, students: studentRepository,
+   });
+ 
+     return {
+-    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, editor, authenticate: deps.auth.middleware.authenticate }),
++    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, editor, pauses, retakes, authenticate: deps.auth.middleware.authenticate }),
+     attempts: attemptService,
+     exams: examService,
+   };
+--- a/src/modules/cbt/cbt.routes.ts
++++ b/src/modules/cbt/cbt.routes.ts
+@@ -10,13 +10,17 @@
+ import type { AnalyticsService } from './analytics.service';
+ import type { AttemptService } from './attempt.service';
+ import {
+-  addQuestionSchemas, attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, deleteQuestionSchemas, examIdSchemas, listExamsSchemas, rejectSchemas, removeImageSchemas,
+-  saveAnswersSchemas, scheduleSchemas, submitAttemptSchemas, updateExamSchemas, updateQuestionSchemas, uploadImageSchemas,
++  addQuestionSchemas, allRetakesSchemas, approveRetakeSchemas, attemptsListSchemas, confirmQuestionsSchemas, createExamSchemas, deleteQuestionSchemas,
++  draftAddSchemas, draftBatchSchemas, draftRowSchemas, draftUpdateSchemas, examIdSchemas, examRetakesSchemas, listExamsSchemas, pauseSchemas,
++  rejectRetakeSchemas, rejectSchemas, removeImageSchemas, requestRetakeSchemas, revokeRetakeSchemas, saveAnswersSchemas, scheduleSchemas,
++  studentTrailSchemas, submitAttemptSchemas, updateExamSchemas, updateQuestionSchemas, uploadImageSchemas,
+ } from './cbt.schema';
+ import type { ExamService } from './exam.service';
++import type { PauseService } from './pause.service';
+ import { QUESTION_TEMPLATE_CSV, type QuestionImportService } from './question.import';
+ import type { QuestionEditorService } from './question.editor.service';
+ import type { QuestionImageService } from './question.image.service';
++import type { RetakeService } from './retake.service';
+ 
+ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
+ /** One picture and, optionally, the question it belongs to. The picture's real type is checked from its bytes. */
+@@ -24,9 +28,10 @@
+ const CSV_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain']);
+ 
+ export function createCbtRouter(deps: {
+-  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; editor: QuestionEditorService; authenticate: RequestHandler;
++  exams: ExamService; attempts: AttemptService; analytics: AnalyticsService; importService: QuestionImportService; pictures: QuestionImageService; editor: QuestionEditorService;
++  pauses: PauseService; retakes: RetakeService; authenticate: RequestHandler;
+ }): Router {
+-  const { exams, attempts, analytics, importService, pictures, editor, authenticate: auth } = deps;
++  const { exams, attempts, analytics, importService, pictures, editor, pauses, retakes, authenticate: auth } = deps;
+   const router = Router();
+ 
+   // Parents and students have their own routes. The staff routes refuse them.
+@@ -94,6 +99,38 @@
+     sendSuccess(res, await importService.confirm(requireUser(req), params.id, body.importToken, contextOf(req)));
+   });
+ 
++  // ---- the uploaded draft: look at it, fix it, add to it, then confirm
++  router.get('/cbt/exams/:id/questions/import/:batchId', auth, authorize('cbt:manage'), validate(draftBatchSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof draftBatchSchemas>;
++    sendSuccess(res, await importService.get(requireUser(req), params.id, params.batchId));
++  });
++
++  router.post('/cbt/exams/:id/questions/import/:batchId/questions', auth, authorize('cbt:manage'), validate(draftAddSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof draftAddSchemas>;
++    sendCreated(res, await importService.addQuestion(requireUser(req), params.id, params.batchId, body));
++  });
++
++  router.patch('/cbt/exams/:id/questions/import/:batchId/questions/:tempId', auth, authorize('cbt:manage'), validate(draftUpdateSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof draftUpdateSchemas>;
++    sendSuccess(res, await importService.updateQuestion(requireUser(req), params.id, params.batchId, params.tempId, body));
++  });
++
++  router.delete('/cbt/exams/:id/questions/import/:batchId/questions/:tempId', auth, authorize('cbt:manage'), validate(draftRowSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof draftRowSchemas>;
++    sendSuccess(res, await importService.removeQuestion(requireUser(req), params.id, params.batchId, params.tempId));
++  });
++
++  router.post('/cbt/exams/:id/questions/import/:batchId/confirm', auth, authorize('cbt:manage'), validate(draftBatchSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof draftBatchSchemas>;
++    sendSuccess(res, await importService.confirm(requireUser(req), params.id, params.batchId, contextOf(req)));
++  });
++
++  router.delete('/cbt/exams/:id/questions/import/:batchId', auth, authorize('cbt:manage'), validate(draftBatchSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof draftBatchSchemas>;
++    await importService.discard(requireUser(req), params.id, params.batchId);
++    sendSuccess(res, null);
++  });
++
+   router.post('/cbt/exams/:id/questions', auth, authorize('cbt:manage'), validate(addQuestionSchemas), async (req, res) => {
+     const { params, body } = req.validated as Validated<typeof addQuestionSchemas>;
+     sendCreated(res, await editor.add(requireUser(req), params.id, body, contextOf(req)));
+@@ -158,6 +195,66 @@
+     sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
+   });
+ 
++  // ---- pause and resume (the exam's teacher, an admin or the super admin)
++  router.post('/cbt/exams/:id/pause', auth, authorize('cbt:analytics'), validate(pauseSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof pauseSchemas>;
++    sendSuccess(res, await pauses.pause(requireUser(req), params.id, body, contextOf(req)));
++  });
++
++  router.post('/cbt/exams/:id/resume', auth, authorize('cbt:analytics'), validate(examIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof examIdSchemas>;
++    sendSuccess(res, await pauses.resume(requireUser(req), params.id, contextOf(req)));
++  });
++
++  router.get('/cbt/exams/:id/pause-history', auth, authorize('cbt:analytics'), validate(examIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof examIdSchemas>;
++    sendSuccess(res, await pauses.history(requireUser(req), params.id));
++  });
++
++  /** Students ask this to know whether to show the paused notice. Staff can ask it for their own exams. */
++  router.get('/cbt/exams/:id/status', auth, authorize('cbt:read'), validate(examIdSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof examIdSchemas>;
++    sendSuccess(res, await pauses.status(requireUser(req), params.id));
++  });
++
++  // ---- retakes
++  router.post('/cbt/exams/:id/retakes', auth, authorize('cbt:manage'), validate(requestRetakeSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof requestRetakeSchemas>;
++    sendCreated(res, await retakes.request(requireUser(req), params.id, body, contextOf(req)));
++  });
++
++  router.get('/cbt/exams/:id/retakes', auth, authorize('cbt:analytics'), validate(examRetakesSchemas), async (req, res) => {
++    const { params, query } = req.validated as Validated<typeof examRetakesSchemas>;
++    const { items, total } = await retakes.list(requireUser(req), { examId: params.id, status: query.status, page: query.page, limit: query.limit });
++    sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
++  });
++
++  router.get('/cbt/retakes', auth, authorize('cbt:analytics'), validate(allRetakesSchemas), async (req, res) => {
++    const { query } = req.validated as Validated<typeof allRetakesSchemas>;
++    const { items, total } = await retakes.list(requireUser(req), query);
++    sendSuccess(res, items, { meta: buildPageMeta({ page: query.page, limit: query.limit, total }) });
++  });
++
++  router.post('/cbt/exams/:id/retakes/:retakeId/approve', auth, authorize('cbt:approve'), validate(approveRetakeSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof approveRetakeSchemas>;
++    sendSuccess(res, await retakes.approve(requireUser(req), params.id, params.retakeId, body, contextOf(req)));
++  });
++
++  router.post('/cbt/exams/:id/retakes/:retakeId/reject', auth, authorize('cbt:approve'), validate(rejectRetakeSchemas), async (req, res) => {
++    const { params, body } = req.validated as Validated<typeof rejectRetakeSchemas>;
++    sendSuccess(res, await retakes.reject(requireUser(req), params.id, params.retakeId, body, contextOf(req)));
++  });
++
++  router.delete('/cbt/exams/:id/retakes/:retakeId', auth, authorize('cbt:analytics'), validate(revokeRetakeSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof revokeRetakeSchemas>;
++    sendSuccess(res, await retakes.revoke(requireUser(req), params.id, params.retakeId, contextOf(req)));
++  });
++
++  router.get('/cbt/exams/:id/students/:studentId/attempts', auth, authorize('cbt:analytics'), validate(studentTrailSchemas), async (req, res) => {
++    const { params } = req.validated as Validated<typeof studentTrailSchemas>;
++    sendSuccess(res, await retakes.trail(requireUser(req), params.id, params.studentId));
++  });
++
+   // ---- schedule (parents, students)
+   router.get('/cbt/schedule', auth, authorize('cbt:read'), validate(scheduleSchemas), async (req, res) => {
+     const user = requireUser(req);
+--- a/src/modules/cbt/cbt.schema.ts
++++ b/src/modules/cbt/cbt.schema.ts
+@@ -99,12 +99,38 @@
+ const submitBody = z.object({ answers: answersMap.optional() });
+ export const submitAttemptSchemas = { params: idParams, body: submitBody };
+ 
++// ---- editable upload drafts
++const batchParams = z.object({ id: objectId, batchId: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
++const batchRowParams = batchParams.extend({ tempId: z.string().regex(/^[a-f0-9]{12}$/) });
++export const draftBatchSchemas = { params: batchParams };
++export const draftAddSchemas = { params: batchParams, body: addQuestionBody };
++export const draftRowSchemas = { params: batchRowParams };
++export const draftUpdateSchemas = { params: batchRowParams, body: updateQuestionBody };
++
++// ---- pause and resume
++const pauseBody = z.object({ reason: z.string().trim().min(3).max(500).optional() });
++export const pauseSchemas = { params: idParams, body: pauseBody };
++
++// ---- retakes
++const retakeStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'USED', 'REVOKED'] as const;
++const retakeParams = z.object({ id: objectId, retakeId: objectId });
++const requestRetakeBody = z.object({ studentIds: z.array(objectId).min(1).max(100), reason: z.string().trim().min(3).max(500) });
++const approveRetakeBody = z.object({ expiresAt: iso.optional() });
++export const requestRetakeSchemas = { params: idParams, body: requestRetakeBody };
++export const examRetakesSchemas = { params: idParams, query: z.object({ status: z.enum(retakeStatuses).optional(), ...paginationShape }) };
++export const allRetakesSchemas = { query: z.object({ examId: objectId.optional(), status: z.enum(retakeStatuses).optional(), ...paginationShape }) };
++export const approveRetakeSchemas = { params: retakeParams, body: approveRetakeBody };
++export const rejectRetakeSchemas = { params: retakeParams, body: rejectBody };
++export const revokeRetakeSchemas = { params: retakeParams };
++export const studentTrailSchemas = { params: z.object({ id: objectId, studentId: objectId }) };
++
+ const examView = z.object({
+   id: z.string(), title: z.string(), subjectId: z.string(), subjectName: z.string(),
+   classArms: z.array(z.object({ id: z.string(), name: z.string() })), teacherId: z.string(), teacherName: z.string(),
+   sessionId: z.string(), termId: z.string(), type: z.enum(EXAM_TYPES), durationMin: num, windowStart: iso, windowEnd: iso,
+   instructions: z.string(), settings: settingsView, status: z.enum(statusValues), rejectionReason: z.string().nullable(),
+   resultsReleased: z.boolean(), questionCount: num, maxScore: z.number(), maxScorePerStudent: z.number(), createdAt: iso,
++  paused: z.boolean(), pausedAt: iso.nullable(), pauseReason: z.string().nullable(),
+ });
+ const paperQuestion = z.object({ id: z.string(), type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number(), options: z.array(z.object({ key: z.string(), text: z.string() })).nullable(),
+   imageUrl: z.string().nullable(), imageWidth: num.nullable(), imageHeight: num.nullable() });
+@@ -118,11 +144,37 @@
+   correctAnswer: z.union([z.string(), z.array(z.string())]), marks: z.number(), topic: z.string().nullable(), difficulty: z.enum(DIFFICULTIES), explanation: z.string().nullable(),
+   imageFileName: z.string().nullable(), imageUrl: z.string().nullable(), imageWidth: num.nullable(), imageHeight: num.nullable(),
+ });
++const issue = z.object({ field: z.string(), issue: z.string() });
++const draftRow = z.object({
++  tempId: z.string(), row: num.nullable().describe('The line in the uploaded file, or null for a question added by hand'), valid: z.boolean(),
++  errors: z.array(issue), warnings: z.array(issue),
++  question: z.object({
++    type: z.string(), text: z.string(), options: z.array(z.string()).nullable(), correctAnswer: z.union([z.string(), z.array(z.string())]),
++    marks: z.number(), topic: z.string().nullable(), difficulty: z.string(), explanation: z.string().nullable(), imageFileName: z.string().nullable(),
++  }),
++});
+ const importReport = z.object({
++  batchId: z.string().describe('The editable draft. It lasts 24 hours from the upload'), fileName: z.string(), expiresAt: iso, examId: z.string(),
+   rowCount: num, validCount: num, errors: z.array(z.object({ row: num, field: z.string(), issue: z.string() })), truncated: z.boolean(),
+   warnings: z.array(z.object({ row: num, field: z.string(), issue: z.string() })).describe('Pictures named in the image column that have not been uploaded yet. They do not block the import'),
+   totalMarks: z.number().nullable(), byType: z.record(z.string(), num).nullable(),
+-  preview: z.array(z.object({ type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number() })), importToken: z.string().nullable(),
++  preview: z.array(z.object({ type: z.enum(QUESTION_TYPES), text: z.string(), marks: z.number() })),
++  importToken: z.string().nullable().describe('Same as batchId once every question is valid, otherwise null'),
++  rows: z.array(draftRow).describe('Every question in the draft, each with its own valid flag and errors'),
++  problems: z.array(issue).describe('Problems with the set as a whole, for example the questions-per-student setting'),
++});
++
++const retakeView = z.object({
++  id: z.string(), examId: z.string(), examTitle: z.string(), studentId: z.string(), studentName: z.string(), reason: z.string(),
++  status: z.enum(retakeStatuses), attemptNumber: num.describe('The sitting this retake follows'),
++  requestedBy: z.string(), requestedByName: z.string(), createdAt: iso,
++  decidedBy: z.string().nullable(), decidedByName: z.string().nullable(), decidedAt: iso.nullable(), decisionNote: z.string().nullable(),
++  expiresAt: iso.nullable(), usedAt: iso.nullable(),
++});
++const sitting = z.object({
++  attemptNumber: num, attemptId: z.string(), current: z.boolean(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), startedAt: iso, submittedAt: iso.nullable(),
++  score: z.number().nullable(), maxScore: z.number(), percent: z.number().nullable(), autoSubmitted: z.boolean(), supersededAt: iso.nullable(),
++  retake: z.object({ id: z.string(), reason: z.string(), requestedBy: z.string(), requestedByName: z.string(), approvedBy: z.string().nullable(), approvedByName: z.string().nullable(), approvedAt: iso.nullable() }).nullable(),
+ });
+ 
+ export function registerCbtOperations(registry: OpenApiRegistry): void {
+@@ -139,7 +191,7 @@
+   registry.register({ method: 'patch', path: '/cbt/exams/{id}', operationId: 'updateExam', summary: 'Change a draft or rejected exam (owner only)', tags, roles: manage, request: { params: idParams, body: updateBody }, success: done(examView, 'Updated'), errors: ['NOT_FOUND', 'CONFLICT'] });
+   registry.register({ method: 'delete', path: '/cbt/exams/{id}', operationId: 'deleteExam', summary: 'Delete an exam nobody has started (the owner or an admin)', tags, roles: [ROLES.ADMIN, ROLES.TEACHER], request: { params: idParams }, success: done(z.null(), 'Deleted'), errors: ['NOT_FOUND', 'CONFLICT'] });
+   registry.register({ method: 'get', path: '/cbt/exams/{id}/questions', operationId: 'listExamQuestions', summary: 'The questions with their correct answers, for the owner and admins to review', tags, roles: PERMISSIONS['cbt:analytics'], request: { params: idParams }, success: done(z.array(staffQuestion), 'Questions'), errors: ['NOT_FOUND'] });
+-  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import', operationId: 'importExamQuestions', summary: 'Upload the question CSV (field "file", max 2 MB, 200 questions). An optional image column names a picture uploaded with POST /cbt/exams/{id}/question-images. Validates every row; saves nothing', tags, roles: manage, request: { params: idParams }, upload: true, success: done(importReport, 'Validation report'), errors: ['IMPORT_INVALID', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import', operationId: 'importExamQuestions', summary: 'Upload the question CSV (field "file", max 2 MB, 200 questions). An optional image column names a picture uploaded with POST /cbt/exams/{id}/question-images. Validates every row and returns them all as an editable draft (batchId, 24 hours). Saves nothing to the exam until the draft is confirmed', tags, roles: manage, request: { params: idParams }, upload: true, success: done(importReport, 'The draft, with a valid flag and errors on every row'), errors: ['IMPORT_INVALID', 'NOT_FOUND', 'CONFLICT'] });
+   registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import/confirm', operationId: 'confirmExamQuestions', summary: 'Save a clean upload as the exam\'s questions, replacing any earlier ones', tags, roles: manage, request: { params: idParams, body: confirmBody }, success: done(z.object({ questions: num, maxScore: z.number() }), 'Saved'), errors: ['IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
+   const examSummary = z.object({ questionCount: num, maxScore: z.number(), problem: z.object({ field: z.string(), issue: z.string() }).nullable().describe('A heads-up, not a block: for example mixed marks on an exam that gives each student a share of its questions. It must be fixed before the exam is submitted') });
+   const questionHow = 'Only while the exam is a draft or rejected, and only the teacher who owns it. The exam\'s question count and total marks are updated with it. A question identical to another in the exam is refused';
+@@ -159,10 +211,36 @@
+ 
+   registry.register({ method: 'get', path: '/cbt/schedule', operationId: 'getExamSchedule', summary: 'Read-only exam schedule for a student, or for a parent\'s children (optionally one child)', tags, roles: [ROLES.PARENT, ROLES.STUDENT], request: { query: scheduleSchemas.query }, success: done(z.array(z.object({ examId: z.string(), title: z.string(), subjectName: z.string(), type: z.enum(EXAM_TYPES), windowStart: iso, windowEnd: iso, durationMin: num, studentId: z.string(), studentName: z.string(), classArmName: z.string() })), 'The schedule'), errors: ['NOT_FOUND'] });
+   registry.register({ method: 'get', path: '/cbt/time', operationId: 'getServerTime', summary: 'Server time, for the connection check and the clock offset', tags, roles: PERMISSIONS['cbt:take'], success: done(z.object({ serverTime: iso }), 'Now') });
+-  registry.register({ method: 'get', path: '/cbt/my-exams', operationId: 'listMyExams', summary: 'My exams: upcoming, open, in progress, completed or missed', tags, roles: PERMISSIONS['cbt:take'], success: done(z.array(z.object({ id: z.string(), title: z.string(), subjectName: z.string(), type: z.enum(EXAM_TYPES), durationMin: num, windowStart: iso, windowEnd: iso, instructions: z.string(), questionCount: num, state: z.enum(['UPCOMING', 'OPEN', 'IN_PROGRESS', 'COMPLETED', 'MISSED']), attempt: z.object({ id: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), endsAt: iso, submittedAt: iso.nullable() }).nullable(), result: z.object({ score: z.number(), maxScore: z.number(), percent: z.number().nullable(), passed: z.boolean() }).nullable() })), 'My exams') });
+-  registry.register({ method: 'post', path: '/cbt/exams/{id}/start', operationId: 'startExam', summary: 'Start the exam, or resume it. Returns the shuffled questions without answers, endsAt and serverTime. If the exam gives each student a share of its questions (settings.questionsPerStudent), the student is dealt a random selection when they start, fixed for the whole attempt and identical on every refresh or resume', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'Started'), errors: ['NOT_FOUND', 'EXAM_NOT_OPEN', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
+-  registry.register({ method: 'get', path: '/cbt/attempts/{id}', operationId: 'getAttempt', summary: 'Resume after a refresh: the paper, the saved answers and the time left', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'The attempt'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
+-  registry.register({ method: 'put', path: '/cbt/attempts/{id}/answers', operationId: 'saveAnswers', summary: 'Autosave (debounced). Send only changed answers; null clears one. MCQ: the option key. TRUE_FALSE: TRUE or FALSE. SHORT_ANSWER: text, up to 2,000 characters, line breaks kept. One request may carry at most 100,000 characters of answers in total (the body may be up to 512 KB). Over the limit returns VALIDATION_ERROR saying how long the answer was and what is allowed. Send a few long answers at a time, not all at once', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: saveAnswersBody }, success: done(z.object({ saved: num, serverTime: iso, remainingSeconds: num }), 'Saved'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
+-  registry.register({ method: 'post', path: '/cbt/attempts/{id}/submit', operationId: 'submitAttempt', summary: 'Submit, with optional final answers (same length limits as saving). If answers were already saved, submit without them. Safe to repeat. ATTEMPT_EXPIRED means the server already submitted it', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: submitBody }, success: done(z.object({ attemptId: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), submittedAt: iso.nullable(), resultAvailable: z.boolean(), score: z.number().nullable(), maxScore: z.number().nullable(), percent: z.number().nullable() }), 'Submitted'), errors: ['NOT_FOUND', 'ATTEMPT_EXPIRED'] });
++  registry.register({ method: 'get', path: '/cbt/my-exams', operationId: 'listMyExams', summary: 'My exams: upcoming, open, in progress, completed or missed', tags, roles: PERMISSIONS['cbt:take'], success: done(z.array(z.object({ id: z.string(), title: z.string(), subjectName: z.string(), type: z.enum(EXAM_TYPES), durationMin: num, windowStart: iso, windowEnd: iso, instructions: z.string(), questionCount: num, state: z.enum(['UPCOMING', 'OPEN', 'IN_PROGRESS', 'COMPLETED', 'MISSED']), attempt: z.object({ id: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), endsAt: iso, submittedAt: iso.nullable() }).nullable(), result: z.object({ score: z.number(), maxScore: z.number(), percent: z.number().nullable(), passed: z.boolean() }).nullable(), paused: z.boolean(), retake: z.object({ expiresAt: iso.nullable() }).nullable().describe('Set when an admin approved a retake the student has not used yet. Start the exam to begin it') })), 'My exams') });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/start', operationId: 'startExam', summary: 'Start the exam, or resume it. Returns the shuffled questions without answers, endsAt and serverTime. If the exam gives each student a share of its questions (settings.questionsPerStudent), the student is dealt a random selection when they start, fixed for the whole attempt and identical on every refresh or resume', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'Started'), errors: ['NOT_FOUND', 'EXAM_NOT_OPEN', 'EXAM_PAUSED', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED', 'CONFLICT'] });
++  registry.register({ method: 'get', path: '/cbt/attempts/{id}', operationId: 'getAttempt', summary: 'Resume after a refresh: the paper, the saved answers and the time left', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(attemptView, 'The attempt'), errors: ['NOT_FOUND', 'EXAM_PAUSED', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
++  registry.register({ method: 'put', path: '/cbt/attempts/{id}/answers', operationId: 'saveAnswers', summary: 'Autosave (debounced). Send only changed answers; null clears one. MCQ: the option key. TRUE_FALSE: TRUE or FALSE. SHORT_ANSWER: text, up to 2,000 characters, line breaks kept. One request may carry at most 100,000 characters of answers in total (the body may be up to 512 KB). Over the limit returns VALIDATION_ERROR saying how long the answer was and what is allowed. Send a few long answers at a time, not all at once', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: saveAnswersBody }, success: done(z.object({ saved: num, paused: z.boolean(), serverTime: iso, remainingSeconds: num }), 'Saved'), errors: ['NOT_FOUND', 'EXAM_PAUSED', 'ATTEMPT_EXPIRED', 'ATTEMPT_ALREADY_SUBMITTED'] });
++  registry.register({ method: 'post', path: '/cbt/attempts/{id}/submit', operationId: 'submitAttempt', summary: 'Submit, with optional final answers (same length limits as saving). If answers were already saved, submit without them. Safe to repeat. ATTEMPT_EXPIRED means the server already submitted it', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams, body: submitBody }, success: done(z.object({ attemptId: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), submittedAt: iso.nullable(), resultAvailable: z.boolean(), score: z.number().nullable(), maxScore: z.number().nullable(), percent: z.number().nullable() }), 'Submitted'), errors: ['NOT_FOUND', 'EXAM_PAUSED', 'ATTEMPT_EXPIRED'] });
+   registry.register({ method: 'get', path: '/cbt/attempts/{id}/result', operationId: 'getAttemptResult', summary: 'My score, and the answer review if the teacher allowed it. Only once results are visible', tags, roles: PERMISSIONS['cbt:take'], request: { params: idParams }, success: done(z.object({ attemptId: z.string(), examId: z.string(), title: z.string(), score: z.number(), maxScore: z.number(), percent: z.number().nullable(), passed: z.boolean(), passMarkPercent: num, correctCount: num, questionCount: num, submittedAt: iso.nullable(), autoSubmitted: z.boolean(), review: z.array(z.record(z.string(), z.unknown())).nullable() }), 'The result'), errors: ['NOT_FOUND', 'CONFLICT'] });
++
++  // ---- editable upload drafts (the teacher's own, until confirmed or 24 hours pass)
++  const draftHow = 'Only the teacher who uploaded it, while the exam is a draft or rejected. Returns the whole draft again, each question with its own valid flag and errors. Nothing reaches the exam until it is confirmed';
++  registry.register({ method: 'get', path: '/cbt/exams/{id}/questions/import/{batchId}', operationId: 'getQuestionDraft', summary: `Open an uploaded draft. ${draftHow}`, tags, roles: manage, request: { params: batchParams }, success: done(importReport, 'The draft'), errors: ['IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import/{batchId}/questions', operationId: 'addDraftQuestion', summary: `Add a question, written by hand, to the draft. ${draftHow}`, tags, roles: manage, request: { params: batchParams, body: addQuestionBody }, success: done(importReport, 'The draft', 201), errors: ['VALIDATION_ERROR', 'IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'patch', path: '/cbt/exams/{id}/questions/import/{batchId}/questions/{tempId}', operationId: 'updateDraftQuestion', summary: `Fix any part of one draft question. Only what you send changes. A question that is still wrong is kept and shows its errors. ${draftHow}`, tags, roles: manage, request: { params: batchRowParams, body: updateQuestionBody }, success: done(importReport, 'The draft'), errors: ['VALIDATION_ERROR', 'IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'delete', path: '/cbt/exams/{id}/questions/import/{batchId}/questions/{tempId}', operationId: 'deleteDraftQuestion', summary: `Remove one question from the draft. ${draftHow}`, tags, roles: manage, request: { params: batchRowParams }, success: done(importReport, 'The draft'), errors: ['IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/questions/import/{batchId}/confirm', operationId: 'confirmQuestionDraft', summary: 'Save the draft as the exam\'s questions, replacing any earlier ones. Refused, with the list of problems, while any question is invalid', tags, roles: manage, request: { params: batchParams }, success: done(z.object({ questions: num, maxScore: z.number() }), 'Saved'), errors: ['IMPORT_INVALID', 'IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'delete', path: '/cbt/exams/{id}/questions/import/{batchId}', operationId: 'discardQuestionDraft', summary: 'Throw the draft away. The exam is untouched', tags, roles: manage, request: { params: batchParams }, success: done(z.null(), 'Discarded'), errors: ['IMPORT_TOKEN_EXPIRED', 'NOT_FOUND', 'CONFLICT'] });
++
++  // ---- pause and resume
++  const who = 'The teacher who owns the exam, an admin or the super admin';
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/pause', operationId: 'pauseExam', summary: `Stop the exam\'s clock. While paused nobody can start, save or submit (EXAM_PAUSED); saved answers are kept. ${who}`, tags, roles: PERMISSIONS['cbt:analytics'], request: { params: idParams, body: pauseBody }, success: done(z.object({ examId: z.string(), paused: z.boolean(), pausedAt: iso, reason: z.string().nullable() }), 'Paused'), errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/resume', operationId: 'resumeExam', summary: `Start the clock again. Every running attempt, and the exam\'s window end, move forward by the length of the pause, so it costs nobody time. ${who}`, tags, roles: PERMISSIONS['cbt:analytics'], request: { params: idParams }, success: done(z.object({ examId: z.string(), paused: z.boolean(), pausedMs: num, attemptsExtended: num, windowEnd: iso }), 'Resumed'), errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'get', path: '/cbt/exams/{id}/status', operationId: 'getExamStatus', summary: 'Is the exam running or paused? A student\'s screen polls this (every 15 to 30 seconds) to show the paused notice. For a student it also carries their time left, frozen while paused', tags, roles: PERMISSIONS['cbt:read'], request: { params: idParams }, success: done(z.object({ examId: z.string(), paused: z.boolean(), pausedAt: iso.nullable(), reason: z.string().nullable(), windowEnd: iso, serverTime: iso, attempt: z.object({ id: z.string(), status: z.enum(['IN_PROGRESS', 'SUBMITTED']), remainingSeconds: num }).nullable() }), 'The status'), errors: ['NOT_FOUND', 'FORBIDDEN'] });
++  registry.register({ method: 'get', path: '/cbt/exams/{id}/pause-history', operationId: 'getExamPauseHistory', summary: `Every pause: who paused, why, who resumed, and how long it lasted. ${who}`, tags, roles: PERMISSIONS['cbt:analytics'], request: { params: idParams }, success: done(z.array(z.object({ id: z.string(), pausedAt: iso, pausedBy: z.string(), pausedByName: z.string(), reason: z.string().nullable(), resumedAt: iso.nullable(), resumedBy: z.string().nullable(), resumedByName: z.string().nullable(), extendedSeconds: num.nullable() })), 'The pauses'), errors: ['NOT_FOUND'] });
++
++  // ---- retakes
++  const retakeRules = 'A retake needs the teacher\'s request and an admin\'s approval, and an approval can be used once. It is not possible after results have been released';
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/retakes', operationId: 'requestExamRetakes', summary: `Ask for a retake for one or more students who finished the exam (they failed badly, or a fault spoiled it), with a reason. Students who cannot be included come back in skipped. ${retakeRules}`, tags, roles: manage, request: { params: idParams, body: requestRetakeBody }, success: done(z.object({ requested: z.array(retakeView), skipped: z.array(z.object({ studentId: z.string(), reason: z.string() })) }), 'Requested', 201), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'get', path: '/cbt/exams/{id}/retakes', operationId: 'listExamRetakes', summary: 'Retake requests for one exam. Teachers see the ones they made; admins see all', tags, roles: PERMISSIONS['cbt:analytics'], request: { params: idParams, query: examRetakesSchemas.query }, success: page(retakeView), errors: ['NOT_FOUND'] });
++  registry.register({ method: 'get', path: '/cbt/retakes', operationId: 'listRetakes', summary: 'Retake requests across exams. Admins use status=PENDING as their approval queue; teachers see the ones they made', tags, roles: PERMISSIONS['cbt:analytics'], request: { query: allRetakesSchemas.query }, success: page(retakeView), errors: ['NOT_FOUND'] });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/retakes/{retakeId}/approve', operationId: 'approveExamRetake', summary: 'Approve a request (admin). The student is told. expiresAt is optional: the last moment they may start. When they start, their earlier sitting moves to the attempt history and a new one, with a newly dealt paper, replaces it', tags, roles: PERMISSIONS['cbt:approve'], request: { params: retakeParams, body: approveRetakeBody }, success: done(retakeView, 'Approved'), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'post', path: '/cbt/exams/{id}/retakes/{retakeId}/reject', operationId: 'rejectExamRetake', summary: 'Refuse a request (admin), with a reason the teacher will see', tags, roles: PERMISSIONS['cbt:approve'], request: { params: retakeParams, body: rejectBody }, success: done(retakeView, 'Refused'), errors: ['VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'delete', path: '/cbt/exams/{id}/retakes/{retakeId}', operationId: 'revokeExamRetake', summary: 'The teacher withdraws a request that is waiting. An admin can also cancel an approval nobody has used yet', tags, roles: PERMISSIONS['cbt:analytics'], request: { params: retakeParams }, success: done(z.null(), 'Withdrawn'), errors: ['NOT_FOUND', 'CONFLICT'] });
++  registry.register({ method: 'get', path: '/cbt/exams/{id}/students/{studentId}/attempts', operationId: 'getStudentAttemptTrail', summary: 'Every sitting a student has had of this exam, oldest first, with the reason and approver of each retake. Staff only: parents and students never see earlier sittings', tags, roles: PERMISSIONS['cbt:analytics'], request: { params: studentTrailSchemas.params }, success: done(z.object({ examId: z.string(), studentId: z.string(), studentName: z.string(), attempts: z.array(sitting), requests: z.array(retakeView) }), 'The trail'), errors: ['NOT_FOUND'] });
+ }
+\ No newline at end of file
+--- a/src/modules/cbt/exam.repository.ts
++++ b/src/modules/cbt/exam.repository.ts
+@@ -8,6 +8,8 @@
+   windowStart: Date; windowEnd: Date; instructions: string; settings: ExamSettings;
+   status: ExamStatus; rejectionReason: string | null; decidedBy: Types.ObjectId | null; decidedAt: Date | null;
+   resultsReleased: boolean; resultsReleasedAt: Date | null; questionCount: number; maxScore: number;
++  /** Set while the exam is paused: when it was paused, and the reason given. */
++  pausedAt: Date | null; pauseReason: string | null;
+   createdAt: Date; updatedAt: Date;
+ }
+ type Row = ExamDocument & { _id: Types.ObjectId };
+@@ -39,6 +41,7 @@
+     decidedBy: { type: mongoose.Schema.Types.ObjectId, default: null }, decidedAt: { type: Date, default: null },
+     resultsReleased: { type: Boolean, default: false }, resultsReleasedAt: { type: Date, default: null },
+     questionCount: { type: Number, default: 0 }, maxScore: { type: Number, default: 0 },
++    pausedAt: { type: Date, default: null }, pauseReason: { type: String, default: null },
+   },
+   { timestamps: true, versionKey: false },
+ );
+@@ -53,7 +56,7 @@
+   id: string; title: string; subjectId: string; classArmIds: string[]; teacherId: string; sessionId: string; termId: string;
+   type: ExamType; durationMin: number; windowStart: Date; windowEnd: Date; instructions: string; settings: ExamSettings;
+   status: ExamStatus; rejectionReason: string | null; resultsReleased: boolean; resultsReleasedAt: Date | null;
+-  questionCount: number; maxScore: number; createdAt: Date;
++  questionCount: number; maxScore: number; pausedAt: Date | null; pauseReason: string | null; createdAt: Date;
+ }
+ export type ExamFields = Pick<ExamRecord, 'title' | 'subjectId' | 'classArmIds' | 'teacherId' | 'sessionId' | 'termId' | 'type' | 'durationMin' | 'windowStart' | 'windowEnd' | 'instructions' | 'settings'>;
+ 
+@@ -65,7 +68,8 @@
+   durationMin: r.durationMin, windowStart: r.windowStart, windowEnd: r.windowEnd, instructions: r.instructions ?? '',
+   settings: { shuffleQuestions: r.settings.shuffleQuestions, shuffleOptions: r.settings.shuffleOptions, resultRelease: r.settings.resultRelease, showAnswers: r.settings.showAnswers, passMarkPercent: r.settings.passMarkPercent, scoreComponent: r.settings.scoreComponent ?? null, questionsPerStudent: r.settings.questionsPerStudent ?? null },
+   status: r.status, rejectionReason: r.rejectionReason ?? null, resultsReleased: r.resultsReleased,
+-  resultsReleasedAt: r.resultsReleasedAt ?? null, questionCount: r.questionCount, maxScore: r.maxScore, createdAt: r.createdAt,
++  resultsReleasedAt: r.resultsReleasedAt ?? null, questionCount: r.questionCount, maxScore: r.maxScore,
++  pausedAt: r.pausedAt ?? null, pauseReason: r.pauseReason ?? null, createdAt: r.createdAt,
+ });
+ 
+ async function create(data: ExamFields): Promise<ExamRecord> {
+@@ -130,6 +134,31 @@
+   return row ? toRecord(row) : null;
+ }
+ 
++/** Pauses a published exam that is still open and not already paused. Null if any of that is not true. */
++async function pause(id: string, at: Date, reason: string | null, session: mongoose.ClientSession): Promise<ExamRecord | null> {
++  const row = await ExamModel.findOneAndUpdate(
++    { _id: id, status: EXAM_STATUS.PUBLISHED, pausedAt: null, windowEnd: { $gt: at } },
++    { $set: { pausedAt: at, pauseReason: reason } }, { new: true, session },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++/** Ends a pause and pushes the window's end back by the length of the pause. Null if the exam was not paused. */
++async function resume(id: string, pausedMs: number, session: mongoose.ClientSession): Promise<ExamRecord | null> {
++  const row = await ExamModel.findOneAndUpdate(
++    { _id: id, pausedAt: { $ne: null } },
++    [{ $set: { pausedAt: null, pauseReason: null, windowEnd: { $add: ['$windowEnd', pausedMs] } } }],
++    { new: true, session },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++/** The exams that are paused right now, so the background sweep leaves their attempts alone. */
++async function pausedIds(): Promise<string[]> {
++  const rows = await ExamModel.find({ pausedAt: { $ne: null } }, { _id: 1 }).limit(1000).lean<{ _id: Types.ObjectId }[]>();
++  return rows.map((r) => r._id.toString());
++}
++
+ async function listForArm(armId: string, sessionId: string, since: Date): Promise<ExamRecord[]> {
+   if (!OBJECT_ID.test(armId) || !OBJECT_ID.test(sessionId)) return [];
+   const rows = await ExamModel.find({ classArmIds: armId, sessionId, status: EXAM_STATUS.PUBLISHED, windowEnd: { $gte: since } })
+@@ -144,4 +173,4 @@
+   return rows.map(toRecord);
+ }
+ 
+-export const examRepository = { create, findById, updateEditable, remove, list, transition, setQuestionStats, markReleased, listForArm , upcomingForTeacher};
+\ No newline at end of file
++export const examRepository = { create, findById, updateEditable, remove, list, transition, setQuestionStats, markReleased, listForArm, upcomingForTeacher, pause, resume, pausedIds };
+\ No newline at end of file
+--- a/src/modules/cbt/exam.service.ts
++++ b/src/modules/cbt/exam.service.ts
+@@ -35,6 +35,8 @@
+   /** Removes an exam's pictures from the image store when the exam is deleted. */
+   pictures?: { purgeExam(examId: string): Promise<void> };
+   attempts: Pick<typeof attemptRepository, 'allForExam' | 'countForExam'>;
++  /** Is a retake still waiting or unused? Results cannot be released while one is. */
++  hasOpenRetakes?: (examId: string) => Promise<boolean>;
+   enrolments: Pick<typeof enrolmentRepository, 'studentIdsInArms'>;
+   sessions: Pick<typeof sessionRepository, 'findCurrentSession' | 'findTermByDate'>;
+   structure: Pick<typeof structureRepository, 'subjectsByIds' | 'armsByIds' | 'classesByIds'>;
+@@ -80,6 +82,7 @@
+       durationMin: e.durationMin, windowStart: e.windowStart.toISOString(), windowEnd: e.windowEnd.toISOString(),
+       instructions: e.instructions, settings: e.settings, status: e.status, rejectionReason: e.rejectionReason,
+       resultsReleased: e.resultsReleased, questionCount: e.questionCount, maxScore: e.maxScore, maxScorePerStudent: maxScorePerStudent(e), createdAt: e.createdAt.toISOString(),
++      paused: e.pausedAt !== null, pausedAt: e.pausedAt ? e.pausedAt.toISOString() : null, pauseReason: e.pauseReason,
+     }));
+   }
+   const viewOf = async (e: ExamRecord) => {
+@@ -311,8 +314,16 @@
+       if (exam.status !== EXAM_STATUS.PUBLISHED) throw new AppError('CONFLICT', { message: 'This exam is not published' });
+       if (exam.resultsReleased) return { released: true, alreadyReleased: true, fed: 0, skipped: 0 };
+       if (exam.windowEnd > new Date()) throw new AppError('CONFLICT', { message: 'Results can be released once the exam window has closed' });
++      // A paused exam's clocks are stopped, so its attempts must not be closed or its results released.
++      if (exam.pausedAt) throw new AppError('CONFLICT', { message: 'This exam is paused. Resume it first' });
++      if (deps.hasOpenRetakes && (await deps.hasOpenRetakes(id))) {
++        throw new AppError('CONFLICT', { message: 'A retake for this exam is waiting for a decision, or approved and not yet used. Decide or cancel it before releasing results' });
++      }
+ 
+       await deps.finalizeOverdueFor(id);
++      if ((await attempts.allForExam(id)).some((a) => a.status === 'IN_PROGRESS')) {
++        throw new AppError('CONFLICT', { message: 'Some students are still sitting this exam. Release the results when they have finished' });
++      }
+       const released = await exams.markReleased(id, new Date());
+       if (!released) return { released: true, alreadyReleased: true, fed: 0, skipped: 0 };
+ 
+--- /dev/null
++++ b/src/modules/cbt/pause.repository.ts
+@@ -0,0 +1,53 @@
++import mongoose, { type ClientSession, type Model, type Types } from 'mongoose';
++
++/** One row per pause: who paused the exam, when, why, and who resumed it. */
++interface PauseDocument {
++  examId: Types.ObjectId; pausedAt: Date; pausedBy: Types.ObjectId; reason: string | null;
++  resumedAt: Date | null; resumedBy: Types.ObjectId | null;
++  /** How far every running attempt's end time (and the exam window) was moved when the pause ended. */
++  extendedMs: number | null;
++}
++type Row = PauseDocument & { _id: Types.ObjectId };
++
++const schema = new mongoose.Schema<PauseDocument>(
++  {
++    examId: { type: mongoose.Schema.Types.ObjectId, required: true },
++    pausedAt: { type: Date, required: true },
++    pausedBy: { type: mongoose.Schema.Types.ObjectId, required: true },
++    reason: { type: String, default: null, maxlength: 500 },
++    resumedAt: { type: Date, default: null },
++    resumedBy: { type: mongoose.Schema.Types.ObjectId, default: null },
++    extendedMs: { type: Number, default: null },
++  },
++  { collection: 'exam_pauses', timestamps: false, versionKey: false },
++);
++schema.index({ examId: 1, pausedAt: -1 });
++
++const PauseModel: Model<PauseDocument> =
++  (mongoose.models.ExamPause as Model<PauseDocument> | undefined) ?? mongoose.model<PauseDocument>('ExamPause', schema);
++
++export interface PauseRecord {
++  id: string; examId: string; pausedAt: Date; pausedBy: string; reason: string | null;
++  resumedAt: Date | null; resumedBy: string | null; extendedMs: number | null;
++}
++const toRecord = (r: Row): PauseRecord => ({
++  id: r._id.toString(), examId: r.examId.toString(), pausedAt: r.pausedAt, pausedBy: r.pausedBy.toString(), reason: r.reason ?? null,
++  resumedAt: r.resumedAt ?? null, resumedBy: r.resumedBy ? r.resumedBy.toString() : null, extendedMs: r.extendedMs ?? null,
++});
++
++async function open(examId: string, pausedAt: Date, pausedBy: string, reason: string | null, session: ClientSession): Promise<void> {
++  await PauseModel.create([{ examId, pausedAt, pausedBy, reason }], { session });
++}
++
++/** Closes the pause that is still open for this exam. */
++async function close(examId: string, resumedAt: Date, resumedBy: string, extendedMs: number, session: ClientSession): Promise<void> {
++  await PauseModel.updateOne({ examId, resumedAt: null }, { $set: { resumedAt, resumedBy, extendedMs } }, { session });
++}
++
++async function list(examId: string): Promise<PauseRecord[]> {
++  if (!/^[a-f0-9]{24}$/.test(examId)) return [];
++  const rows = await PauseModel.find({ examId }).sort({ pausedAt: -1 }).limit(200).lean<Row[]>();
++  return rows.map(toRecord);
++}
++
++export const pauseRepository = { open, close, list };
+--- /dev/null
++++ b/src/modules/cbt/pause.service.ts
+@@ -0,0 +1,149 @@
++import { AppError } from '../../common/errors/AppError';
++import { sanitizeText } from '../../common/utils/text';
++import { ROLES, type Role } from '../../config/constants';
++import { withTransaction } from '../../config/db';
++import type { ExamScheduler } from '../../jobs/exam.jobs';
++import type { enrolmentRepository } from '../academics/enrolment.repository';
++import { recordSafely, type AuditPort } from '../audit/audit.port';
++import type { NotificationService } from '../notifications/notification.service';
++import type { staffRepository } from '../users/staff.repository';
++import { ATTEMPT_STATUS, type attemptRepository } from './attempt.repository';
++import { EXAM_STATUS } from './cbt.types';
++import type { ExamRecord, examRepository } from './exam.repository';
++import type { pauseRepository } from './pause.repository';
++
++interface Actor { id: string; role: Role }
++interface Context { ip: string; requestId: string }
++
++const RESCHEDULE_BATCH = 25;
++const isAdmin = (role: Role): boolean => role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
++
++/**
++ * Pausing stops an exam's clock for everyone sitting it. While it is paused nobody can start, save or submit;
++ * their saved answers are kept. Resuming moves every running attempt's end time, and the exam's window end,
++ * forward by the length of the pause, so the pause never costs anyone time.
++ */
++export function createPauseService(deps: {
++  exams: Pick<typeof examRepository, 'findById' | 'pause' | 'resume'>;
++  attempts: Pick<typeof attemptRepository, 'extendActive' | 'runningTimes' | 'findByExamStudent'>;
++  pauses: typeof pauseRepository;
++  enrolments: Pick<typeof enrolmentRepository, 'forStudents'>;
++  staff: Pick<typeof staffRepository, 'nameMap'>;
++  scheduler: ExamScheduler;
++  notifier: Pick<NotificationService, 'notify'>;
++  audit: AuditPort;
++}) {
++  const { exams, attempts, pauses, enrolments, staff, scheduler, notifier, audit } = deps;
++
++  /** The teacher who owns the exam, an admin or the super admin. Everyone else gets "not found". */
++  async function controllable(actor: Actor, examId: string): Promise<ExamRecord> {
++    const exam = await exams.findById(examId);
++    if (!exam || !(isAdmin(actor.role) || (actor.role === ROLES.TEACHER && exam.teacherId === actor.id))) throw new AppError('NOT_FOUND');
++    return exam;
++  }
++
++  const log = (action: string, actor: Actor, ctx: Context, examId: string, metadata: Record<string, unknown>) =>
++    recordSafely(audit, { action, actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId, metadata });
++
++  const secondsLeft = (endsAt: Date, at: Date): number => Math.max(0, Math.floor((endsAt.getTime() - at.getTime()) / 1000));
++
++  return {
++    async pause(actor: Actor, examId: string, input: { reason?: string | undefined }, ctx: Context) {
++      const exam = await controllable(actor, examId);
++      if (exam.status !== EXAM_STATUS.PUBLISHED) throw new AppError('CONFLICT', { message: 'Only a published exam can be paused' });
++      if (exam.pausedAt) throw new AppError('CONFLICT', { message: 'This exam is already paused' });
++      const reason = input.reason ? sanitizeText(input.reason) || null : null;
++
++      const now = new Date();
++      await withTransaction(async (session) => {
++        if (!(await exams.pause(examId, now, reason, session))) throw new AppError('CONFLICT', { message: 'This exam cannot be paused. It may be paused already, or its window has closed' });
++        await pauses.open(examId, now, actor.id, reason, session);
++      });
++
++      // Tell the owner when somebody else paused their exam.
++      if (exam.teacherId !== actor.id) {
++        await notifier.notify({
++          userIds: [exam.teacherId], type: 'EXAM_PAUSED', title: 'Your exam was paused',
++          body: `"${exam.title}" was paused${reason ? `: ${reason}` : '.'}`, data: { examId }, email: false,
++        });
++      }
++      await log('EXAM_PAUSED', actor, ctx, examId, { reason });
++      return { examId, paused: true, pausedAt: now.toISOString(), reason };
++    },
++
++    async resume(actor: Actor, examId: string, ctx: Context) {
++      const exam = await controllable(actor, examId);
++      if (!exam.pausedAt) throw new AppError('CONFLICT', { message: 'This exam is not paused' });
++      const pausedAt = exam.pausedAt;
++      const now = new Date();
++      const pausedMs = Math.max(0, now.getTime() - pausedAt.getTime());
++
++      const extended = await withTransaction(async (session) => {
++        const resumed = await exams.resume(examId, pausedMs, session);
++        if (!resumed) throw new AppError('CONFLICT', { message: 'This exam is not paused' });
++        const count = await attempts.extendActive(examId, pausedAt, pausedMs, session);
++        await pauses.close(examId, now, actor.id, pausedMs, session);
++        return count;
++      });
++
++      // The delayed auto-submit jobs were set for the old end times. Set them again for the new ones.
++      const running = await attempts.runningTimes(examId);
++      for (let i = 0; i < running.length; i += RESCHEDULE_BATCH) {
++        await Promise.all(running.slice(i, i + RESCHEDULE_BATCH).map(async (a) => {
++          await scheduler.cancel(a.id);
++          await scheduler.scheduleAutoSubmit(a.id, a.endsAt);
++        }));
++      }
++
++      if (exam.teacherId !== actor.id) {
++        await notifier.notify({
++          userIds: [exam.teacherId], type: 'EXAM_RESUMED', title: 'Your exam was resumed',
++          body: `"${exam.title}" is running again.`, data: { examId }, email: false,
++        });
++      }
++      await log('EXAM_RESUMED', actor, ctx, examId, { pausedMs, attemptsExtended: extended });
++      return { examId, paused: false, pausedMs, attemptsExtended: extended, windowEnd: new Date(exam.windowEnd.getTime() + pausedMs).toISOString() };
++    },
++
++    /**
++     * Is the exam running or paused? A student's screen asks this to show the "temporarily paused" notice,
++     * with the time they have left (frozen while paused). Staff see it for their own exams.
++     */
++    async status(actor: Actor, examId: string) {
++      if (actor.role === ROLES.PARENT) throw new AppError('FORBIDDEN');
++      const now = new Date();
++      const exam = actor.role === ROLES.STUDENT ? await exams.findById(examId) : await controllable(actor, examId);
++      if (!exam) throw new AppError('NOT_FOUND');
++
++      let attempt: { id: string; status: 'IN_PROGRESS' | 'SUBMITTED'; remainingSeconds: number } | null = null;
++      if (actor.role === ROLES.STUDENT) {
++        const armId = (await enrolments.forStudents([actor.id], exam.sessionId)).get(actor.id)?.classArmId;
++        if (exam.status !== EXAM_STATUS.PUBLISHED || !armId || !exam.classArmIds.includes(armId)) throw new AppError('NOT_FOUND');
++        const mine = await attempts.findByExamStudent(examId, actor.id);
++        if (mine) {
++          attempt = {
++            id: mine.id, status: mine.status,
++            remainingSeconds: mine.status === ATTEMPT_STATUS.IN_PROGRESS ? secondsLeft(mine.endsAt, exam.pausedAt ?? now) : 0,
++          };
++        }
++      }
++      return {
++        examId, paused: exam.pausedAt !== null, pausedAt: exam.pausedAt ? exam.pausedAt.toISOString() : null,
++        reason: exam.pauseReason, windowEnd: exam.windowEnd.toISOString(), serverTime: now.toISOString(), attempt,
++      };
++    },
++
++    async history(actor: Actor, examId: string) {
++      await controllable(actor, examId);
++      const rows = await pauses.list(examId);
++      const names = await staff.nameMap(rows.flatMap((r) => (r.resumedBy ? [r.pausedBy, r.resumedBy] : [r.pausedBy])));
++      return rows.map((r) => ({
++        id: r.id, pausedAt: r.pausedAt.toISOString(), pausedBy: r.pausedBy, pausedByName: names.get(r.pausedBy) ?? '', reason: r.reason,
++        resumedAt: r.resumedAt ? r.resumedAt.toISOString() : null, resumedBy: r.resumedBy, resumedByName: r.resumedBy ? (names.get(r.resumedBy) ?? '') : null,
++        extendedSeconds: r.extendedMs === null ? null : Math.round(r.extendedMs / 1000),
++      }));
++    },
++  };
++}
++
++export type PauseService = ReturnType<typeof createPauseService>;
+--- a/src/modules/cbt/question.import.ts
++++ b/src/modules/cbt/question.import.ts
+@@ -1,24 +1,23 @@
+-import { createHash, createHmac, randomBytes } from 'node:crypto';
++import { createHmac, randomBytes } from 'node:crypto';
+ import { parse } from 'csv-parse/sync';
+ import { AppError } from '../../common/errors/AppError';
+ import { withTransaction } from '../../config/db';
+ import { recordSafely, type AuditPort } from '../audit/audit.port';
+ import type { KeyValueStore } from '../auth/keyValueStore';
+-import { normalizeImageFileName } from '../../common/utils/image';
+ import { poolIssue } from './pool';
+-import { DIFFICULTIES, EXAM_STATUS, MAX_QUESTIONS, OPTION_KEYS, QUESTION_TYPES, type Difficulty, type QuestionType } from './cbt.types';
++import { EXAM_STATUS, MAX_QUESTIONS, OPTION_KEYS, QUESTION_TYPES } from './cbt.types';
+ import type { ExamRecord, examRepository } from './exam.repository';
+-import { normalizeAnswer } from './grading';
+ import type { PaperCache } from './paper.cache';
+ import type { ImageRecord } from './question.image.repository';
+ import type { NewQuestion, questionRepository } from './question.repository';
++import { buildQuestion, type BuiltQuestion, type QuestionInput, type QuestionIssue } from './question.rules';
+ 
+ const MAX_ERRORS = 500;
+ const PREVIEW_ROWS = 20;
+-const TOKEN_TTL_SECONDS = 15 * 60;
++/** An uploaded file stays as an editable draft this long. */
++const BATCH_TTL_SECONDS = 24 * 60 * 60;
+ const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+ const MARKS = /^\d{1,3}(\.\d)?$/;
+-const FORMULA_START = /^[=@]/;
+ const CONTROL = /[\u0000-\u001f\u007f]/g;
+ 
+ export const QUESTION_TEMPLATE_CSV = [
+@@ -39,11 +38,63 @@
+ interface Actor { id: string }
+ interface Context { ip: string; requestId: string }
+ interface RowError { row: number; field: string; issue: string }
+-interface StoredImport { actorId: string; examId: string; fileName: string; questions: NewQuestion[] }
++
++/** One question in a draft. `row` is its line in the uploaded file, or null for one added by hand. */
++interface DraftRow { tempId: string; row: number | null; input: QuestionInput }
++interface StoredBatch { actorId: string; examId: string; fileName: string; createdAt: string; expiresAt: string; rows: DraftRow[] }
+ 
+ const invalidFile = (issue: string): AppError => new AppError('IMPORT_INVALID', { details: [{ field: 'file', issue }] });
+ const clean = (v: string | undefined): string => (v ?? '').replace(CONTROL, '').trim();
+-const letterOf = (i: number): string => OPTION_KEYS[i] ?? '';
++const newTempId = (): string => randomBytes(6).toString('hex');
++const round1 = (n: number): number => Math.round(n * 10) / 10;
++
++/** The same rules apply to an uploaded row and a hand-written one. This puts a message in terms the teacher will recognise. */
++const plain = (issue: QuestionIssue): QuestionIssue => {
++  if (/^options\.\d+$/.test(issue.field) && issue.issue === 'Required') return { field: issue.field, issue: 'This option is empty. Fill options in order from A, without gaps' };
++  return issue;
++};
++
++/** Spreadsheet column names for the errors list that the upload has always returned. */
++const csvField = (field: string): string => {
++  if (field === 'text') return 'question';
++  if (field === 'correctAnswer') return 'correct';
++  if (field === 'imageFileName') return 'image';
++  const m = /^options\.(\d+)$/.exec(field);
++  if (m) return `option${OPTION_KEYS[Number(m[1])] ?? ''}`;
++  return field === 'options' ? 'optionA' : field;
++};
++const csvIssue = (issue: QuestionIssue): string => {
++  if (issue.field === 'options' && issue.issue.startsWith('Options are only for MCQ')) return 'Options are only for MCQ questions';
++  if (issue.field === 'correctAnswer' && issue.issue === 'Give 1 to 10 accepted answers') return 'Give 1 to 10 accepted answers, separated by |';
++  return issue.issue;
++};
++
++interface Evaluated { draft: DraftRow; label: string; errors: QuestionIssue[]; warnings: QuestionIssue[]; built: BuiltQuestion | null }
++
++/** Checks every draft question with the shared question rules, and flags a question that repeats an earlier one. */
++function evaluate(rows: readonly DraftRow[], library: Map<string, ImageRecord>): Evaluated[] {
++  const firstSeen = new Map<string, string>();
++  return rows.map((draft, index) => {
++    const label = draft.row !== null ? `row ${draft.row}` : `question ${index + 1}`;
++    const result = buildQuestion(draft.input);
++    const errors: QuestionIssue[] = [];
++    const warnings: QuestionIssue[] = [];
++    let built: BuiltQuestion | null = null;
++    if (!result.ok) {
++      errors.push(...result.issues.map(plain));
++    } else {
++      built = result.value;
++      // A picture that has not been uploaded is a warning, not an error: it can still be uploaded before confirming.
++      if (built.imageFile && !library.has(built.imageFile)) {
++        warnings.push({ field: 'imageFileName', issue: `No picture named "${built.imageFile}" has been uploaded to this exam yet. Upload it before confirming, or the question will have no picture` });
++      }
++      const seen = firstSeen.get(built.hash);
++      if (seen) { errors.push({ field: 'text', issue: `Same question as ${seen}` }); built = null; }
++      else firstSeen.set(built.hash, label);
++    }
++    return { draft, label, errors, warnings, built };
++  });
++}
+ 
+ export function createQuestionImportService(deps: {
+   store: KeyValueStore; secret: string;
+@@ -64,7 +115,61 @@
+     return exam;
+   }
+ 
++  /** The teacher's own draft, or "expired": a wrong, old or someone else's id looks the same as one that ran out. */
++  async function load(actor: Actor, examId: string, batchId: string): Promise<StoredBatch> {
++    if (!TOKEN.test(batchId)) throw new AppError('IMPORT_TOKEN_EXPIRED');
++    const raw = await deps.store.get(keyOf(batchId));
++    let stored: StoredBatch | null = null;
++    try { stored = raw ? (JSON.parse(raw) as StoredBatch) : null; } catch { stored = null; }
++    if (!stored || stored.actorId !== actor.id || stored.examId !== examId || !Array.isArray(stored.rows)) throw new AppError('IMPORT_TOKEN_EXPIRED');
++    return stored;
++  }
++
++  /** Writes the draft back, keeping its original 24 hours: editing does not extend it. */
++  async function save(batchId: string, batch: StoredBatch): Promise<void> {
++    const seconds = Math.floor((Date.parse(batch.expiresAt) - Date.now()) / 1000);
++    if (seconds < 1) throw new AppError('IMPORT_TOKEN_EXPIRED');
++    await deps.store.setMany([{ key: keyOf(batchId), value: JSON.stringify(batch), ttlSeconds: seconds }]);
++  }
++
++  /** The whole draft as the teacher sees it: every question with its own valid flag and errors. */
++  async function describe(exam: ExamRecord, batch: StoredBatch, batchId: string) {
++    const library = await deps.pictures.byName(exam.id);
++    const evaluated = evaluate(batch.rows, library);
++    const valid = evaluated.filter((e) => e.errors.length === 0 && e.built !== null);
++    const built = valid.flatMap((e) => (e.built ? [e.built] : []));
++    // Once every question is fine on its own, check the set works with the exam's "questions per student" setting.
++    const poolProblem = valid.length === evaluated.length ? poolIssue(exam.settings.questionsPerStudent, built.length, built.map((q) => q.marks)) : null;
++    const clear = evaluated.length > 0 && valid.length === evaluated.length && poolProblem === null;
++
++    const legacyErrors: RowError[] = evaluated.flatMap((e) => e.errors.map((i) => ({ row: e.draft.row ?? 0, field: csvField(i.field), issue: csvIssue(i) })));
++    const legacyWarnings: RowError[] = evaluated.flatMap((e) => e.warnings.map((i) => ({ row: e.draft.row ?? 0, field: csvField(i.field), issue: i.issue })));
++    const errors = [...(poolProblem ? [{ row: 0, field: poolProblem.field, issue: poolProblem.issue }] : []), ...legacyErrors];
++
++    return {
++      batchId, examId: exam.id, fileName: batch.fileName, expiresAt: batch.expiresAt,
++      rowCount: evaluated.length, validCount: valid.length,
++      warnings: legacyWarnings.slice(0, MAX_ERRORS),
++      errors: errors.slice(0, MAX_ERRORS), truncated: errors.length > MAX_ERRORS,
++      totalMarks: clear ? round1(built.reduce((sum, q) => sum + q.marks, 0)) : null,
++      byType: clear ? Object.fromEntries(QUESTION_TYPES.map((t) => [t, built.filter((q) => q.type === t).length])) : null,
++      preview: built.slice(0, PREVIEW_ROWS).map((q) => ({ type: q.type, text: q.text.slice(0, 120), marks: q.marks })),
++      importToken: clear ? batchId : null,
++      rows: evaluated.map((e) => ({
++        tempId: e.draft.tempId, row: e.draft.row, valid: e.errors.length === 0, errors: e.errors, warnings: e.warnings,
++        question: {
++          type: e.draft.input.type, text: e.draft.input.text, options: e.draft.input.options ? [...e.draft.input.options] : null,
++          correctAnswer: typeof e.draft.input.correctAnswer === 'string' ? e.draft.input.correctAnswer : [...e.draft.input.correctAnswer],
++          marks: e.draft.input.marks ?? 1, topic: e.draft.input.topic ?? null, difficulty: e.draft.input.difficulty ?? 'MEDIUM',
++          explanation: e.draft.input.explanation ?? null, imageFileName: e.draft.input.imageFileName ?? null,
++        },
++      })),
++      problems: poolProblem ? [poolProblem] : [],
++    };
++  }
++
+   return {
++    /** Reads the file into an editable draft. Nothing is written to the exam yet. */
+     async upload(actor: Actor, examId: string, fileName: string, buffer: Buffer) {
+       const exam = await editableExam(actor, examId);
+ 
+@@ -90,157 +195,134 @@
+       });
+       for (const column of REQUIRED) if (!seen.has(column)) throw invalidFile(`Missing column "${column}"`);
+ 
+-      const errors: RowError[] = [];
+-      const questions: NewQuestion[] = [];
+-      const hashes = new Map<string, number>();
+-      /** For each accepted question, the row it came from and the picture it asked for. */
+-      const asked: { row: number; imageFile: string | null }[] = [];
+-
+-      rows.forEach((cells, index) => {
+-        const row = index + 2;
+-        const before = errors.length;
++      const draftRows: DraftRow[] = rows.map((cells, index) => {
+         const get = (field: string): string => clean(cells[header.indexOf(field)]);
+-        const problem = (field: string, issue: string): void => void errors.push({ row, field, issue });
+-        const text_ = (field: string, max: number, required: boolean): string => {
+-          const value = get(field);
+-          if (!value) { if (required) problem(field, 'Required'); return ''; }
+-          if (value.length > max) problem(field, `At most ${max} characters`);
+-          else if (FORMULA_START.test(value)) problem(field, 'Must not start with = or @');
+-          return value;
++        // Options run from A with no gaps. A gap is kept as an empty option, which the shared rules report.
++        const optionCells = OPTION_KEYS.map((key) => get(`option${key}`));
++        const last = optionCells.reduce((at, value, i) => (value ? i : at), -1);
++        const rawMarks = get('marks');
++        return {
++          tempId: newTempId(), row: index + 2,
++          input: {
++            type: get('type'), text: get('question'), options: last >= 0 ? optionCells.slice(0, last + 1) : null,
++            correctAnswer: get('correct'),
++            // A value that is not a plain number is passed as -1, which the shared rules refuse with the usual marks message.
++            marks: rawMarks === '' ? undefined : (MARKS.test(rawMarks) ? Number(rawMarks) : -1),
++            topic: get('topic') || null, difficulty: get('difficulty') || undefined,
++            explanation: get('explanation') || null, imageFileName: get('image') || null,
++          },
+         };
++      });
+ 
+-        const type = get('type').toUpperCase().replace(/[\s-]+/g, '_');
+-        if (!(QUESTION_TYPES as readonly string[]).includes(type)) problem('type', 'Use MCQ, TRUE_FALSE or SHORT_ANSWER');
+-        const questionText = text_('question', 1000, true);
+-
+-        // Options: MCQ only, from A with no gaps.
+-        const options: { key: string; text: string }[] = [];
+-        let gap = false;
+-        OPTION_KEYS.forEach((key, i) => {
+-          const value = text_(`option${key}`, 300, false);
+-          if (value) { if (gap) problem(`option${key}`, 'Options must be filled in order, without gaps'); options.push({ key: letterOf(i), text: value }); }
+-          else gap = true;
+-        });
+-        if (type === 'MCQ') {
+-          if (options.length < 2) problem('optionA', 'A multiple-choice question needs at least two options');
+-          if (new Set(options.map((o) => normalizeAnswer(o.text))).size !== options.length) problem('optionA', 'Two options are the same');
+-        } else if (options.length > 0) problem('optionA', 'Options are only for MCQ questions');
+-
+-        // The correct answer.
+-        let correctAnswer: string | string[] = '';
+-        const rawCorrect = get('correct');
+-        if (type === 'MCQ') {
+-          const key = rawCorrect.toUpperCase();
+-          if (!options.some((o) => o.key === key)) problem('correct', 'Must be the letter of one of the options');
+-          else correctAnswer = key;
+-        } else if (type === 'TRUE_FALSE') {
+-          const v = rawCorrect.toUpperCase();
+-          if (v === 'TRUE' || v === 'T') correctAnswer = 'TRUE';
+-          else if (v === 'FALSE' || v === 'F') correctAnswer = 'FALSE';
+-          else problem('correct', 'Use TRUE or FALSE');
+-        } else if (type === 'SHORT_ANSWER') {
+-          const accepted = [...new Set(rawCorrect.split('|').map((a) => normalizeAnswer(clean(a))).filter(Boolean))];
+-          if (accepted.length === 0 || accepted.length > 10) problem('correct', 'Give 1 to 10 accepted answers, separated by |');
+-          else if (accepted.some((a) => a.length > 100)) problem('correct', 'Each accepted answer can be at most 100 characters');
+-          else correctAnswer = accepted;
+-        }
++      const batchId = randomBytes(32).toString('base64url');
++      const now = Date.now();
++      const batch: StoredBatch = {
++        actorId: actor.id, examId, fileName: fileName.slice(0, 200), createdAt: new Date(now).toISOString(),
++        expiresAt: new Date(now + BATCH_TTL_SECONDS * 1000).toISOString(), rows: draftRows,
++      };
++      await save(batchId, batch);
++      return describe(exam, batch, batchId);
++    },
+ 
+-        const rawMarks = get('marks');
+-        let marks = 1;
+-        if (rawMarks) {
+-          marks = Number(rawMarks);
+-          if (!MARKS.test(rawMarks) || marks < 0.5 || marks > 100) { problem('marks', 'Use a number from 0.5 to 100, with at most one decimal'); marks = 1; }
+-        }
+-
+-        const topic = text_('topic', 60, false);
+-        const rawDifficulty = get('difficulty').toUpperCase();
+-        let difficulty: Difficulty = 'MEDIUM';
+-        if (rawDifficulty) {
+-          if ((DIFFICULTIES as readonly string[]).includes(rawDifficulty)) difficulty = rawDifficulty as Difficulty;
+-          else problem('difficulty', 'Use EASY, MEDIUM or HARD');
+-        }
+-        const explanation = text_('explanation', 500, false);
+-        const rawImage = get('image');
+-        let imageFile: string | null = null;
+-        if (rawImage) {
+-          imageFile = normalizeImageFileName(rawImage);
+-          if (!imageFile) problem('image', 'Use the picture\'s file name, like triangle.png (letters, numbers, dots and dashes; .png, .jpg or .jpeg)');
+-        }
+-
+-        const hash = createHash('sha256').update([type, normalizeAnswer(questionText), ...options.map((o) => normalizeAnswer(o.text)), imageFile ?? ''].join('\u0001')).digest('hex');
+-        if (errors.length === before) {
+-          if (hashes.has(hash)) problem('question', `Same question as row ${hashes.get(hash)}`);
+-          else {
+-            hashes.set(hash, row);
+-            questions.push({
+-              type: type as QuestionType, text: questionText, options: type === 'MCQ' ? options : null, correctAnswer, marks,
+-              topic: topic || null, difficulty, explanation: explanation || null, hash, imageFile,
+-            });
+-            asked.push({ row, imageFile });
+-          }
+-        }
+-      });
++    async get(actor: Actor, examId: string, batchId: string) {
++      const exam = await editableExam(actor, examId);
++      return describe(exam, await load(actor, examId, batchId), batchId);
++    },
+ 
+-      // Once every row is fine on its own, check the set works with the exam's "questions per student" setting.
+-      const poolProblem = errors.length === 0 ? poolIssue(exam.settings.questionsPerStudent, questions.length, questions.map((q) => q.marks)) : null;
+-      const clear = errors.length === 0 && poolProblem === null;
+-      // A picture that has not been uploaded is a warning, not an error: it can still be uploaded before confirming.
+-      const library = await deps.pictures.byName(examId);
+-      const warnings = asked.flatMap((a) => (a.imageFile && !library.has(a.imageFile)
+-        ? [{ row: a.row, field: 'image', issue: `No picture named "${a.imageFile}" has been uploaded to this exam yet. Upload it before confirming, or the question will have no picture` }]
+-        : [])).slice(0, MAX_ERRORS);
+-      let importToken: string | null = null;
+-      if (clear) {
+-        importToken = randomBytes(32).toString('base64url');
+-        await deps.store.setMany([{ key: keyOf(importToken), value: JSON.stringify({ actorId: actor.id, examId, fileName: fileName.slice(0, 200), questions }), ttlSeconds: TOKEN_TTL_SECONDS }]);
+-      }
++    /** Adds a question written by hand to the draft. */
++    async addQuestion(actor: Actor, examId: string, batchId: string, input: QuestionInput) {
++      const exam = await editableExam(actor, examId);
++      const batch = await load(actor, examId, batchId);
++      if (batch.rows.length >= MAX_QUESTIONS) throw new AppError('CONFLICT', { details: [{ field: 'text', issue: `An exam can have at most ${MAX_QUESTIONS} questions` }] });
++      batch.rows.push({ tempId: newTempId(), row: null, input });
++      await save(batchId, batch);
++      return describe(exam, batch, batchId);
++    },
+ 
+-      return {
+-        rowCount: rows.length, validCount: clear ? questions.length : rows.length - new Set(errors.map((e) => e.row)).size,
+-        warnings,
+-        errors: [...(poolProblem ? [{ row: 0, field: poolProblem.field, issue: poolProblem.issue }] : []), ...errors].slice(0, MAX_ERRORS), truncated: errors.length > MAX_ERRORS,
+-        totalMarks: clear ? Math.round(questions.reduce((s, q) => s + q.marks, 0) * 10) / 10 : null,
+-        byType: clear ? Object.fromEntries(QUESTION_TYPES.map((t) => [t, questions.filter((q) => q.type === t).length])) : null,
+-        preview: questions.slice(0, PREVIEW_ROWS).map((q) => ({ type: q.type, text: q.text.slice(0, 120), marks: q.marks })),
+-        importToken,
+-      };
++    /** Changes any of a draft question's fields. Only what is sent changes. The question is re-checked, not refused: it just shows its errors. */
++    async updateQuestion(actor: Actor, examId: string, batchId: string, tempId: string, patch: Partial<QuestionInput>) {
++      const exam = await editableExam(actor, examId);
++      const batch = await load(actor, examId, batchId);
++      const index = batch.rows.findIndex((r) => r.tempId === tempId);
++      const current = batch.rows[index];
++      if (index < 0 || !current) throw new AppError('NOT_FOUND');
++
++      const changes = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as Partial<QuestionInput>;
++      if (Object.keys(changes).length === 0) throw new AppError('VALIDATION_ERROR', { details: [{ field: 'body', issue: 'Nothing to update' }] });
++      const merged: QuestionInput = { ...current.input, ...changes };
++      // Moving to a type without options drops them, so a teacher need not send options: null as well.
++      if (changes.type !== undefined && changes.options === undefined && String(merged.type).trim().toUpperCase().replace(/[\s-]+/g, '_') !== 'MCQ') merged.options = null;
++      batch.rows[index] = { ...current, input: merged };
++      await save(batchId, batch);
++      return describe(exam, batch, batchId);
+     },
+ 
+-    async confirm(actor: Actor, examId: string, token: string, ctx: Context) {
+-      if (!TOKEN.test(token)) throw new AppError('IMPORT_TOKEN_EXPIRED');
++    async removeQuestion(actor: Actor, examId: string, batchId: string, tempId: string) {
+       const exam = await editableExam(actor, examId);
++      const batch = await load(actor, examId, batchId);
++      const rows = batch.rows.filter((r) => r.tempId !== tempId);
++      if (rows.length === batch.rows.length) throw new AppError('NOT_FOUND');
++      batch.rows = rows;
++      await save(batchId, batch);
++      return describe(exam, batch, batchId);
++    },
+ 
+-      const raw = await deps.store.getAndDelete(keyOf(token)); // works once
+-let stored: StoredImport | null = null;
+-try { stored = raw ? (JSON.parse(raw) as StoredImport) : null; } catch { stored = null; }
+-if (!stored || stored.actorId !== actor.id || stored.examId !== examId) throw new AppError('IMPORT_TOKEN_EXPIRED');
+-const upload = stored;
+-      // Settings can change between the preview and now, so check again before anything is replaced.
+-      const poolProblem = poolIssue(exam.settings.questionsPerStudent, upload.questions.length, upload.questions.map((q) => q.marks));
+-      if (poolProblem) throw new AppError('VALIDATION_ERROR', { details: [poolProblem] });
+-      // Pictures are matched by file name at this moment, so one uploaded after the preview is picked up.
+-      const library = await deps.pictures.byName(examId);
+-      const questions = upload.questions.map((q) => {
+-        const picture = q.imageFile ? library.get(q.imageFile) : undefined;
+-        return picture ? { ...q, imageFileName: picture.fileName, imageUrl: picture.url, imageWidth: picture.width, imageHeight: picture.height } : q;
+-      });
+-      // The old questions, the new ones and the exam's totals change together or not at all.
+-      const result = await withTransaction(async (session) => {
+-        const saved = await deps.questions.replaceAll(examId, actor.id, upload.fileName, questions, session);
+-        if (!(await deps.exams.setQuestionStats(examId, saved.count, saved.maxScore, session))) {
+-          throw new AppError('CONFLICT', { message: 'This exam was submitted while you were uploading' });
+-        }
+-        return saved;
+-      });
++    /** Throws the draft away. Nothing was ever written to the exam. */
++    async discard(actor: Actor, examId: string, batchId: string): Promise<void> {
++      await editableExam(actor, examId);
++      await load(actor, examId, batchId);
++      await deps.store.delete(keyOf(batchId));
++    },
+ 
+-      await deps.paper.invalidate(examId);
+-      await recordSafely(deps.audit, {
+-        action: 'EXAM_QUESTIONS_IMPORTED', actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId,
+-        metadata: { questions: result.count, maxScore: result.maxScore, fileName: upload.fileName, withPictures: questions.filter((q) => q.imageUrl).length },
+-      });
+-      return { questions: result.count, maxScore: result.maxScore };
++    /** Saves the draft as the exam's questions, in one transaction. Refused, with the list of problems, if any question is still invalid. */
++    async confirm(actor: Actor, examId: string, batchId: string, ctx: Context) {
++      const exam = await editableExam(actor, examId);
++      const batch = await load(actor, examId, batchId);
++      const shown = await describe(exam, batch, batchId);
++
++      if (shown.rowCount === 0) throw invalidFile('The draft has no questions');
++      if (shown.importToken === null) {
++        const details = [
++          ...shown.problems.map((p) => ({ field: p.field, issue: p.issue })),
++          ...shown.rows.flatMap((r, i) => r.errors.map((e) => ({ field: `${r.row !== null ? `row ${r.row}` : `question ${i + 1}`} (${r.tempId}): ${e.field}`.slice(0, 100), issue: e.issue }))),
++        ].slice(0, 50);
++        throw new AppError('IMPORT_INVALID', { message: `${shown.rowCount - shown.validCount || shown.problems.length} problem(s) must be fixed before this can be saved`, details });
++      }
++
++      const claimed = await deps.store.getAndDelete(keyOf(batchId)); // works once
++      if (!claimed) throw new AppError('IMPORT_TOKEN_EXPIRED');
++
++      try {
++        // Pictures are matched by file name at this moment, so one uploaded after the preview is picked up.
++        const library = await deps.pictures.byName(examId);
++        const questions: NewQuestion[] = evaluate(batch.rows, library).flatMap((e) => {
++          const q = e.built;
++          if (!q) return [];
++          const picture = q.imageFile ? library.get(q.imageFile) : undefined;
++          return [picture ? { ...q, imageFileName: picture.fileName, imageUrl: picture.url, imageWidth: picture.width, imageHeight: picture.height } : q];
++        });
++        // The old questions, the new ones and the exam's totals change together or not at all.
++        const result = await withTransaction(async (session) => {
++          const saved = await deps.questions.replaceAll(examId, actor.id, batch.fileName, questions, session);
++          if (!(await deps.exams.setQuestionStats(examId, saved.count, saved.maxScore, session))) {
++            throw new AppError('CONFLICT', { message: 'This exam was submitted while you were uploading' });
++          }
++          return saved;
++        });
++
++        await deps.paper.invalidate(examId);
++        await recordSafely(deps.audit, {
++          action: 'EXAM_QUESTIONS_IMPORTED', actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId,
++          metadata: { questions: result.count, maxScore: result.maxScore, fileName: batch.fileName, withPictures: questions.filter((q) => q.imageUrl).length },
++        });
++        return { questions: result.count, maxScore: result.maxScore };
++      } catch (err) {
++        // The save failed, so give the teacher their draft back rather than lose their edits.
++        try { await save(batchId, batch); } catch { /* the draft had already run out */ }
++        throw err;
++      }
+     },
+   };
+ }
+ 
+-export type QuestionImportService = ReturnType<typeof createQuestionImportService>;
+\ No newline at end of file
++export type QuestionImportService = ReturnType<typeof createQuestionImportService>;
+--- /dev/null
++++ b/src/modules/cbt/retake.repository.ts
+@@ -0,0 +1,158 @@
++import mongoose, { type ClientSession, type Model, type Types } from 'mongoose';
++import { isDuplicateKeyError } from '../../common/utils/mongoErrors';
++import { skipOf } from '../../common/utils/pagination';
++
++export const RETAKE_STATUS = { PENDING: 'PENDING', APPROVED: 'APPROVED', REJECTED: 'REJECTED', USED: 'USED', REVOKED: 'REVOKED' } as const;
++export type RetakeStatus = (typeof RETAKE_STATUS)[keyof typeof RETAKE_STATUS];
++export const RETAKE_STATUSES = Object.values(RETAKE_STATUS) as [RetakeStatus, ...RetakeStatus[]];
++
++/**
++ * A teacher's request to let one student sit an exam again, and the admin's decision on it.
++ * `open` is true while the request is PENDING or APPROVED. A partial unique index on it means a student can
++ * never have two live requests for the same exam, without needing a database feature newer than equality.
++ */
++interface RetakeDocument {
++  examId: Types.ObjectId; studentId: Types.ObjectId; requestedBy: Types.ObjectId; reason: string;
++  status: RetakeStatus; open: boolean;
++  /** The sitting this retake follows. */
++  attemptId: Types.ObjectId; attemptNumber: number;
++  decidedBy: Types.ObjectId | null; decidedAt: Date | null; decisionNote: string | null;
++  expiresAt: Date | null; usedAt: Date | null; newAttemptId: Types.ObjectId | null;
++  createdAt: Date; updatedAt: Date;
++}
++type Row = RetakeDocument & { _id: Types.ObjectId };
++
++const oid = { type: mongoose.Schema.Types.ObjectId };
++const schema = new mongoose.Schema<RetakeDocument>(
++  {
++    examId: { ...oid, required: true }, studentId: { ...oid, required: true }, requestedBy: { ...oid, required: true },
++    reason: { type: String, required: true, maxlength: 500 },
++    status: { type: String, enum: RETAKE_STATUSES, default: RETAKE_STATUS.PENDING },
++    open: { type: Boolean, default: true },
++    attemptId: { ...oid, required: true }, attemptNumber: { type: Number, required: true },
++    decidedBy: { ...oid, default: null }, decidedAt: { type: Date, default: null }, decisionNote: { type: String, default: null, maxlength: 500 },
++    expiresAt: { type: Date, default: null }, usedAt: { type: Date, default: null }, newAttemptId: { ...oid, default: null },
++  },
++  { collection: 'exam_retakes', timestamps: true, versionKey: false },
++);
++schema.index({ examId: 1, studentId: 1 }, { unique: true, partialFilterExpression: { open: true } });
++schema.index({ examId: 1, createdAt: -1 });
++schema.index({ status: 1, createdAt: -1 });
++schema.index({ requestedBy: 1, createdAt: -1 });
++
++const RetakeModel: Model<RetakeDocument> =
++  (mongoose.models.ExamRetake as Model<RetakeDocument> | undefined) ?? mongoose.model<RetakeDocument>('ExamRetake', schema);
++
++export interface RetakeRecord {
++  id: string; examId: string; studentId: string; requestedBy: string; reason: string; status: RetakeStatus;
++  attemptId: string; attemptNumber: number; decidedBy: string | null; decidedAt: Date | null; decisionNote: string | null;
++  expiresAt: Date | null; usedAt: Date | null; newAttemptId: string | null; createdAt: Date;
++}
++const OBJECT_ID = /^[a-f0-9]{24}$/;
++const toRecord = (r: Row): RetakeRecord => ({
++  id: r._id.toString(), examId: r.examId.toString(), studentId: r.studentId.toString(), requestedBy: r.requestedBy.toString(),
++  reason: r.reason, status: r.status, attemptId: r.attemptId.toString(), attemptNumber: r.attemptNumber,
++  decidedBy: r.decidedBy ? r.decidedBy.toString() : null, decidedAt: r.decidedAt ?? null, decisionNote: r.decisionNote ?? null,
++  expiresAt: r.expiresAt ?? null, usedAt: r.usedAt ?? null, newAttemptId: r.newAttemptId ? r.newAttemptId.toString() : null, createdAt: r.createdAt,
++});
++
++export interface NewRetake { examId: string; studentId: string; requestedBy: string; reason: string; attemptId: string; attemptNumber: number }
++
++/** Saves each request on its own. A student who already has a live request for this exam is returned in `duplicates`. */
++async function createMany(rows: NewRetake[]): Promise<{ created: RetakeRecord[]; duplicates: string[] }> {
++  const created: RetakeRecord[] = [];
++  const duplicates: string[] = [];
++  for (const data of rows) {
++    try {
++      const doc = await RetakeModel.create(data);
++      created.push(toRecord(doc.toObject() as Row));
++    } catch (err) {
++      if (isDuplicateKeyError(err)) duplicates.push(data.studentId);
++      else throw err;
++    }
++  }
++  return { created, duplicates };
++}
++
++async function findById(id: string): Promise<RetakeRecord | null> {
++  if (!OBJECT_ID.test(id)) return null;
++  const row = await RetakeModel.findById(id).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++async function list(filter: { examId?: string | undefined; requestedBy?: string | undefined; status?: RetakeStatus | undefined }, o: { page: number; limit: number }) {
++  const query: Record<string, unknown> = {};
++  for (const key of ['examId', 'requestedBy', 'status'] as const) if (filter[key] !== undefined) query[key] = filter[key];
++  const [rows, total] = await Promise.all([
++    RetakeModel.find(query).sort({ createdAt: -1, _id: -1 }).skip(skipOf(o.page, o.limit)).limit(o.limit).lean<Row[]>(),
++    RetakeModel.countDocuments(query),
++  ]);
++  return { items: rows.map(toRecord), total };
++}
++
++async function forStudentExam(examId: string, studentId: string): Promise<RetakeRecord[]> {
++  if (!OBJECT_ID.test(examId) || !OBJECT_ID.test(studentId)) return [];
++  const rows = await RetakeModel.find({ examId, studentId }).sort({ createdAt: 1 }).lean<Row[]>();
++  return rows.map(toRecord);
++}
++
++/** An admin approves a request that is still waiting. Only one of two simultaneous decisions wins. */
++async function approve(id: string, by: string, at: Date, expiresAt: Date | null): Promise<RetakeRecord | null> {
++  const row = await RetakeModel.findOneAndUpdate(
++    { _id: id, status: RETAKE_STATUS.PENDING },
++    { $set: { status: RETAKE_STATUS.APPROVED, decidedBy: by, decidedAt: at, expiresAt } }, { new: true },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++async function reject(id: string, by: string, at: Date, note: string): Promise<RetakeRecord | null> {
++  const row = await RetakeModel.findOneAndUpdate(
++    { _id: id, status: RETAKE_STATUS.PENDING },
++    { $set: { status: RETAKE_STATUS.REJECTED, open: false, decidedBy: by, decidedAt: at, decisionNote: note } }, { new: true },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++/** Withdraws a request that is waiting, or cancels an approval nobody has used yet. */
++async function revoke(id: string, from: RetakeStatus[], by: string, at: Date): Promise<RetakeRecord | null> {
++  const row = await RetakeModel.findOneAndUpdate(
++    { _id: id, status: { $in: from } },
++    { $set: { status: RETAKE_STATUS.REVOKED, open: false, decidedBy: by, decidedAt: at } }, { new: true },
++  ).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++/** The approval a student can use now: approved, not used, not expired. */
++async function usableFor(examId: string, studentId: string, now: Date): Promise<RetakeRecord | null> {
++  if (!OBJECT_ID.test(examId) || !OBJECT_ID.test(studentId)) return null;
++  const row = await RetakeModel.findOne({
++    examId, studentId, status: RETAKE_STATUS.APPROVED, $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
++  }).lean<Row>();
++  return row ? toRecord(row) : null;
++}
++
++async function usableForStudentExams(studentId: string, examIds: string[], now: Date): Promise<Map<string, RetakeRecord>> {
++  const ids = examIds.filter((id) => OBJECT_ID.test(id));
++  if (ids.length === 0 || !OBJECT_ID.test(studentId)) return new Map();
++  const rows = await RetakeModel.find({
++    studentId, examId: { $in: ids }, status: RETAKE_STATUS.APPROVED, $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
++  }).lean<Row[]>();
++  return new Map(rows.map((r) => [r.examId.toString(), toRecord(r)]));
++}
++
++/** Uses up an approval, once. Null if it was already used, cancelled or has expired. Runs inside the retake's transaction. */
++async function consume(id: string, now: Date, newAttemptId: string, session: ClientSession): Promise<boolean> {
++  const row = await RetakeModel.findOneAndUpdate(
++    { _id: id, status: RETAKE_STATUS.APPROVED, $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
++    { $set: { status: RETAKE_STATUS.USED, open: false, usedAt: now, newAttemptId } }, { new: true, session },
++  ).lean<Row>();
++  return row !== null;
++}
++
++/** Is any request for this exam still waiting or approved but unused? */
++async function hasOpen(examId: string): Promise<boolean> {
++  if (!OBJECT_ID.test(examId)) return false;
++  return (await RetakeModel.exists({ examId, open: true })) !== null;
++}
++
++export const retakeRepository = { createMany, findById, list, forStudentExam, approve, reject, revoke, usableFor, usableForStudentExams, consume, hasOpen };
+--- /dev/null
++++ b/src/modules/cbt/retake.service.ts
+@@ -0,0 +1,239 @@
++import { AppError } from '../../common/errors/AppError';
++import { sanitizeText } from '../../common/utils/text';
++import { ROLES, type Role } from '../../config/constants';
++import type { enrolmentRepository } from '../academics/enrolment.repository';
++import { recordSafely, type AuditPort } from '../audit/audit.port';
++import type { NotificationService } from '../notifications/notification.service';
++import type { staffRepository } from '../users/staff.repository';
++import type { studentRepository } from '../users/student.repository';
++import type { userRepository } from '../users/user.repository';
++import { ATTEMPT_STATUS, type attemptRepository } from './attempt.repository';
++import type { attemptHistoryRepository } from './attempt.history.repository';
++import { EXAM_STATUS, GRACE_MS } from './cbt.types';
++import type { ExamRecord, examRepository } from './exam.repository';
++import { RETAKE_STATUS, type NewRetake, type RetakeRecord, type RetakeStatus, type retakeRepository } from './retake.repository';
++
++interface Actor { id: string; role: Role }
++interface Context { ip: string; requestId: string }
++
++const round1 = (n: number): number => Math.round(n * 10) / 10;
++const fail = (field: string, issue: string): AppError => new AppError('VALIDATION_ERROR', { details: [{ field, issue }] });
++const isAdmin = (role: Role): boolean => role === ROLES.ADMIN || role === ROLES.SUPER_ADMIN;
++const when = (d: Date): string => d.toISOString().slice(0, 16).replace('T', ' ');
++
++/**
++ * Retakes. A teacher asks for one for a student who failed badly or hit a fault; an admin approves or refuses.
++ * An approval can be used once. When the student starts the retake, their earlier sitting moves to the attempt
++ * history and the new sitting becomes their current one (see attempt.service). Only the current sitting is ever
++ * shown to parents or counted in results; the history is for admins and the exam's teacher.
++ */
++export function createRetakeService(deps: {
++  exams: Pick<typeof examRepository, 'findById'>;
++  retakes: typeof retakeRepository;
++  attempts: Pick<typeof attemptRepository, 'findByExamStudent'>;
++  history: Pick<typeof attemptHistoryRepository, 'forStudent'>;
++  enrolments: Pick<typeof enrolmentRepository, 'forStudents'>;
++  students: Pick<typeof studentRepository, 'nameMap'>;
++  staff: Pick<typeof staffRepository, 'nameMap'>;
++  users: Pick<typeof userRepository, 'findIdsByRoles'>;
++  notifier: Pick<NotificationService, 'notify'>;
++  audit: AuditPort;
++}) {
++  const { exams, retakes, attempts, history, enrolments, students, staff, users, notifier, audit } = deps;
++
++  const log = (action: string, actor: Actor, ctx: Context, examId: string, metadata: Record<string, unknown>) =>
++    recordSafely(audit, { action, actorId: actor.id, entityType: 'exam', entityId: examId, ip: ctx.ip, requestId: ctx.requestId, metadata });
++
++  /** The teacher who owns the exam, an admin or the super admin. */
++  async function accessible(actor: Actor, examId: string): Promise<ExamRecord> {
++    const exam = await exams.findById(examId);
++    if (!exam || !(isAdmin(actor.role) || (actor.role === ROLES.TEACHER && exam.teacherId === actor.id))) throw new AppError('NOT_FOUND');
++    return exam;
++  }
++
++  async function mustRetake(examId: string, retakeId: string): Promise<RetakeRecord> {
++    const retake = await retakes.findById(retakeId);
++    if (!retake || retake.examId !== examId) throw new AppError('NOT_FOUND');
++    return retake;
++  }
++
++  function assertNotReleased(exam: ExamRecord): void {
++    if (exam.resultsReleased) {
++      throw new AppError('CONFLICT', { message: 'Results for this exam have already been released and copied to the score grid, so it can no longer be retaken' });
++    }
++  }
++
++  async function viewsOf(records: RetakeRecord[], knownExam?: ExamRecord) {
++    const examIds = [...new Set(records.map((r) => r.examId))];
++    const [studentNames, staffNames, titles] = await Promise.all([
++      students.nameMap(records.map((r) => r.studentId)),
++      staff.nameMap(records.flatMap((r) => (r.decidedBy ? [r.requestedBy, r.decidedBy] : [r.requestedBy]))),
++      Promise.all(examIds.map(async (id) => [id, knownExam && knownExam.id === id ? knownExam.title : ((await exams.findById(id))?.title ?? '')] as const)),
++    ]);
++    const titleOf = new Map(titles);
++    return records.map((r) => ({
++      id: r.id, examId: r.examId, examTitle: titleOf.get(r.examId) ?? '', studentId: r.studentId, studentName: studentNames.get(r.studentId) ?? '',
++      reason: r.reason, status: r.status, attemptNumber: r.attemptNumber,
++      requestedBy: r.requestedBy, requestedByName: staffNames.get(r.requestedBy) ?? '', createdAt: r.createdAt.toISOString(),
++      decidedBy: r.decidedBy, decidedByName: r.decidedBy ? (staffNames.get(r.decidedBy) ?? '') : null,
++      decidedAt: r.decidedAt ? r.decidedAt.toISOString() : null, decisionNote: r.decisionNote,
++      expiresAt: r.expiresAt ? r.expiresAt.toISOString() : null, usedAt: r.usedAt ? r.usedAt.toISOString() : null,
++    }));
++  }
++
++  async function viewOne(record: RetakeRecord, knownExam?: ExamRecord) {
++    const [view] = await viewsOf([record], knownExam);
++    if (!view) throw new Error('Retake view could not be built');
++    return view;
++  }
++
++  return {
++    /** A teacher asks for a retake for one or more students of their own exam. Nothing happens until an admin approves. */
++    async request(actor: Actor, examId: string, input: { studentIds: string[]; reason: string }, ctx: Context) {
++      const exam = await exams.findById(examId);
++      if (!exam || exam.teacherId !== actor.id) throw new AppError('NOT_FOUND');
++      if (exam.status !== EXAM_STATUS.PUBLISHED) throw new AppError('CONFLICT', { message: 'Only a published exam can be retaken' });
++      assertNotReleased(exam);
++      const reason = sanitizeText(input.reason);
++      if (reason.length < 3) throw fail('reason', 'A reason is required');
++
++      const ids = [...new Set(input.studentIds)];
++      const [enrolled, found] = await Promise.all([enrolments.forStudents(ids, exam.sessionId), Promise.all(ids.map((id) => attempts.findByExamStudent(examId, id)))]);
++      const now = Date.now();
++      const eligible: NewRetake[] = [];
++      const skipped: { studentId: string; reason: string }[] = [];
++      ids.forEach((studentId, i) => {
++        const armId = enrolled.get(studentId)?.classArmId;
++        const attempt = found[i];
++        if (!armId || !exam.classArmIds.includes(armId)) skipped.push({ studentId, reason: 'This student is not in the classes taking this exam' });
++        else if (!attempt) skipped.push({ studentId, reason: 'This student has not sat the exam yet' });
++        else if (attempt.status !== ATTEMPT_STATUS.SUBMITTED && attempt.endsAt.getTime() + GRACE_MS >= now) skipped.push({ studentId, reason: 'This student is still sitting the exam' });
++        else eligible.push({ examId, studentId, requestedBy: actor.id, reason, attemptId: attempt.id, attemptNumber: attempt.attemptNumber });
++      });
++
++      const { created, duplicates } = await retakes.createMany(eligible);
++      for (const studentId of duplicates) skipped.push({ studentId, reason: 'This student already has a retake request for this exam that is waiting or unused' });
++
++      if (created.length > 0) {
++        await notifier.notify({
++          userIds: await users.findIdsByRoles([ROLES.ADMIN]), type: 'EXAM_RETAKE_REQUESTED', title: 'A retake needs approval',
++          body: `${created.length} ${created.length === 1 ? 'student needs' : 'students need'} a retake of "${exam.title}". Reason: ${reason}`.slice(0, 500),
++          data: { examId }, email: false,
++        });
++        await log('EXAM_RETAKE_REQUESTED', actor, ctx, examId, { students: created.map((r) => r.studentId), reason });
++      }
++      return { requested: await viewsOf(created, exam), skipped };
++    },
++
++    /** Teachers see the requests they made. Admins and the super admin see everyone's. */
++    async list(actor: Actor, input: { examId?: string | undefined; status?: RetakeStatus | undefined; page: number; limit: number }) {
++      if (input.examId) await accessible(actor, input.examId);
++      const { items, total } = await retakes.list(
++        { examId: input.examId, status: input.status, requestedBy: actor.role === ROLES.TEACHER ? actor.id : undefined },
++        { page: input.page, limit: input.limit },
++      );
++      return { items: await viewsOf(items), total };
++    },
++
++    async approve(actor: Actor, examId: string, retakeId: string, input: { expiresAt?: string | undefined }, ctx: Context) {
++      const retake = await mustRetake(examId, retakeId);
++      const exam = await exams.findById(examId);
++      if (!exam) throw new AppError('NOT_FOUND');
++      assertNotReleased(exam);
++      const now = new Date();
++      let expiresAt: Date | null = null;
++      if (input.expiresAt) {
++        expiresAt = new Date(input.expiresAt);
++        if (expiresAt <= now) throw fail('expiresAt', 'Must be in the future');
++      }
++      const done = await retakes.approve(retake.id, actor.id, now, expiresAt);
++      if (!done) throw new AppError('CONFLICT', { message: 'This request has already been decided' });
++
++      await notifier.notify({
++        userIds: [retake.requestedBy], type: 'EXAM_RETAKE_APPROVED', title: 'A retake was approved',
++        body: `The retake of "${exam.title}" you asked for was approved.`, data: { examId }, email: false,
++      });
++      await notifier.notify({
++        userIds: [retake.studentId], type: 'EXAM_RETAKE_APPROVED', title: 'You can retake an exam',
++        body: `You may sit "${exam.title}" again${expiresAt ? `. Start it before ${when(expiresAt)} UTC` : ''}.`, data: { examId }, email: false,
++      });
++      await log('EXAM_RETAKE_APPROVED', actor, ctx, examId, { retakeId, studentId: retake.studentId, expiresAt: expiresAt ? expiresAt.toISOString() : null });
++      return viewOne(done, exam);
++    },
++
++    async reject(actor: Actor, examId: string, retakeId: string, input: { reason: string }, ctx: Context) {
++      const retake = await mustRetake(examId, retakeId);
++      const note = sanitizeText(input.reason);
++      if (note.length < 3) throw fail('reason', 'A reason is required');
++      const done = await retakes.reject(retake.id, actor.id, new Date(), note);
++      if (!done) throw new AppError('CONFLICT', { message: 'This request has already been decided' });
++
++      const exam = await exams.findById(examId);
++      await notifier.notify({
++        userIds: [retake.requestedBy], type: 'EXAM_RETAKE_REJECTED', title: 'A retake was refused',
++        body: `${exam ? `"${exam.title}": ` : ''}${note}`.slice(0, 500), data: { examId }, email: false,
++      });
++      await log('EXAM_RETAKE_REJECTED', actor, ctx, examId, { retakeId, studentId: retake.studentId, reason: note });
++      return viewOne(done, exam ?? undefined);
++    },
++
++    /** The teacher can withdraw a request that is waiting. An admin can also cancel an approval nobody has used. */
++    async revoke(actor: Actor, examId: string, retakeId: string, ctx: Context) {
++      const exam = await accessible(actor, examId);
++      const retake = await mustRetake(examId, retakeId);
++      if (actor.role === ROLES.TEACHER && retake.requestedBy !== actor.id) throw new AppError('NOT_FOUND');
++      const admin = isAdmin(actor.role);
++      const done = await retakes.revoke(retake.id, admin ? [RETAKE_STATUS.PENDING, RETAKE_STATUS.APPROVED] : [RETAKE_STATUS.PENDING], actor.id, new Date());
++      if (!done) {
++        throw new AppError('CONFLICT', { message: admin ? 'Only a request that is waiting, or approved and not yet used, can be cancelled' : 'Only a request that is still waiting can be withdrawn' });
++      }
++      if (retake.requestedBy !== actor.id) {
++        await notifier.notify({
++          userIds: [retake.requestedBy], type: 'EXAM_RETAKE_REVOKED', title: 'A retake was cancelled',
++          body: `The retake of "${exam.title}" was cancelled before it was used.`, data: { examId }, email: false,
++        });
++      }
++      await log('EXAM_RETAKE_REVOKED', actor, ctx, examId, { retakeId, studentId: retake.studentId, was: retake.status });
++      return null;
++    },
++
++    /** Every sitting a student has had of this exam, oldest first, with who asked for and approved each retake. For staff only. */
++    async trail(actor: Actor, examId: string, studentId: string) {
++      const exam = await accessible(actor, examId);
++      const [past, current, requests, names] = await Promise.all([
++        history.forStudent(examId, studentId), attempts.findByExamStudent(examId, studentId),
++        retakes.forStudentExam(examId, studentId), students.nameMap([studentId]),
++      ]);
++      const staffNames = await staff.nameMap(requests.flatMap((r) => (r.decidedBy ? [r.requestedBy, r.decidedBy] : [r.requestedBy])));
++      const byNewAttempt = new Map(requests.flatMap((r) => (r.newAttemptId ? [[r.newAttemptId, r] as const] : [])));
++      const retakeOf = (attemptId: string) => {
++        const r = byNewAttempt.get(attemptId);
++        return r ? {
++          id: r.id, reason: r.reason, requestedBy: r.requestedBy, requestedByName: staffNames.get(r.requestedBy) ?? '',
++          approvedBy: r.decidedBy, approvedByName: r.decidedBy ? (staffNames.get(r.decidedBy) ?? '') : null,
++          approvedAt: r.decidedAt ? r.decidedAt.toISOString() : null,
++        } : null;
++      };
++      const percent = (score: number | null, max: number): number | null => (score !== null && max > 0 ? round1((score / max) * 100) : null);
++
++      const sittings = [
++        ...past.map((h) => ({
++          attemptNumber: h.attemptNumber, attemptId: h.attemptId, current: false, status: h.status, startedAt: h.startedAt.toISOString(),
++          submittedAt: h.submittedAt ? h.submittedAt.toISOString() : null, score: h.score, maxScore: h.maxScore, percent: percent(h.score, h.maxScore),
++          autoSubmitted: h.autoSubmitted, supersededAt: h.supersededAt.toISOString(), retake: retakeOf(h.attemptId),
++        })),
++        ...(current ? [{
++          attemptNumber: current.attemptNumber, attemptId: current.id, current: true, status: current.status, startedAt: current.startedAt.toISOString(),
++          submittedAt: current.submittedAt ? current.submittedAt.toISOString() : null, score: current.score, maxScore: current.maxScore,
++          percent: percent(current.score, current.maxScore), autoSubmitted: current.autoSubmitted, supersededAt: null as string | null, retake: retakeOf(current.id),
++        }] : []),
++      ];
++      return { examId, studentId, studentName: names.get(studentId) ?? '', attempts: sittings, requests: await viewsOf(requests, exam) };
++    },
++
++    /** Is a request waiting or approved but unused? Results cannot be released while one is. */
++    hasOpen: (examId: string): Promise<boolean> => retakes.hasOpen(examId),
++  };
++}
++
++export type RetakeService = ReturnType<typeof createRetakeService>;

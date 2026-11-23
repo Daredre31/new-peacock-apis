@@ -16,6 +16,7 @@ export const ERROR_CODES = {
   EXAM_NOT_OPEN: { status: 409, message: 'This exam is not open for you' },
   ATTEMPT_EXPIRED: { status: 409, message: 'Exam time has ended and your attempt was submitted' },
   ATTEMPT_ALREADY_SUBMITTED: { status: 409, message: 'This attempt has already been submitted' },
+  EXAM_PAUSED: { status: 409, message: 'This exam is paused for now. Your saved answers are safe. Wait for your teacher to resume it' },
   IMPORT_INVALID: { status: 422, message: 'The file contains invalid rows' },
   IMPORT_TOKEN_EXPIRED: { status: 410, message: 'The upload has expired. Please upload again' },
   RESULT_LOCKED: { status: 409, message: 'Published results are locked' },

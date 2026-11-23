@@ -35,6 +35,8 @@ export interface ExamServiceDeps {
   /** Removes an exam's pictures from the image store when the exam is deleted. */
   pictures?: { purgeExam(examId: string): Promise<void> };
   attempts: Pick<typeof attemptRepository, 'allForExam' | 'countForExam'>;
+  /** Is a retake still waiting or unused? Results cannot be released while one is. */
+  hasOpenRetakes?: (examId: string) => Promise<boolean>;
   enrolments: Pick<typeof enrolmentRepository, 'studentIdsInArms'>;
   sessions: Pick<typeof sessionRepository, 'findCurrentSession' | 'findTermByDate'>;
   structure: Pick<typeof structureRepository, 'subjectsByIds' | 'armsByIds' | 'classesByIds'>;
@@ -80,6 +82,7 @@ export function createExamService(deps: ExamServiceDeps) {
       durationMin: e.durationMin, windowStart: e.windowStart.toISOString(), windowEnd: e.windowEnd.toISOString(),
       instructions: e.instructions, settings: e.settings, status: e.status, rejectionReason: e.rejectionReason,
       resultsReleased: e.resultsReleased, questionCount: e.questionCount, maxScore: e.maxScore, maxScorePerStudent: maxScorePerStudent(e), createdAt: e.createdAt.toISOString(),
+      paused: e.pausedAt !== null, pausedAt: e.pausedAt ? e.pausedAt.toISOString() : null, pauseReason: e.pauseReason,
     }));
   }
   const viewOf = async (e: ExamRecord) => {
@@ -311,8 +314,16 @@ export function createExamService(deps: ExamServiceDeps) {
       if (exam.status !== EXAM_STATUS.PUBLISHED) throw new AppError('CONFLICT', { message: 'This exam is not published' });
       if (exam.resultsReleased) return { released: true, alreadyReleased: true, fed: 0, skipped: 0 };
       if (exam.windowEnd > new Date()) throw new AppError('CONFLICT', { message: 'Results can be released once the exam window has closed' });
+      // A paused exam's clocks are stopped, so its attempts must not be closed or its results released.
+      if (exam.pausedAt) throw new AppError('CONFLICT', { message: 'This exam is paused. Resume it first' });
+      if (deps.hasOpenRetakes && (await deps.hasOpenRetakes(id))) {
+        throw new AppError('CONFLICT', { message: 'A retake for this exam is waiting for a decision, or approved and not yet used. Decide or cancel it before releasing results' });
+      }
 
       await deps.finalizeOverdueFor(id);
+      if ((await attempts.allForExam(id)).some((a) => a.status === 'IN_PROGRESS')) {
+        throw new AppError('CONFLICT', { message: 'Some students are still sitting this exam. Release the results when they have finished' });
+      }
       const released = await exams.markReleased(id, new Date());
       if (!released) return { released: true, alreadyReleased: true, fed: 0, skipped: 0 };
 

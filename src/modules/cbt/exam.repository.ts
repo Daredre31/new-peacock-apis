@@ -8,6 +8,8 @@ interface ExamDocument {
   windowStart: Date; windowEnd: Date; instructions: string; settings: ExamSettings;
   status: ExamStatus; rejectionReason: string | null; decidedBy: Types.ObjectId | null; decidedAt: Date | null;
   resultsReleased: boolean; resultsReleasedAt: Date | null; questionCount: number; maxScore: number;
+  /** Set while the exam is paused: when it was paused, and the reason given. */
+  pausedAt: Date | null; pauseReason: string | null;
   createdAt: Date; updatedAt: Date;
 }
 type Row = ExamDocument & { _id: Types.ObjectId };
@@ -39,6 +41,7 @@ const schema = new mongoose.Schema<ExamDocument>(
     decidedBy: { type: mongoose.Schema.Types.ObjectId, default: null }, decidedAt: { type: Date, default: null },
     resultsReleased: { type: Boolean, default: false }, resultsReleasedAt: { type: Date, default: null },
     questionCount: { type: Number, default: 0 }, maxScore: { type: Number, default: 0 },
+    pausedAt: { type: Date, default: null }, pauseReason: { type: String, default: null },
   },
   { timestamps: true, versionKey: false },
 );
@@ -53,7 +56,7 @@ export interface ExamRecord {
   id: string; title: string; subjectId: string; classArmIds: string[]; teacherId: string; sessionId: string; termId: string;
   type: ExamType; durationMin: number; windowStart: Date; windowEnd: Date; instructions: string; settings: ExamSettings;
   status: ExamStatus; rejectionReason: string | null; resultsReleased: boolean; resultsReleasedAt: Date | null;
-  questionCount: number; maxScore: number; createdAt: Date;
+  questionCount: number; maxScore: number; pausedAt: Date | null; pauseReason: string | null; createdAt: Date;
 }
 export type ExamFields = Pick<ExamRecord, 'title' | 'subjectId' | 'classArmIds' | 'teacherId' | 'sessionId' | 'termId' | 'type' | 'durationMin' | 'windowStart' | 'windowEnd' | 'instructions' | 'settings'>;
 
@@ -65,7 +68,8 @@ const toRecord = (r: Row): ExamRecord => ({
   durationMin: r.durationMin, windowStart: r.windowStart, windowEnd: r.windowEnd, instructions: r.instructions ?? '',
   settings: { shuffleQuestions: r.settings.shuffleQuestions, shuffleOptions: r.settings.shuffleOptions, resultRelease: r.settings.resultRelease, showAnswers: r.settings.showAnswers, passMarkPercent: r.settings.passMarkPercent, scoreComponent: r.settings.scoreComponent ?? null, questionsPerStudent: r.settings.questionsPerStudent ?? null },
   status: r.status, rejectionReason: r.rejectionReason ?? null, resultsReleased: r.resultsReleased,
-  resultsReleasedAt: r.resultsReleasedAt ?? null, questionCount: r.questionCount, maxScore: r.maxScore, createdAt: r.createdAt,
+  resultsReleasedAt: r.resultsReleasedAt ?? null, questionCount: r.questionCount, maxScore: r.maxScore,
+  pausedAt: r.pausedAt ?? null, pauseReason: r.pauseReason ?? null, createdAt: r.createdAt,
 });
 
 async function create(data: ExamFields): Promise<ExamRecord> {
@@ -130,6 +134,31 @@ async function markReleased(id: string, now: Date): Promise<ExamRecord | null> {
   return row ? toRecord(row) : null;
 }
 
+/** Pauses a published exam that is still open and not already paused. Null if any of that is not true. */
+async function pause(id: string, at: Date, reason: string | null, session: mongoose.ClientSession): Promise<ExamRecord | null> {
+  const row = await ExamModel.findOneAndUpdate(
+    { _id: id, status: EXAM_STATUS.PUBLISHED, pausedAt: null, windowEnd: { $gt: at } },
+    { $set: { pausedAt: at, pauseReason: reason } }, { new: true, session },
+  ).lean<Row>();
+  return row ? toRecord(row) : null;
+}
+
+/** Ends a pause and pushes the window's end back by the length of the pause. Null if the exam was not paused. */
+async function resume(id: string, pausedMs: number, session: mongoose.ClientSession): Promise<ExamRecord | null> {
+  const row = await ExamModel.findOneAndUpdate(
+    { _id: id, pausedAt: { $ne: null } },
+    [{ $set: { pausedAt: null, pauseReason: null, windowEnd: { $add: ['$windowEnd', pausedMs] } } }],
+    { new: true, session },
+  ).lean<Row>();
+  return row ? toRecord(row) : null;
+}
+
+/** The exams that are paused right now, so the background sweep leaves their attempts alone. */
+async function pausedIds(): Promise<string[]> {
+  const rows = await ExamModel.find({ pausedAt: { $ne: null } }, { _id: 1 }).limit(1000).lean<{ _id: Types.ObjectId }[]>();
+  return rows.map((r) => r._id.toString());
+}
+
 async function listForArm(armId: string, sessionId: string, since: Date): Promise<ExamRecord[]> {
   if (!OBJECT_ID.test(armId) || !OBJECT_ID.test(sessionId)) return [];
   const rows = await ExamModel.find({ classArmIds: armId, sessionId, status: EXAM_STATUS.PUBLISHED, windowEnd: { $gte: since } })
@@ -144,4 +173,4 @@ async function upcomingForTeacher(teacherId: string, now: Date, limit: number): 
   return rows.map(toRecord);
 }
 
-export const examRepository = { create, findById, updateEditable, remove, list, transition, setQuestionStats, markReleased, listForArm , upcomingForTeacher};
+export const examRepository = { create, findById, updateEditable, remove, list, transition, setQuestionStats, markReleased, listForArm, upcomingForTeacher, pause, resume, pausedIds };

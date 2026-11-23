@@ -16,6 +16,7 @@ import { staffRepository } from '../users/staff.repository';
 import { studentRepository } from '../users/student.repository';
 import { userRepository } from '../users/user.repository';
 import { createAnalyticsService } from './analytics.service';
+import { attemptHistoryRepository } from './attempt.history.repository';
 import { attemptRepository } from './attempt.repository';
 import { createAttemptService } from './attempt.service';
 import { createCbtRouter } from './cbt.routes';
@@ -23,11 +24,15 @@ import { examRepository } from './exam.repository';
 import { createExamService } from './exam.service';
 import type { ImageStore } from '../../integrations/imageStore';
 import { createPaperCache } from './paper.cache';
+import { createPauseService } from './pause.service';
+import { pauseRepository } from './pause.repository';
 import { questionImageRepository } from './question.image.repository';
 import { createQuestionEditorService } from './question.editor.service';
 import { createQuestionImageService } from './question.image.service';
 import { createQuestionImportService } from './question.import';
 import { questionRepository } from './question.repository';
+import { retakeRepository } from './retake.repository';
+import { createRetakeService } from './retake.service';
 
 export function createCbtModule(deps: {
   audit: AuditService; auth: AuthModule; scope: ScopeService; notifier: NotificationService;
@@ -39,7 +44,7 @@ export function createCbtModule(deps: {
   const attemptService = createAttemptService({
     exams: examRepository, questions: questionRepository, attempts: attemptRepository, enrolments: enrolmentRepository,
     sessions: sessionRepository, structure: structureRepository, students: studentRepository, links: linkRepository,
-    scope: deps.scope, paper, scheduler: deps.jobs.scheduler,
+    scope: deps.scope, paper, scheduler: deps.jobs.scheduler, retakes: retakeRepository, history: attemptHistoryRepository,
   });
   // What the background jobs actually do.
   deps.jobs.register({ autoSubmit: (attemptId) => attemptService.autoSubmit(attemptId), sweep: () => attemptService.sweep() });
@@ -49,9 +54,18 @@ export function createCbtModule(deps: {
     sessions: sessionRepository, structure: structureRepository, assignments: assignmentRepository, staff: staffRepository,
     settings: deps.settings, scores: scoreRepository, users: userRepository, notifier: deps.notifier, paper,
     finalizeOverdueFor: (examId) => attemptService.finalizeOverdueFor(examId), audit: deps.audit, pictures,
+    hasOpenRetakes: (examId) => retakeRepository.hasOpen(examId),
   });
   const importService = createQuestionImportService({
     store: deps.store, secret: env.REFRESH_TOKEN_SECRET, exams: examRepository, questions: questionRepository, pictures, paper, audit: deps.audit,
+  });
+  const pauses = createPauseService({
+    exams: examRepository, attempts: attemptRepository, pauses: pauseRepository, enrolments: enrolmentRepository, staff: staffRepository,
+    scheduler: deps.jobs.scheduler, notifier: deps.notifier, audit: deps.audit,
+  });
+  const retakes = createRetakeService({
+    exams: examRepository, retakes: retakeRepository, attempts: attemptRepository, history: attemptHistoryRepository, enrolments: enrolmentRepository,
+    students: studentRepository, staff: staffRepository, users: userRepository, notifier: deps.notifier, audit: deps.audit,
   });
   const editor = createQuestionEditorService({ questions: questionRepository, exams: examRepository, pictures, paper, audit: deps.audit });
   const analytics = createAnalyticsService({
@@ -59,7 +73,7 @@ export function createCbtModule(deps: {
   });
 
     return {
-    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, editor, authenticate: deps.auth.middleware.authenticate }),
+    router: createCbtRouter({ exams: examService, attempts: attemptService, analytics, importService, pictures, editor, pauses, retakes, authenticate: deps.auth.middleware.authenticate }),
     attempts: attemptService,
     exams: examService,
   };

@@ -9,6 +9,7 @@ import type { structureRepository } from '../academics/structure.repository';
 import type { ExamScheduler } from '../../jobs/exam.jobs';
 import type { linkRepository } from '../users/link.repository';
 import type { studentRepository } from '../users/student.repository';
+import type { attemptHistoryRepository } from './attempt.history.repository';
 import { ATTEMPT_STATUS, type AttemptRecord, type attemptRepository } from './attempt.repository';
 import { GRACE_MS } from './cbt.types';
 import type { ExamRecord, examRepository } from './exam.repository';
@@ -16,11 +17,12 @@ import { cleanAnswer, gradeAttempt, shuffle, type PaperQuestion } from './gradin
 import type { PaperCache } from './paper.cache';
 import { chooseQuestions } from './pool';
 import type { questionRepository } from './question.repository';
+import type { RetakeRecord, retakeRepository } from './retake.repository';
 
 interface Actor { id: string; role: Role }
 
 export interface AttemptServiceDeps {
-  exams: Pick<typeof examRepository, 'findById' | 'listForArm'>;
+  exams: Pick<typeof examRepository, 'findById' | 'listForArm' | 'pausedIds'>;
   questions: Pick<typeof questionRepository, 'forExamWithKey'>;
   attempts: typeof attemptRepository;
   enrolments: Pick<typeof enrolmentRepository, 'forStudents'>;
@@ -31,6 +33,8 @@ export interface AttemptServiceDeps {
   scope: Pick<ScopeService, 'assertCanAccessStudent'>;
   paper: PaperCache;
   scheduler: ExamScheduler;
+  retakes: Pick<typeof retakeRepository, 'usableFor' | 'usableForStudentExams' | 'consume'>;
+  history: Pick<typeof attemptHistoryRepository, 'archive'>;
 }
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
@@ -42,7 +46,7 @@ export const resultsVisible = (exam: ExamRecord, attempt: AttemptRecord): boolea
   exam.resultsReleased || (exam.settings.resultRelease === 'IMMEDIATE' && attempt.status === ATTEMPT_STATUS.SUBMITTED);
 
 export function createAttemptService(deps: AttemptServiceDeps) {
-  const { exams, questions, attempts, enrolments, sessions, structure, students, links, scope, paper, scheduler } = deps;
+  const { exams, questions, attempts, enrolments, sessions, structure, students, links, scope, paper, scheduler, retakes, history } = deps;
 
   /** Builds the student's screen: questions in their own order, options in their own order, no answers. */
   function view(attempt: AttemptRecord, exam: ExamRecord, questionsInPaper: PaperQuestion[], now: Date) {
@@ -60,6 +64,20 @@ export function createAttemptService(deps: AttemptServiceDeps) {
         return [{ id: q.id, type: q.type, text: q.text, marks: q.marks, options, imageUrl: q.imageUrl ?? null, imageWidth: q.imageWidth ?? null, imageHeight: q.imageHeight ?? null }];
       }),
     };
+  }
+
+  /** Deals one student's paper: which questions they get, in what order, and the order of each question's options. */
+  function deal(exam: ExamRecord, paperQuestions: PaperQuestion[]) {
+    // With a pool, this student is dealt their own random share of the questions, once, here. It is stored on the
+    // attempt, so a refresh or resume shows the same ones, and nothing the client sends can change it.
+    const questionOrder = chooseQuestions(paperQuestions.map((q) => q.id), exam.settings.questionsPerStudent, exam.settings.shuffleQuestions);
+    const dealt = new Set(questionOrder);
+    const given = paperQuestions.filter((q) => dealt.has(q.id));
+    const optionOrder: Record<string, string[]> = {};
+    if (exam.settings.shuffleOptions) {
+      for (const q of given) if (q.type === 'MCQ' && q.options) optionOrder[q.id] = shuffle(q.options.map((o) => o.key));
+    }
+    return { questionOrder, optionOrder, maxScore: round1(given.reduce((sum, q) => sum + q.marks, 0)) };
   }
 
   /** Closes an attempt and grades it, once, in one transaction. Safe to call any number of times. */
@@ -135,6 +153,8 @@ export function createAttemptService(deps: AttemptServiceDeps) {
     async autoSubmit(attemptId: string): Promise<void> {
       const attempt = await attempts.findById(attemptId);
       if (!attempt || (attempt.status === ATTEMPT_STATUS.SUBMITTED && attempt.graded)) return;
+      // A paused exam's clock is stopped. Resuming sets this job again for the new end time.
+      if (attempt.status === ATTEMPT_STATUS.IN_PROGRESS && (await exams.findById(attempt.examId))?.pausedAt) return;
       if (attempt.status === ATTEMPT_STATUS.IN_PROGRESS && attempt.endsAt.getTime() > Date.now()) {
         await scheduler.scheduleAutoSubmit(attemptId, attempt.endsAt); // too early: try again at the right time
         return;
@@ -144,7 +164,7 @@ export function createAttemptService(deps: AttemptServiceDeps) {
 
     /** Runs every minute: closes anything overdue and grades anything left half-finished. */
     async sweep(): Promise<void> {
-      const overdue = await attempts.findOverdueIds(new Date(Date.now() - GRACE_MS), 200);
+      const overdue = await attempts.findOverdueIds(new Date(Date.now() - GRACE_MS), 200, await exams.pausedIds());
       const ungraded = await attempts.findUngradedIds(200);
       for (const id of new Set([...overdue, ...ungraded])) {
         try { await finalize(id, true); } catch (err) { logger.error({ err, attemptId: id }, 'sweep could not finalize an attempt'); }
@@ -160,7 +180,7 @@ export function createAttemptService(deps: AttemptServiceDeps) {
 
     time: (): { serverTime: string } => ({ serverTime: new Date().toISOString() }),
 
-    /** Starts the exam, or resumes it if it is already running. */
+    /** Starts the exam, or resumes it if it is already running. With an approved retake, starts the student's next sitting. */
     async start(actor: Actor, examId: string) {
       const exam = await exams.findById(examId);
       if (!exam || exam.status !== 'PUBLISHED') throw new AppError('NOT_FOUND');
@@ -170,32 +190,64 @@ export function createAttemptService(deps: AttemptServiceDeps) {
       const now = new Date();
       const resume = async (attempt: AttemptRecord) => {
         if (attempt.status === ATTEMPT_STATUS.SUBMITTED) throw new AppError('ATTEMPT_ALREADY_SUBMITTED');
+        if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
         if (pastClock(attempt, now)) await expire(attempt);
         return view(attempt, exam, await paper.get(exam), now);
       };
 
-      const existing = await attempts.findByExamStudent(examId, actor.id);
-      if (existing) return resume(existing);
+      /**
+       * The student's earlier sitting moves to the attempt history, and a fresh sitting with a newly dealt paper
+       * takes its place. All of it, including using up the approval, happens in one transaction, so an approval
+       * can be used once and a failure leaves the earlier sitting exactly as it was.
+       */
+      const startRetake = async (previous: AttemptRecord, retake: RetakeRecord) => {
+        if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
+        const closed = previous.status === ATTEMPT_STATUS.SUBMITTED && previous.graded ? previous : await finalize(previous.id, true);
+        if (!closed || !closed.graded) throw new AppError('CONFLICT', { message: 'Your earlier sitting is still being marked. Try again in a moment' });
 
+        const questionsInPaper = await paper.get(exam);
+        if (questionsInPaper.length === 0) throw new AppError('EXAM_NOT_OPEN');
+        const dealt = deal(exam, questionsInPaper);
+        // A retake is not held to the exam window: the admin's approval (and its expiry) decides when it may be started.
+        const endsAt = new Date(now.getTime() + exam.durationMin * 60_000);
+
+        const created = await withTransaction(async (session) => {
+          await history.archive(closed, { retakeId: retake.id, supersededAt: now }, session);
+          if (!(await attempts.removeById(closed.id, session))) throw new AppError('CONFLICT');
+          const fresh = await attempts.create({
+            examId, studentId: actor.id, startedAt: now, endsAt, questionOrder: dealt.questionOrder, optionOrder: dealt.optionOrder,
+            maxScore: dealt.maxScore, attemptNumber: closed.attemptNumber + 1,
+          }, session);
+          if (!fresh) throw new AppError('CONFLICT');
+          if (!(await retakes.consume(retake.id, now, fresh.id, session))) {
+            throw new AppError('CONFLICT', { message: 'This retake has already been used or has expired' });
+          }
+          return fresh;
+        });
+
+        await scheduler.scheduleAutoSubmit(created.id, created.endsAt);
+        return view(created, exam, questionsInPaper, now);
+      };
+
+      const existing = await attempts.findByExamStudent(examId, actor.id);
+      if (existing) {
+        // Only a sitting that has ended can be replaced by a retake. One still running is simply resumed.
+        const ended = existing.status === ATTEMPT_STATUS.SUBMITTED || pastClock(existing, now);
+        const retake = ended ? await retakes.usableFor(examId, actor.id, now) : null;
+        return retake ? startRetake(existing, retake) : resume(existing);
+      }
+
+      if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
       if (now < exam.windowStart || now >= exam.windowEnd || exam.questionCount === 0) throw new AppError('EXAM_NOT_OPEN');
 
       const questionsInPaper = await paper.get(exam);
       if (questionsInPaper.length === 0) throw new AppError('EXAM_NOT_OPEN');
-      // With a pool, this student is dealt their own random share of the questions, once, here. It is stored on the
-      // attempt, so a refresh or resume shows the same ones, and nothing the client sends can change it.
-      const questionOrder = chooseQuestions(questionsInPaper.map((q) => q.id), exam.settings.questionsPerStudent, exam.settings.shuffleQuestions);
-      const dealt = new Set(questionOrder);
-      const given = questionsInPaper.filter((q) => dealt.has(q.id));
-      const optionOrder: Record<string, string[]> = {};
-      if (exam.settings.shuffleOptions) {
-        for (const q of given) if (q.type === 'MCQ' && q.options) optionOrder[q.id] = shuffle(q.options.map((o) => o.key));
-      }
+      const dealt = deal(exam, questionsInPaper);
 
       const endsAt = new Date(Math.min(now.getTime() + exam.durationMin * 60_000, exam.windowEnd.getTime()));
       const created = await attempts.create({
         examId, studentId: actor.id, startedAt: now, endsAt,
-        questionOrder, optionOrder,
-        maxScore: round1(given.reduce((s, q) => s + q.marks, 0)),
+        questionOrder: dealt.questionOrder, optionOrder: dealt.optionOrder, maxScore: dealt.maxScore,
       });
       if (!created) {
         const raced = await attempts.findByExamStudent(examId, actor.id); // a double click started it a moment ago
@@ -213,6 +265,7 @@ export function createAttemptService(deps: AttemptServiceDeps) {
       const exam = await mustExam(attempt.examId);
       const now = new Date();
       if (attempt.status === ATTEMPT_STATUS.SUBMITTED) throw new AppError('ATTEMPT_ALREADY_SUBMITTED');
+      if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
       if (pastClock(attempt, now)) await expire(attempt);
       return view(attempt, exam, await paper.get(exam), now);
     },
@@ -221,10 +274,13 @@ export function createAttemptService(deps: AttemptServiceDeps) {
       const attempt = await ownAttempt(actor, attemptId);
       const now = new Date();
       if (attempt.status === ATTEMPT_STATUS.SUBMITTED) throw new AppError('ATTEMPT_ALREADY_SUBMITTED');
+      const exam = await mustExam(attempt.examId);
+      // Saved answers are kept, but nothing new is accepted while the exam is paused.
+      if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
       if (pastClock(attempt, now)) await expire(attempt);
 
-      const saved = await applyAnswers(attempt, await mustExam(attempt.examId), answers, now);
-      return { saved, serverTime: now.toISOString(), remainingSeconds: Math.max(0, Math.floor((attempt.endsAt.getTime() - now.getTime()) / 1000)) };
+      const saved = await applyAnswers(attempt, exam, answers, now);
+      return { saved, paused: false, serverTime: now.toISOString(), remainingSeconds: Math.max(0, Math.floor((attempt.endsAt.getTime() - now.getTime()) / 1000)) };
     },
 
     /** Safe to repeat. Optional final answers are saved first, if the clock allows. */
@@ -235,6 +291,7 @@ export function createAttemptService(deps: AttemptServiceDeps) {
 
       let done = attempt;
       if (attempt.status === ATTEMPT_STATUS.IN_PROGRESS) {
+        if (exam.pausedAt) throw new AppError('EXAM_PAUSED');
         if (pastClock(attempt, now)) await expire(attempt);
         if (answers && Object.keys(answers).length > 0) await applyAnswers(attempt, exam, answers, now);
         done = (await finalize(attempt.id, false)) ?? attempt;
@@ -299,7 +356,10 @@ export function createAttemptService(deps: AttemptServiceDeps) {
       if (!armId) return [];
 
       const list = await exams.listForArm(armId, current.id, new Date(Date.now() - 60 * 86_400_000));
-      const [byExam, subjects] = await Promise.all([attempts.forStudentExams(actor.id, list.map((e) => e.id)), structure.subjectsByIds(list.map((e) => e.subjectId))]);
+      const [byExam, subjects, retakeFor] = await Promise.all([
+        attempts.forStudentExams(actor.id, list.map((e) => e.id)), structure.subjectsByIds(list.map((e) => e.subjectId)),
+        retakes.usableForStudentExams(actor.id, list.map((e) => e.id), new Date()),
+      ]);
       const now = new Date();
 
       return list.map((exam) => {
@@ -315,6 +375,8 @@ export function createAttemptService(deps: AttemptServiceDeps) {
           instructions: exam.instructions, questionCount: Math.min(exam.questionCount, exam.settings.questionsPerStudent ?? exam.questionCount), state,
           attempt: a ? { id: a.id, status: a.status, endsAt: a.endsAt.toISOString(), submittedAt: a.submittedAt ? a.submittedAt.toISOString() : null } : null,
           result: visible && a.score !== null ? { score: a.score, maxScore: a.maxScore, percent, passed: percent !== null && percent >= exam.settings.passMarkPercent } : null,
+          paused: exam.pausedAt !== null,
+          retake: retakeFor.has(exam.id) ? { expiresAt: retakeFor.get(exam.id)?.expiresAt?.toISOString() ?? null } : null,
         };
       });
     },
